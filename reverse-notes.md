@@ -308,7 +308,18 @@ Current ARM runtime blocker:
   - `POST /connect/app/login?cyt=1`
 - Without preloading `save/download/rest`, the first resource miss is `save/download/rest/que_adv`; Java throws in `JResourceLoader.loadFile`, then CheckJNI aborts in `librooneyj.so!jni_loadTexture`.
 - `work/android44-arm19.ps1 preload-rest` pushes the 49 MiB `download/rest` sample set and fixes that false blocker.
-- `work/android44-arm19.ps1 preload-small` also pushes the small `download/scenario` and `download/pack` dumps before retesting tutorial flow. It now skips directories whose sentinel file is already present, so reruns are fast.
+- `work/android44-arm19.ps1 preload-small` also pushes:
+  - `save/appdata/save_version`
+  - `save/database/master_card`
+  - `save/database/master_item`
+  - `save/database/master_cardcategory`
+  - `save/database/master_boss`
+  - `save/database/master_scol`
+  - `save/database/master_combo`
+  - `save/download/image/adv/adv_chara111`
+  - `save/download/sound/bgm_common1.ogg`
+  - the small `download/scenario` and `download/pack` dumps
+- It skips already-present files/directories, so reruns are fast.
 - With `LOGIN_RESPONSE=tutorial`, the app gets past `que_adv` and crashes later on real ARM:
   - `Fatal signal 11 (SIGSEGV)`
   - `ResourceManagerEx::exists(String)+25`
@@ -319,5 +330,12 @@ Current ARM runtime blocker:
   - `masterdata/card_category/update`
   - `masterdata/item/update`
   - `GET /contents/161/res/res0_0.pack`
-- After that it stays alive on the loading/connecting screen. No fresh `am_crash` appears during a 45 second wait, so the current useful path is sample/mainmenu bootstrap, not tutorial scene 100.
-- This is no longer the BlueStacks `libhoudini.so` crash. Next work should inspect tutorial script/resource names required after `local_forward_tutorial.xml`.
+- `res0_0.pack` is an intentional 18-byte empty asset pack from the APK, not a bad local server response.
+- Preloading `save_version` plus the `master_*` samples makes the client skip first-run masterdata/resource updater churn and enter mainmenu scene `2100`.
+- Missing `save/download/image/adv/adv_chara111` previously caused a CheckJNI abort through `jni_loadTexture`; preloading that fixed the false blocker.
+- Missing `save/download/sound/bgm_common1.ogg` was the next warning; preloading it removes the BGM warning.
+- The current stable blocker after those fixes is:
+  - `Fatal signal 11 (SIGSEGV) at 0x00000098`
+  - stack: `_Layout::event(smart_ptr<_MtTouchEvent> const&)+148 -> LayoutScene::task(...) -> _Main::update(...) -> _Main::main(bool) -> Java_com_test_GLRenderer_nativeMain`
+  - screenshot: `work/kssma-arm19-last-run.png`, showing the Android crash dialog over a partially visible main menu.
+- This is no longer the BlueStacks `libhoudini.so` crash and no longer a missing `rest`, `adv_chara111`, or `bgm_common1` issue. Next work should inspect why `local_battle_player.xml` jumps directly to mainmenu scene `2100` with only header/your_data and no mainmenu body model data.

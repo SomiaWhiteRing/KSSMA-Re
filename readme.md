@@ -12,32 +12,7 @@
 
 ## 当前可用的最短流程
 
-先启动本地引导服务：
-
-```powershell
-$env:CHECK_INSPECTION_KEY='rBwj1MIAivVN222b'
-$env:CONNECT_APP_KEY='rBwj1MIAivVN222b'
-$env:LOGIN_RESPONSE='tutorial'
-node .\server\bootstrap-server.js
-```
-
-它目前只实现两个客户端前导接口：
-
-- `POST /world_list.php`
-- `POST /add_user.php`
-
-用途是先顶住世界选择和入场注册，把请求打印出来，再继续补后面的 `/connect/app/` 协议。
-默认 `/connect/app/login` 只返回最小成功 XML，避免旧 Android/Houdini 运行时被不完整的主菜单样例直接带进 native 渲染崩溃。
-继续 native 协议逆向时先用教程场景响应，它比旧战斗样例小。服务端默认把客户端回调地址写成 `http://10.0.2.2:50005/`，这是 Android 模拟器访问宿主机的地址；如果换真机或不同虚拟化网络，再用 `GUEST_HOST` 或 `WORLD_URL`/`TOP_URL` 覆盖。
-
-```powershell
-$env:CHECK_INSPECTION_KEY='rBwj1MIAivVN222b'
-$env:CONNECT_APP_KEY='rBwj1MIAivVN222b'
-$env:LOGIN_RESPONSE='tutorial'
-node .\server\bootstrap-server.js
-```
-
-需要复现旧的战斗样例崩溃时再显式启用：
+先启动本地引导服务。当前 ARM 主线使用 `sample`，它能走到主菜单：
 
 ```powershell
 $env:CHECK_INSPECTION_KEY='rBwj1MIAivVN222b'
@@ -45,6 +20,19 @@ $env:CONNECT_APP_KEY='rBwj1MIAivVN222b'
 $env:LOGIN_RESPONSE='sample'
 node .\server\bootstrap-server.js
 ```
+
+它目前实现了客户端前导接口和一小段 native 引导接口：
+
+- `POST /world_list.php`
+- `POST /add_user.php`
+- `POST /check_inspection`
+- `POST /connect/app/notification/post_devicetoken`
+- `POST /connect/app/login`
+- `POST /connect/app/masterdata/*/update`
+- `GET /contents/*`
+
+用途是先顶住世界选择、入场注册、密钥加密和资源入口，把请求打印出来，再继续补 `/connect/app/` 协议。`LOGIN_RESPONSE` 不设置时只返回最小成功 XML；`sample` 是当前最远路径；`tutorial` 会进入教程 scene 100，但会在教程资源路径上更早崩溃，暂时不是主线。
+服务端默认把客户端回调地址写成 `http://10.0.2.2:50005/`，这是 Android 模拟器访问宿主机的地址；如果换真机或不同虚拟化网络，再用 `GUEST_HOST` 或 `WORLD_URL`/`TOP_URL` 覆盖。
 
 ## 旧安卓运行时
 
@@ -65,8 +53,11 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\work\android44-arm19.ps1 r
 说明：
 
 - `preload-small` 只推 `download/rest`、`download/scenario`、`download/pack`，先避开完整 `save` 转储占满 512M sdcard。
+- `preload-small` 也会推已证明需要的小文件：`save_version`、`master_*`、`adv_chara111`、`bgm_common1.ogg`。
 - `install` 使用内部安装，绕过 Android 4.4 外置 ASEC 安装不稳定的问题。
 - `-gpu on` 是当前默认；`-gpu off` 会产生误导性的 OpenGL ES 噪声。
 - BlueStacks 脚本还保留在 `work\bluestacks-nougat32.ps1`，但只作为排查对照，不再是默认运行时。
+
+当前运行时已经能进入主菜单并加载 `adv_chara111` 与 `bgm_common1.ogg`。最新阻塞是主菜单布局事件派发里的 ARM native 崩溃：`_Layout::event(...)` SIGSEGV `0x00000098`，日志和截图会保存到 `work\android44-arm19-last-run-*`。
 
 已整理的逆向笔记见 `reverse-notes.md`。

@@ -76,13 +76,40 @@ function Resolve-ApkPath {
 }
 
 function Invoke-Adb {
-  param([string[]]$Arguments)
-  & $adbExe @Arguments
+  param(
+    [string[]]$Arguments,
+    [int]$TimeoutSeconds = 120,
+    [switch]$AllowFailure
+  )
+
+  $stdoutPath = [System.IO.Path]::GetTempFileName()
+  $stderrPath = [System.IO.Path]::GetTempFileName()
+  try {
+    $process = Start-Process -FilePath $adbExe -ArgumentList $Arguments -RedirectStandardOutput $stdoutPath -RedirectStandardError $stderrPath -WindowStyle Hidden -PassThru
+    if (-not $process.WaitForExit($TimeoutSeconds * 1000)) {
+      Stop-Process -Id $process.Id -Force -ErrorAction SilentlyContinue
+      throw "adb timed out after ${TimeoutSeconds}s: adb $($Arguments -join ' ')"
+    }
+    $process.Refresh()
+
+    $stdout = Get-Content -LiteralPath $stdoutPath -Raw -ErrorAction SilentlyContinue
+    $stderr = Get-Content -LiteralPath $stderrPath -Raw -ErrorAction SilentlyContinue
+    $exitCode = if ($null -eq $process.ExitCode) { 0 } else { $process.ExitCode }
+    if ($exitCode -ne 0 -and -not $AllowFailure) {
+      throw "adb failed with exit code ${exitCode}: adb $($Arguments -join ' ')`n$stderr"
+    }
+
+    if ($stdout) {
+      $stdout -split "\r?\n" | Where-Object { $_ -ne "" }
+    }
+  } finally {
+    Remove-Item -LiteralPath $stdoutPath, $stderrPath -Force -ErrorAction SilentlyContinue
+  }
 }
 
 function Test-DeviceFile {
   param([string]$Path)
-  $output = (Invoke-Adb @("-s", $serial, "shell", "ls", $Path, "2>/dev/null") | Out-String).Trim()
+  $output = (Invoke-Adb -Arguments @("-s", $serial, "shell", "ls", $Path, "2>/dev/null") -AllowFailure | Out-String).Trim()
   return $output -ne ""
 }
 
@@ -120,8 +147,12 @@ function Start-Runtime {
   Ensure-File $emulatorExe
   Configure-Runtime
 
-  if ((Get-DeviceState) -ne "missing") {
+  $deviceState = Get-DeviceState
+  if ($deviceState -eq "device") {
     return
+  }
+  if ($deviceState -ne "missing") {
+    Stop-Runtime
   }
 
   Remove-Item -LiteralPath $stdoutLog, $stderrLog -ErrorAction SilentlyContinue
@@ -152,7 +183,11 @@ function Wait-Runtime {
   $deadline = (Get-Date).AddSeconds($TimeoutSeconds)
   while ((Get-Date) -lt $deadline) {
     if ((Get-DeviceState) -eq "device") {
-      $boot = (Invoke-Adb @("-s", $serial, "shell", "getprop", "sys.boot_completed") | Out-String).Trim()
+      $boot = try {
+        (Invoke-Adb -Arguments @("-s", $serial, "shell", "getprop", "sys.boot_completed") -TimeoutSeconds 5 | Out-String).Trim()
+      } catch {
+        ""
+      }
       if ($boot -eq "1") {
         return
       }
@@ -204,6 +239,31 @@ function Preload-DownloadDir {
   }
 }
 
+function Preload-SaveFile {
+  param([string]$RelativePath)
+
+  Wait-Runtime
+  $sourcePath = Join-Path $sampleSaveDir $RelativePath
+  Ensure-File $sourcePath
+
+  $devicePath = "$deviceSaveDir/$($RelativePath -replace '\\', '/')"
+  if (Test-DeviceFile $devicePath) {
+    return [pscustomobject]@{
+      File = $RelativePath
+      Status = "already-present"
+    }
+  }
+
+  $deviceParent = $devicePath -replace "/[^/]+$", ""
+  Invoke-Adb @("-s", $serial, "shell", "mkdir", "-p", $deviceParent) | Out-Null
+  Invoke-Adb @("-s", $serial, "push", $sourcePath, $devicePath) | Out-Null
+
+  [pscustomobject]@{
+    File = $RelativePath
+    Status = "pushed"
+  }
+}
+
 function Preload-RestResources {
   Preload-DownloadDir "rest" "que_adv"
   Invoke-Adb @("-s", $serial, "shell", "ls", "-l", "$deviceSaveDir/download/rest/que_adv")
@@ -211,6 +271,16 @@ function Preload-RestResources {
 
 function Preload-SmallResources {
   # ponytail: preload only the small tutorial-adjacent dumps; full save/image/sound can wait until a screen proves it needs them.
+  # ponytail: also seed the tiny version/masterdata files so the main path skips first-run updater churn on 512M sdcard.
+  Preload-SaveFile "appdata/save_version"
+  Preload-SaveFile "database/master_card"
+  Preload-SaveFile "database/master_item"
+  Preload-SaveFile "database/master_cardcategory"
+  Preload-SaveFile "database/master_boss"
+  Preload-SaveFile "database/master_scol"
+  Preload-SaveFile "database/master_combo"
+  Preload-SaveFile "download/image/adv/adv_chara111"
+  Preload-SaveFile "download/sound/bgm_common1.ogg"
   Preload-DownloadDir "rest" "que_adv"
   Preload-DownloadDir "scenario" "scsc_1010101"
   Preload-DownloadDir "pack" "mainbg/mainbg_an_0_0"
@@ -223,12 +293,30 @@ function Launch-Game {
   Invoke-Adb @("-s", $serial, "shell", "am", "start", "-n", "$package/$activity")
 }
 
+function Save-AdbOutput {
+  param(
+    [string[]]$Arguments,
+    [string]$Path,
+    [int]$TimeoutSeconds = 20
+  )
+
+  try {
+    Invoke-Adb -Arguments $Arguments -TimeoutSeconds $TimeoutSeconds | Set-Content -LiteralPath $Path
+  } catch {
+    "adb capture failed: $($_.Exception.Message)" | Set-Content -LiteralPath $Path
+  }
+}
+
 function Save-RunArtifacts {
-  Invoke-Adb @("-s", $serial, "logcat", "-d", "-v", "time") | Set-Content -LiteralPath $runLogcat
-  Invoke-Adb @("-s", $serial, "logcat", "-b", "events", "-d", "-v", "time") | Set-Content -LiteralPath $runEvents
-  Invoke-Adb @("-s", $serial, "shell", "dumpsys", "activity", "processes") | Set-Content -LiteralPath $runProcesses
-  Invoke-Adb @("-s", $serial, "shell", "screencap", "-p", "/sdcard/kssma-arm19-last-run.png") | Out-Null
-  Invoke-Adb @("-s", $serial, "pull", "/sdcard/kssma-arm19-last-run.png", $runScreenshot) | Out-Null
+  Save-AdbOutput -Arguments @("-s", $serial, "logcat", "-d", "-v", "time") -Path $runLogcat
+  Save-AdbOutput -Arguments @("-s", $serial, "logcat", "-b", "events", "-d", "-v", "time") -Path $runEvents
+  Save-AdbOutput -Arguments @("-s", $serial, "shell", "dumpsys", "activity", "processes") -Path $runProcesses
+  try {
+    Invoke-Adb -Arguments @("-s", $serial, "shell", "screencap", "-p", "/sdcard/kssma-arm19-last-run.png") -TimeoutSeconds 10 | Out-Null
+    Invoke-Adb -Arguments @("-s", $serial, "pull", "/sdcard/kssma-arm19-last-run.png", $runScreenshot) -TimeoutSeconds 20 | Out-Null
+  } catch {
+    "adb screenshot failed: $($_.Exception.Message)" | Set-Content -LiteralPath "$runScreenshot.txt"
+  }
   Get-Content -LiteralPath $runLogcat | Select-String -Pattern "Fatal signal|signal 6|signal 11|librooneyj|jni_loadTexture|connect/app|check_inspection" |
     Select-Object -Last 80
   Get-Content -LiteralPath $runEvents | Select-String -Pattern "am_crash|am_anr|million_cn" |
@@ -236,7 +324,9 @@ function Save-RunArtifacts {
 }
 
 function Stop-Runtime {
-  Invoke-Adb @("-s", $serial, "emu", "kill") | Out-Null
+  try {
+    Invoke-Adb -Arguments @("-s", $serial, "emu", "kill") -TimeoutSeconds 5 -AllowFailure | Out-Null
+  } catch {}
   Start-Sleep -Seconds 2
   Get-Process -ErrorAction SilentlyContinue |
     Where-Object { $_.Path -in @($emulatorExe, $emulatorArmExe) } |
