@@ -1,0 +1,72 @@
+# 扩散性百万亚瑟王重建项目
+
+该项目的最终目的是重建已经停服的手游《扩散性百万亚瑟王》，使其能够使用本地搭建的服务器进行游戏。项目的开发和维护由社区志愿者完成，旨在让玩家能够继续享受这款经典游戏。
+
+该项目目前正处于初创阶段，其结构和内容随时且快速的可能发生变化。
+
+## 项目结构
+
+- `base/`：《扩散性百万亚瑟王》的基础数据和资源。
+- `work/`：从客户端样本拆出的反编译与资源产物。
+- `server/`：本地引导/协议验证用的最小服务端。
+
+## 当前可用的最短流程
+
+先启动本地引导服务：
+
+```powershell
+$env:CHECK_INSPECTION_KEY='rBwj1MIAivVN222b'
+$env:CONNECT_APP_KEY='rBwj1MIAivVN222b'
+$env:LOGIN_RESPONSE='tutorial'
+node .\server\bootstrap-server.js
+```
+
+它目前只实现两个客户端前导接口：
+
+- `POST /world_list.php`
+- `POST /add_user.php`
+
+用途是先顶住世界选择和入场注册，把请求打印出来，再继续补后面的 `/connect/app/` 协议。
+默认 `/connect/app/login` 只返回最小成功 XML，避免旧 Android/Houdini 运行时被不完整的主菜单样例直接带进 native 渲染崩溃。
+继续 native 协议逆向时先用教程场景响应，它比旧战斗样例小。服务端默认把客户端回调地址写成 `http://10.0.2.2:50005/`，这是 Android 模拟器访问宿主机的地址；如果换真机或不同虚拟化网络，再用 `GUEST_HOST` 或 `WORLD_URL`/`TOP_URL` 覆盖。
+
+```powershell
+$env:CHECK_INSPECTION_KEY='rBwj1MIAivVN222b'
+$env:CONNECT_APP_KEY='rBwj1MIAivVN222b'
+$env:LOGIN_RESPONSE='tutorial'
+node .\server\bootstrap-server.js
+```
+
+需要复现旧的战斗样例崩溃时再显式启用：
+
+```powershell
+$env:CHECK_INSPECTION_KEY='rBwj1MIAivVN222b'
+$env:CONNECT_APP_KEY='rBwj1MIAivVN222b'
+$env:LOGIN_RESPONSE='sample'
+node .\server\bootstrap-server.js
+```
+
+## 旧安卓运行时
+
+不要再用本机的 Android 12 模拟器跑这个客户端。
+当前已验证的运行时是 `kssma_arm19`：Android `4.4.2` / API 19 / `armeabi-v7a` classic ARM emulator。
+这是这份 ARM-only 2013 APK 的最短可用目标，BlueStacks x86/Houdini 崩溃先不要当主线。
+
+仓库里已经附了最短操作脚本：
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File .\work\android44-arm19.ps1 configure
+powershell -NoProfile -ExecutionPolicy Bypass -File .\work\android44-arm19.ps1 start
+powershell -NoProfile -ExecutionPolicy Bypass -File .\work\android44-arm19.ps1 install -ApkPath .\work\million-cn-animationguard-signed.apk
+powershell -NoProfile -ExecutionPolicy Bypass -File .\work\android44-arm19.ps1 preload-small
+powershell -NoProfile -ExecutionPolicy Bypass -File .\work\android44-arm19.ps1 run
+```
+
+说明：
+
+- `preload-small` 只推 `download/rest`、`download/scenario`、`download/pack`，先避开完整 `save` 转储占满 512M sdcard。
+- `install` 使用内部安装，绕过 Android 4.4 外置 ASEC 安装不稳定的问题。
+- `-gpu on` 是当前默认；`-gpu off` 会产生误导性的 OpenGL ES 噪声。
+- BlueStacks 脚本还保留在 `work\bluestacks-nougat32.ps1`，但只作为排查对照，不再是默认运行时。
+
+已整理的逆向笔记见 `reverse-notes.md`。

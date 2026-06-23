@@ -1,0 +1,5 @@
+base/
+work/*
+!work/
+!work/*.ps1
+!work/*.py
