@@ -22,6 +22,8 @@ $sdcardPath = Join-Path $avdDir "sdcard.img"
 $stdoutLog = Join-Path $PSScriptRoot "android44-arm19-runtime.out.log"
 $stderrLog = Join-Path $PSScriptRoot "android44-arm19-runtime.err.log"
 $runLogcat = Join-Path $PSScriptRoot "android44-arm19-last-run-logcat.txt"
+$runEvents = Join-Path $PSScriptRoot "android44-arm19-last-run-events.txt"
+$runProcesses = Join-Path $PSScriptRoot "android44-arm19-last-run-processes.txt"
 $runScreenshot = Join-Path $PSScriptRoot "kssma-arm19-last-run.png"
 $sampleSaveDir = Join-Path $PSScriptRoot "million_cn\sdcard_dump\sdcard\Android\data\com.square_enix.million_cn\files\save"
 $deviceSaveDir = "/storage/sdcard/Android/data/$package/files/save"
@@ -76,6 +78,12 @@ function Resolve-ApkPath {
 function Invoke-Adb {
   param([string[]]$Arguments)
   & $adbExe @Arguments
+}
+
+function Test-DeviceFile {
+  param([string]$Path)
+  $output = (Invoke-Adb @("-s", $serial, "shell", "ls", $Path, "2>/dev/null") | Out-String).Trim()
+  return $output -ne ""
 }
 
 function Get-DeviceState {
@@ -162,9 +170,20 @@ function Install-Game {
 }
 
 function Preload-DownloadDir {
-  param([string]$Name)
+  param(
+    [string]$Name,
+    [string]$Sentinel
+  )
 
   Wait-Runtime
+  if ($Sentinel -and (Test-DeviceFile "$deviceSaveDir/download/$Name/$Sentinel")) {
+    return [pscustomobject]@{
+      Directory = "download/$Name"
+      Files = 0
+      Status = "already-present"
+    }
+  }
+
   $sourceDir = Join-Path $sampleSaveDir "download\$Name"
   Ensure-File $sourceDir
   Invoke-Adb @("-s", $serial, "shell", "mkdir", "-p", "$deviceSaveDir/download/$Name") | Out-Null
@@ -181,33 +200,39 @@ function Preload-DownloadDir {
   [pscustomobject]@{
     Directory = "download/$Name"
     Files = $files.Count
+    Status = "pushed"
   }
 }
 
 function Preload-RestResources {
-  Preload-DownloadDir "rest"
+  Preload-DownloadDir "rest" "que_adv"
   Invoke-Adb @("-s", $serial, "shell", "ls", "-l", "$deviceSaveDir/download/rest/que_adv")
 }
 
 function Preload-SmallResources {
   # ponytail: preload only the small tutorial-adjacent dumps; full save/image/sound can wait until a screen proves it needs them.
-  Preload-DownloadDir "rest"
-  Preload-DownloadDir "scenario"
-  Preload-DownloadDir "pack"
+  Preload-DownloadDir "rest" "que_adv"
+  Preload-DownloadDir "scenario" "scsc_1010101"
+  Preload-DownloadDir "pack" "mainbg/mainbg_an_0_0"
 }
 
 function Launch-Game {
   Wait-Runtime
+  Invoke-Adb @("-s", $serial, "shell", "input", "keyevent", "66") | Out-Null
   Invoke-Adb @("-s", $serial, "shell", "am", "force-stop", $package) | Out-Null
   Invoke-Adb @("-s", $serial, "shell", "am", "start", "-n", "$package/$activity")
 }
 
 function Save-RunArtifacts {
   Invoke-Adb @("-s", $serial, "logcat", "-d", "-v", "time") | Set-Content -LiteralPath $runLogcat
+  Invoke-Adb @("-s", $serial, "logcat", "-b", "events", "-d", "-v", "time") | Set-Content -LiteralPath $runEvents
+  Invoke-Adb @("-s", $serial, "shell", "dumpsys", "activity", "processes") | Set-Content -LiteralPath $runProcesses
   Invoke-Adb @("-s", $serial, "shell", "screencap", "-p", "/sdcard/kssma-arm19-last-run.png") | Out-Null
   Invoke-Adb @("-s", $serial, "pull", "/sdcard/kssma-arm19-last-run.png", $runScreenshot) | Out-Null
   Get-Content -LiteralPath $runLogcat | Select-String -Pattern "Fatal signal|signal 6|signal 11|librooneyj|jni_loadTexture|connect/app|check_inspection" |
     Select-Object -Last 80
+  Get-Content -LiteralPath $runEvents | Select-String -Pattern "am_crash|am_anr|million_cn" |
+    Select-Object -Last 20
 }
 
 function Stop-Runtime {
@@ -230,6 +255,8 @@ function Show-Status {
     StdoutLog    = $stdoutLog
     StderrLog    = $stderrLog
     RunLogcat    = $runLogcat
+    RunEvents    = $runEvents
+    RunProcesses = $runProcesses
     RunScreenshot = $runScreenshot
   }
 }

@@ -308,9 +308,16 @@ Current ARM runtime blocker:
   - `POST /connect/app/login?cyt=1`
 - Without preloading `save/download/rest`, the first resource miss is `save/download/rest/que_adv`; Java throws in `JResourceLoader.loadFile`, then CheckJNI aborts in `librooneyj.so!jni_loadTexture`.
 - `work/android44-arm19.ps1 preload-rest` pushes the 49 MiB `download/rest` sample set and fixes that false blocker.
-- `work/android44-arm19.ps1 preload-small` also pushes the small `download/scenario` and `download/pack` dumps before retesting tutorial flow.
-- After preloading `rest`, the app gets past `que_adv` and crashes later on real ARM:
+- `work/android44-arm19.ps1 preload-small` also pushes the small `download/scenario` and `download/pack` dumps before retesting tutorial flow. It now skips directories whose sentinel file is already present, so reruns are fast.
+- With `LOGIN_RESPONSE=tutorial`, the app gets past `que_adv` and crashes later on real ARM:
   - `Fatal signal 11 (SIGSEGV)`
   - `ResourceManagerEx::exists(String)+25`
   - stack: `ResourceManagerEx::exists -> rooney::res::exists -> _Tutorial::loadScript -> _Tutorial::init`
+- With `LOGIN_RESPONSE=sample`, the app avoids the tutorial native crash and reaches:
+  - `masterdata/card/update`
+  - `masterdata/boss/update`
+  - `masterdata/card_category/update`
+  - `masterdata/item/update`
+  - `GET /contents/161/res/res0_0.pack`
+- After that it stays alive on the loading/connecting screen. No fresh `am_crash` appears during a 45 second wait, so the current useful path is sample/mainmenu bootstrap, not tutorial scene 100.
 - This is no longer the BlueStacks `libhoudini.so` crash. Next work should inspect tutorial script/resource names required after `local_forward_tutorial.xml`.
