@@ -340,5 +340,6 @@ Current ARM runtime blocker:
 - The app now stays alive as the top activity after login and reaches a WebView for `http://game.ma.mobimon.com.tw:10001/connect/web/?S=...`.
 - `work/android44-arm19.ps1 hosts` maps `game.ma.mobimon.com.tw` to `10.0.2.2`; `run` applies it automatically.
 - The bootstrap server should be launched with `PORTS=50005,10001` so both native `/connect/app/` rewrites and WebView `/connect/web/` hit the same local process.
-- `/connect/web/` currently returns a minimal local HTML stub with a `sceneto://2100` link. This proves the original web route is localizable without patching WebView code.
-- This is no longer the BlueStacks `libhoudini.so` crash and no longer a missing `rest`, `adv_chara111`, `bgm_common1`, or `_Layout::event` `0x98` issue. Next work should replace the placeholder `/connect/web/` content or drive the `sceneto://2100` return path, then continue implementing real `/connect/app/` menu/mainmenu routes.
+- `/connect/web/` currently returns a minimal local HTML stub that auto-navigates to `sceneto://2100`.
+- ARM19 retest confirms the Java WebView client handles that URL, logs `sceneto : [sceneto://2100]`, closes the WebView, and returns to the visible main menu without a native crash.
+- This is no longer the BlueStacks `libhoudini.so` crash and no longer a missing `rest`, `adv_chara111`, `bgm_common1`, `_Layout::event` `0x98`, or blocked original WebView issue. Next work should interact with main menu entries and implement the next missing `/connect/app/` route.

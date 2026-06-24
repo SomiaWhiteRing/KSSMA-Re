@@ -173,6 +173,7 @@ async function main() {
     assert.equal(webStub.statusCode, 200);
     assert.equal(webStub.body, WEB_STUB_HTML);
     assert.match(webStub.body, /sceneto:\/\/2100/);
+    assert.match(webStub.body, /setTimeout/);
 
     process.stdout.write("bootstrap-server self-check passed\n");
   } finally {

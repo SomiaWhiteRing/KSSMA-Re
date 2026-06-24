@@ -226,6 +226,7 @@ const WEB_STUB_HTML = [
   "<h1>Local web stub</h1>",
   "<p>The original service web page is offline. This local stub keeps the client in the reconstructed runtime.</p>",
   '<p><a href="sceneto://2100">Back to game</a></p>',
+  '<script>setTimeout(function(){location.href="sceneto://2100";},300);</script>',
   "</body>",
   "</html>",
 ].join("");
