@@ -4,6 +4,10 @@
 
 该项目目前正处于初创阶段，其结构和内容随时且快速的可能发生变化。
 
+如果当前调试已经绕进黑屏、资源、APK 大改等问题，先从 `clean-start.md` 重新
+建立主线。这个项目的短期目标是稳定推进客户端的下一条服务器请求，而不是一次性
+修完整个画面。
+
 ## 项目结构
 
 - `base/`：《扩散性百万亚瑟王》的基础数据和资源。
@@ -55,7 +59,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\work\android44-arm19.ps1 r
 
 说明：
 
-- `preload-small` 只推 `download/rest`、`download/scenario`、`download/pack`，先避开完整 `save` 转储占满 512M sdcard。
+- `preload-small` 只推 `download/rest`、`download/scenario`、`download/pack` 和少量必需文件，用来快速验证启动链；完整资源仍用 `preload-full` 单独处理。
 - `preload-small` 也会推已证明需要的小文件：`save_version`、`master_*`、`adv_chara111`、`bgm_common1.ogg`。
 - `hosts` 把模拟器里的 `game.ma.mobimon.com.tw` 指向 `10.0.2.2`；`run` 会自动执行一次，服务端需同时监听原服 WebView 端口 `10001`。
 - `install` 使用内部安装，绕过 Android 4.4 外置 ASEC 安装不稳定的问题。

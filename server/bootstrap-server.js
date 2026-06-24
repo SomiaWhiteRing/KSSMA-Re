@@ -90,6 +90,14 @@ function sendHtml(res, statusCode, value) {
   res.end(value);
 }
 
+function sendRedirect(res, location) {
+  res.writeHead(302, {
+    Location: location,
+    "Content-Length": 0,
+  });
+  res.end();
+}
+
 function sendBinary(res, statusCode, value) {
   res.writeHead(statusCode, {
     "Content-Type": "application/octet-stream",
@@ -280,7 +288,32 @@ const EXPLORATION_FLOOR_XML = [
   "  </body>",
   "</response>",
 ].join("");
+// ponytail: getCurrentMainBg only appends the day/night suffix; the saved base name already includes mainbg_.
+const MAINMENU_BGFILE = "mainbg_an";
+const MAINMENU_FIELDS = [
+  `    <bgAnmType>1</bgAnmType>`,
+  `    <current_bgfile>${MAINMENU_BGFILE}</current_bgfile>`,
+  `    <previous_bgfile>${MAINMENU_BGFILE}</previous_bgfile>`,
+  `    <currentBgfile>${MAINMENU_BGFILE}</currentBgfile>`,
+  `    <previousBgfile>${MAINMENU_BGFILE}</previousBgfile>`,
+  `    <fairy_pose>1</fairy_pose>`,
+  `    <fairy_face>1</fairy_face>`,
+];
+const MAINMENU_UPDATE_XML = [
+  '<?xml version="1.0" encoding="UTF-8"?>',
+  "<response>",
+  "  <header>",
+  "    <error><code>0</code></error>",
+  "    <session_id>local-mainmenu</session_id>",
+  "    <next_scene>2100</next_scene>",
+  "  </header>",
+  "  <body>",
+  ...MAINMENU_FIELDS,
+  "  </body>",
+  "</response>",
+].join("");
 const LOGIN_TUTORIAL_XML = readBundledXml("local_forward_tutorial.xml", CHECK_INSPECTION_OK_XML);
+const WEB_SCENETO_LOCATION = "sceneto://2100";
 const WEB_STUB_HTML = [
   "<!doctype html>",
   '<html lang="zh-CN">',
@@ -290,8 +323,8 @@ const WEB_STUB_HTML = [
   '<body style="font:18px sans-serif;padding:24px;background:#f5f1e8;color:#241b12">',
   "<h1>Local web stub</h1>",
   "<p>The original service web page is offline. This local stub keeps the client in the reconstructed runtime.</p>",
-  '<p><a href="sceneto://2100">Back to game</a></p>',
-  '<script>setTimeout(function(){location.href="sceneto://2100";},300);</script>',
+  `<p><a href="${WEB_SCENETO_LOCATION}">Back to game</a></p>`,
+  `<script>location.replace("${WEB_SCENETO_LOCATION}");</script>`,
   "</body>",
   "</html>",
 ].join("");
@@ -328,6 +361,7 @@ function readContentFile(relativePath) {
 }
 
 const LOGIN_OK_XML = readBundledXml("local_battle_player.xml", CHECK_INSPECTION_OK_XML);
+const LOGIN_MAINMENU_XML = withMainmenuBg(LOGIN_OK_XML);
 const MASTERDATA_SAMPLES = Object.fromEntries(
   Object.entries(MASTERDATA_ROUTE_FILES).map(([route, relativePath]) => [
     route,
@@ -338,6 +372,23 @@ const MASTERDATA_SAMPLES = Object.fromEntries(
   ])
 );
 
+function withMainmenuBg(xml) {
+  const body = [
+    "<body>",
+    ...MAINMENU_FIELDS,
+    "</body>",
+  ].join("");
+  // ponytail: login jumps straight to scene 2100, so seed the layout-bound town model fields there too.
+  return suppressLoginUpdates(xml.replace(/<body>\s*<\/body>/, body));
+}
+
+function suppressLoginUpdates(xml) {
+  // ponytail: the 140330 save dump is preloaded; advertising newer revisions only wakes a broken CDN pack updater.
+  return xml
+    .replace(/<(card_rev|boss_rev|item_rev|card_category_rev|gacha_rev|privilege_rev)>\d+<\/\1>/g, "<$1>0</$1>")
+    .replace(/<revision>\d+<\/revision>/g, "<revision>0</revision>");
+}
+
 function getLoginOkXml() {
   // ponytail: default to the safe stub; opt into native scene payloads only when debugging that path.
   const loginResponse = (process.env.LOGIN_RESPONSE || "").trim().toLowerCase();
@@ -345,7 +396,7 @@ function getLoginOkXml() {
     return LOGIN_TUTORIAL_XML;
   }
   if (loginResponse === "sample") {
-    return LOGIN_OK_XML;
+    return LOGIN_MAINMENU_XML;
   }
   return CHECK_INSPECTION_OK_XML;
 }
@@ -354,8 +405,8 @@ function getLoginXmlSource(loginXml) {
   if (loginXml === LOGIN_TUTORIAL_XML) {
     return "assets/bundle/local_forward_tutorial.xml";
   }
-  if (loginXml === LOGIN_OK_XML) {
-    return "assets/bundle/local_battle_player.xml";
+  if (loginXml === LOGIN_MAINMENU_XML) {
+    return "assets/bundle/local_battle_player.xml + mainmenu bg";
   }
   return "minimal";
 }
@@ -373,7 +424,8 @@ function createServer() {
         path: url.pathname,
         query: Object.fromEntries(url.searchParams.entries()),
       });
-      return sendHtml(res, 200, WEB_STUB_HTML);
+      // ponytail: these offline service pages are just modal WebViews; redirect through the client's existing close path.
+      return sendRedirect(res, WEB_SCENETO_LOCATION);
     }
 
     if (req.method === "GET" && url.pathname.startsWith("/contents/")) {
@@ -479,6 +531,20 @@ function createServer() {
         return;
       }
 
+      if (req.method === "POST" && url.pathname === "/connect/app/mainmenu/update") {
+        // ponytail: one known-good mainbg is enough to un-black the town background; real rotation can wait for event data.
+        const encrypted = encryptAes128Ecb(MAINMENU_UPDATE_XML, connectAppKey);
+        logRequest("connect_app_response", {
+          path: url.pathname,
+          mode: "aes-128-ecb",
+          key: connectAppKey,
+          bytes: encrypted.length,
+          source: "minimal mainmenu update",
+        });
+        sendBinary(res, 200, encrypted);
+        return;
+      }
+
       if (req.method === "POST" && url.pathname === "/connect/app/exploration/area") {
         // ponytail: one selectable area is enough to unblock the scene; add real progression when floor/explore proves it needs it.
         const encrypted = encryptAes128Ecb(EXPLORATION_AREA_XML, connectAppKey);
@@ -574,10 +640,13 @@ module.exports = {
   CHECK_INSPECTION_OK_XML,
   EXPLORATION_AREA_XML,
   EXPLORATION_FLOOR_XML,
+  MAINMENU_UPDATE_XML,
   LOGIN_TUTORIAL_XML,
   LOGIN_OK_XML,
+  LOGIN_MAINMENU_XML,
   MASTERDATA_ROUTE_FILES,
   MASTERDATA_SAMPLES,
+  WEB_SCENETO_LOCATION,
   WEB_STUB_HTML,
   readContentFile,
   readSampleSaveFile,

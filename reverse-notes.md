@@ -276,10 +276,13 @@ The useful local runtime is now `kssma_arm19` on the classic ARM emulator:
 - Emulator: `C:\Users\旻\AppData\Local\Android\Sdk-classic-arm\tools\emulator.exe`
 - ADB serial: `emulator-5582`
 - Console/ADB ports: `5582,5583`
-- Data partition: `1024M`
-- SD card image: `C:\Users\旻\.android\avd\kssma_arm19.avd\sdcard.img` (`512M`)
+- ADB fallback: classic ARM can leave a stale `emulator-5582 offline` entry even while the same emulator is reachable as `127.0.0.1:5583`; verify the fallback with `ro.product.cpu.abi=armeabi-v7a` and `ro.build.version.release=4.4.2` before using it.
+- Data partition: `1536M`
+- SD card image: `C:\Users\旻\.android\avd\kssma_arm19.avd\sdcard.img` (`4096M`)
 - Start/install/run helper: `work/android44-arm19.ps1`
-- Display: classic ARM still boots a physical `320x480` HVGA framebuffer, but the helper now applies a stable `wm size 640x960` / `wm density 320` override after boot. Direct magic skins such as `480x800` and `720x1280` generated the intended hardware config but left ADB stuck offline, so do not make those the default without retesting the ADB channel.
+- Display: current stable AVD config is landscape `1280x720` / `240dpi` on `Nexus 7`-style hardware. The helper now preserves this with `wm size 1280x720` / `wm density 240` instead of the older portrait `640x960` override. Do not restore the old portrait override unless a new runtime check proves this baseline broke.
+- RAM/heap: AVD config uses `hw.ramSize=2048` and `vm.heapSize=256M`, while the running Android 4.4 guest still reports `dalvik.vm.heapsize=128m`; treat the guest value as the effective Java heap when debugging memory behavior.
+- Full `com.square_enix.million_cn-140330.zip` runtime resources should be imported as save data, not APK resources. Current AVD config uses a 4G sdcard and 1536M data image; `work/android44-arm19.ps1 preload-full` still restores the original ZIP save dump to `/data/local/tmp/kssma-save`, patches the missing `mainbg_70_sp` appdata reference to `mainbg_an`, and bind-mounts it over both `/mnt/media_rw/sdcard/.../files/save` and `/storage/sdcard/.../files/save`. Binding only the FUSE path can leave a `(deleted)` mount after the game recreates the directory, causing false missing-resource crashes such as `save/download/rest/treasurebox`. The 4G sdcard baseline was configured while `emulator-5582` was offline; revalidate ADB online state before treating this as a proven runtime improvement.
 
 Useful commands:
 
@@ -345,6 +348,7 @@ Current ARM runtime blocker:
 - `/connect/web/` currently returns a minimal local HTML stub that auto-navigates to `sceneto://2100`.
 - ARM19 retest confirms the Java WebView client handles that URL, logs `sceneto : [sceneto://2100]`, closes the WebView, and returns to the visible main menu without a native crash.
 - Latest clean-base retest installed `work/million-cn-animationguard-signed.apk`, confirmed `assets/bundle/rule_resource_route.xml`, `layout_mainmenu.xml`, `layout_exploration_area.xml`, `1000_main_menu_badge.anm`, and `local_battle_player.xml` all match the base APK by SHA-256, and captured `work/kssma-clean-resources-mainmenu.png`. The main UI/menu renders and is not the previous full black-screen resource regression. The central main-menu background is still black even though `save/download/pack/mainbg/*` exists on device; treat that as a separate mainbg/rendering issue, not as dirty APK resource inheritance.
+- Current resource fix retest: `work/kssma-final-resource-fix.png` reaches `com.test.RooneyJActivity` with no `getSDPackFile`, `treasurebox`, or native missing-file crash. `server/bootstrap-server.js` suppresses login master/resource revisions when using `LOGIN_RESPONSE=sample`, because full resources are already preloaded and advertising newer revisions wakes a broken CDN pack updater.
 - This is no longer the BlueStacks `libhoudini.so` crash and no longer a missing `rest`, `adv_chara111`, `bgm_common1`, `_Layout::event` `0x98`, or blocked original WebView issue. Next work should interact with main menu entries and implement the next missing `/connect/app/` route.
 
 ## Exploration reconstruction status
@@ -369,3 +373,21 @@ Current ARM runtime blocker:
   - `_ExplorationModel::init(ExplorationFloorTagData)` copies `area_id`, `boss_down`, and `floor_info_list` into model offsets `0x50`, `0x54`, and `0x58`.
   - `_ExplorationArea::preUpdate()` only rebuilds the visible floor list via `createFloorList()` after a UI/model completion flag path reaches the `floor_list_active2` branch; current data reaches the server but does not trigger that visible branch.
   - Next debugging should inspect the model/connection completion callback or `_ExplorationArea` flag updates around object offsets `0x55` and `0x56`, not the Android runtime.
+
+## Check inspection retry experiment
+
+- Frontier: after `POST /check_inspection?cyt=1`, the client shows the network retry dialog and the local server does not receive `/connect/app/notification/post_devicetoken` or `/connect/app/login`.
+- Hypothesis: the minimal `/check_inspection` success XML is missing a native header field needed to advance the connection flow.
+- Static evidence:
+  - `librooneyj.so` exports `_HeaderTagParser::parse` and `_ErrorTagParser::parse`.
+  - The header parser string cluster includes `error`, `revision`, `your_data`, `session_id`, and `next_scene`.
+  - Bundled `assets/bundle/local_forward.xml` is the smallest observed forward response shape: `error/code` plus `next_scene`.
+- Changed one variable: temporarily added only `<next_scene>2100</next_scene>` to `CHECK_INSPECTION_OK_XML`.
+- Server check: `node .\server\test-bootstrap-server.js` passed; encrypted `check_inspection`-shaped responses grew from 112 to 160 bytes.
+- ARM19 check:
+  - Runtime: Android 4.4.2/API19 ARM `emulator-5582`.
+  - Server log: `C:\Users\旻\AppData\Local\Temp\kssma-check-nextscene-20260624-193432.out.log`.
+  - Logcat artifact: `work/kssma-check-nextscene-logcat-20260624-193634.txt`.
+  - Command: clear logcat, launch with `powershell -NoProfile -ExecutionPolicy Bypass -File .\work\android44-arm19.ps1 launch`, wait 45s, inspect server log.
+  - Observed requests: `tcp_connect`, `POST /check_inspection?cyt=1`, and `check_inspection_response` only. No `/connect/app/notification/post_devicetoken` and no `/connect/app/login`.
+- Conclusion: adding only `next_scene` to `/check_inspection` does not advance the client. The temporary server change was reverted. Do not keep adding main hall resources for this blocker; next useful check should inspect the Java/native `check_inspection` completion path or try a different minimal header field only if static evidence points to it.

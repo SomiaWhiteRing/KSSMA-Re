@@ -10,13 +10,16 @@ const {
   encryptAes128EcbBuffer,
   EXPLORATION_AREA_XML,
   EXPLORATION_FLOOR_XML,
+  MAINMENU_UPDATE_XML,
   getLoginOkXml,
   getLoginXmlSource,
   LOGIN_OK_XML,
+  LOGIN_MAINMENU_XML,
   LOGIN_TUTORIAL_XML,
   MASTERDATA_SAMPLES,
   parseConnectAppBody,
   parsePortList,
+  WEB_SCENETO_LOCATION,
   WEB_STUB_HTML,
 } = require("./bootstrap-server");
 
@@ -67,6 +70,7 @@ function get(port, path) {
           const buffer = Buffer.concat(chunks);
           resolve({
             statusCode: res.statusCode,
+            headers: res.headers,
             body: buffer.toString("utf8"),
             buffer,
           });
@@ -100,14 +104,23 @@ async function main() {
   assert.match(EXPLORATION_FLOOR_XML, /<id>2<\/id>/);
   assert.match(EXPLORATION_FLOOR_XML, /<unlock>1<\/unlock>/);
   assert.match(EXPLORATION_FLOOR_XML, /<boss_down>0<\/boss_down>/);
+  assert.match(MAINMENU_UPDATE_XML, /<current_bgfile>mainbg_an<\/current_bgfile>/);
+  assert.match(MAINMENU_UPDATE_XML, /<bgAnmType>1<\/bgAnmType>/);
+  assert.match(MAINMENU_UPDATE_XML, /<currentBgfile>mainbg_an<\/currentBgfile>/);
+  assert.match(MAINMENU_UPDATE_XML, /<fairy_face>1<\/fairy_face>/);
   assert.equal(getLoginOkXml(), CHECK_INSPECTION_OK_XML);
   assert.equal(getLoginXmlSource(getLoginOkXml()), "minimal");
   process.env.LOGIN_RESPONSE = "tutorial";
   assert.equal(getLoginOkXml(), LOGIN_TUTORIAL_XML);
   assert.equal(getLoginXmlSource(getLoginOkXml()), "assets/bundle/local_forward_tutorial.xml");
   process.env.LOGIN_RESPONSE = "sample";
-  assert.equal(getLoginOkXml(), LOGIN_OK_XML);
-  assert.equal(getLoginXmlSource(getLoginOkXml()), "assets/bundle/local_battle_player.xml");
+  assert.equal(getLoginOkXml(), LOGIN_MAINMENU_XML);
+  assert.equal(getLoginXmlSource(getLoginOkXml()), "assets/bundle/local_battle_player.xml + mainmenu bg");
+  assert.match(getLoginOkXml(), /<current_bgfile>mainbg_an<\/current_bgfile>/);
+  assert.match(getLoginOkXml(), /<currentBgfile>mainbg_an<\/currentBgfile>/);
+  assert.match(getLoginOkXml(), /<fairy_face>1<\/fairy_face>/);
+  assert.doesNotMatch(getLoginOkXml(), /<card_rev>[1-9]/);
+  assert.doesNotMatch(getLoginOkXml(), /<resource_rev>[\s\S]*?<revision>[1-9]/);
   delete process.env.LOGIN_RESPONSE;
   assert.deepEqual(
     parseConnectAppBody(
@@ -178,6 +191,18 @@ async function main() {
     const loginDecoded = decryptAes128EcbBase64(login.buffer.toString("base64"), "rBwj1MIAivVN222b");
     assert.equal(loginDecoded, CHECK_INSPECTION_OK_XML);
 
+    const mainmenuUpdate = await post(
+      port,
+      "/connect/app/mainmenu/update?cyt=1",
+      ""
+    );
+    assert.equal(mainmenuUpdate.statusCode, 200);
+    const mainmenuUpdateDecoded = decryptAes128EcbBase64(
+      mainmenuUpdate.buffer.toString("base64"),
+      "rBwj1MIAivVN222b"
+    );
+    assert.equal(mainmenuUpdateDecoded, MAINMENU_UPDATE_XML);
+
     const explorationArea = await post(
       port,
       "/connect/app/exploration/area?cyt=1",
@@ -206,10 +231,10 @@ async function main() {
     assert.equal(explorationFloorDecoded, EXPLORATION_FLOOR_XML);
 
     const webStub = await get(port, "/connect/web/?S=session-1");
-    assert.equal(webStub.statusCode, 200);
-    assert.equal(webStub.body, WEB_STUB_HTML);
-    assert.match(webStub.body, /sceneto:\/\/2100/);
-    assert.match(webStub.body, /setTimeout/);
+    assert.equal(webStub.statusCode, 302);
+    assert.equal(webStub.headers.location, WEB_SCENETO_LOCATION);
+    assert.equal(webStub.body, "");
+    assert.match(WEB_STUB_HTML, /sceneto:\/\/2100/);
 
     process.stdout.write("bootstrap-server self-check passed\n");
   } finally {
