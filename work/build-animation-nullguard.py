@@ -86,6 +86,32 @@ PATCHES = (
         ),
     },
     {
+        "offset": 0x0038D478,
+        "patched": bytes.fromhex("f6d0"),
+        "allowed": (
+            bytes.fromhex("00d0"),
+            bytes.fromhex("f6d0"),
+        ),
+        "reason": (
+            "ponytail: a missing layout event node should skip to the next "
+            "entry; branching into the callback call leaves r3 as 0x98 and "
+            "crashes on real ARM."
+        ),
+    },
+    {
+        "offset": 0x0038D47C,
+        "patched": bytes.fromhex("00bf"),
+        "allowed": (
+            bytes.fromhex("9847"),
+            bytes.fromhex("00bf"),
+        ),
+        "reason": (
+            "ponytail: the earlier layout guard left a stale callback call; "
+            "the preceding movs r0,#1 is already the minimal non-null success "
+            "path, so no-op the bogus blx r3."
+        ),
+    },
+    {
         "offset": 0x0038544E,
         "patched": bytes.fromhex("fff785ff"),
         "allowed": (

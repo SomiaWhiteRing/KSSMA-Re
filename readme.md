@@ -18,6 +18,7 @@
 $env:CHECK_INSPECTION_KEY='rBwj1MIAivVN222b'
 $env:CONNECT_APP_KEY='rBwj1MIAivVN222b'
 $env:LOGIN_RESPONSE='sample'
+$env:PORTS='50005,10001'
 node .\server\bootstrap-server.js
 ```
 
@@ -29,6 +30,7 @@ node .\server\bootstrap-server.js
 - `POST /connect/app/notification/post_devicetoken`
 - `POST /connect/app/login`
 - `POST /connect/app/masterdata/*/update`
+- `GET /connect/web/*`
 - `GET /contents/*`
 
 用途是先顶住世界选择、入场注册、密钥加密和资源入口，把请求打印出来，再继续补 `/connect/app/` 协议。`LOGIN_RESPONSE` 不设置时只返回最小成功 XML；`sample` 是当前最远路径；`tutorial` 会进入教程 scene 100，但会在教程资源路径上更早崩溃，暂时不是主线。
@@ -46,6 +48,7 @@ node .\server\bootstrap-server.js
 powershell -NoProfile -ExecutionPolicy Bypass -File .\work\android44-arm19.ps1 configure
 powershell -NoProfile -ExecutionPolicy Bypass -File .\work\android44-arm19.ps1 start
 powershell -NoProfile -ExecutionPolicy Bypass -File .\work\android44-arm19.ps1 install -ApkPath .\work\million-cn-animationguard-signed.apk
+powershell -NoProfile -ExecutionPolicy Bypass -File .\work\android44-arm19.ps1 hosts
 powershell -NoProfile -ExecutionPolicy Bypass -File .\work\android44-arm19.ps1 preload-small
 powershell -NoProfile -ExecutionPolicy Bypass -File .\work\android44-arm19.ps1 run
 ```
@@ -54,10 +57,11 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\work\android44-arm19.ps1 r
 
 - `preload-small` 只推 `download/rest`、`download/scenario`、`download/pack`，先避开完整 `save` 转储占满 512M sdcard。
 - `preload-small` 也会推已证明需要的小文件：`save_version`、`master_*`、`adv_chara111`、`bgm_common1.ogg`。
+- `hosts` 把模拟器里的 `game.ma.mobimon.com.tw` 指向 `10.0.2.2`；`run` 会自动执行一次，服务端需同时监听原服 WebView 端口 `10001`。
 - `install` 使用内部安装，绕过 Android 4.4 外置 ASEC 安装不稳定的问题。
 - `-gpu on` 是当前默认；`-gpu off` 会产生误导性的 OpenGL ES 噪声。
 - BlueStacks 脚本还保留在 `work\bluestacks-nougat32.ps1`，但只作为排查对照，不再是默认运行时。
 
-当前运行时已经能进入主菜单并加载 `adv_chara111` 与 `bgm_common1.ogg`。最新阻塞是主菜单布局事件派发里的 ARM native 崩溃：`_Layout::event(...)` SIGSEGV `0x00000098`，日志和截图会保存到 `work\android44-arm19-last-run-*`。
+当前运行时已经能进入主菜单并加载 `adv_chara111` 与 `bgm_common1.ogg`。`_Layout::event(...)` 的 ARM `0x98` 崩溃已通过 `work\build-animation-nullguard.py` 中的最小 native guard 绕过；后续会打开本地 `/connect/web/` 占位页，日志和截图会保存到 `work\android44-arm19-last-run-*`。
 
 已整理的逆向笔记见 `reverse-notes.md`。

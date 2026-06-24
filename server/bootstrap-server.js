@@ -82,6 +82,14 @@ function sendXml(res, statusCode, value) {
   res.end(value);
 }
 
+function sendHtml(res, statusCode, value) {
+  res.writeHead(statusCode, {
+    "Content-Type": "text/html; charset=utf-8",
+    "Content-Length": Buffer.byteLength(value),
+  });
+  res.end(value);
+}
+
 function sendBinary(res, statusCode, value) {
   res.writeHead(statusCode, {
     "Content-Type": "application/octet-stream",
@@ -208,6 +216,19 @@ const CHECK_INSPECTION_OK_XML = [
 ].join("\n");
 const POST_DEVICE_TOKEN_OK_XML = CHECK_INSPECTION_OK_XML;
 const LOGIN_TUTORIAL_XML = readBundledXml("local_forward_tutorial.xml", CHECK_INSPECTION_OK_XML);
+const WEB_STUB_HTML = [
+  "<!doctype html>",
+  '<html lang="zh-CN">',
+  '<meta charset="utf-8">',
+  '<meta name="viewport" content="width=device-width,initial-scale=1">',
+  "<title>KSSMA local web stub</title>",
+  '<body style="font:18px sans-serif;padding:24px;background:#f5f1e8;color:#241b12">',
+  "<h1>Local web stub</h1>",
+  "<p>The original service web page is offline. This local stub keeps the client in the reconstructed runtime.</p>",
+  '<p><a href="sceneto://2100">Back to game</a></p>',
+  "</body>",
+  "</html>",
+].join("");
 
 function readBundledXml(filename, fallback) {
   for (const dir of BUNDLE_DIRS) {
@@ -279,6 +300,14 @@ function createServer() {
 
     if (req.method === "GET" && url.pathname === "/healthz") {
       return sendJson(res, 200, { ok: true, world: worldList[0] });
+    }
+
+    if (req.method === "GET" && url.pathname.startsWith("/connect/web/")) {
+      logRequest("connect_web_stub", {
+        path: url.pathname,
+        query: Object.fromEntries(url.searchParams.entries()),
+      });
+      return sendHtml(res, 200, WEB_STUB_HTML);
     }
 
     if (req.method === "GET" && url.pathname.startsWith("/contents/")) {
@@ -453,6 +482,7 @@ module.exports = {
   LOGIN_OK_XML,
   MASTERDATA_ROUTE_FILES,
   MASTERDATA_SAMPLES,
+  WEB_STUB_HTML,
   readContentFile,
   readSampleSaveFile,
 };

@@ -15,6 +15,7 @@ const {
   MASTERDATA_SAMPLES,
   parseConnectAppBody,
   parsePortList,
+  WEB_STUB_HTML,
 } = require("./bootstrap-server");
 
 function post(port, path, body) {
@@ -45,6 +46,33 @@ function post(port, path, body) {
     );
     req.on("error", reject);
     req.end(body);
+  });
+}
+
+function get(port, path) {
+  return new Promise((resolve, reject) => {
+    const req = http.request(
+      {
+        host: "127.0.0.1",
+        port,
+        path,
+        method: "GET",
+      },
+      (res) => {
+        const chunks = [];
+        res.on("data", (chunk) => chunks.push(chunk));
+        res.on("end", () => {
+          const buffer = Buffer.concat(chunks);
+          resolve({
+            statusCode: res.statusCode,
+            body: buffer.toString("utf8"),
+            buffer,
+          });
+        });
+      }
+    );
+    req.on("error", reject);
+    req.end();
   });
 }
 
@@ -140,6 +168,11 @@ async function main() {
     assert.equal(login.statusCode, 200);
     const loginDecoded = decryptAes128EcbBase64(login.buffer.toString("base64"), "rBwj1MIAivVN222b");
     assert.equal(loginDecoded, CHECK_INSPECTION_OK_XML);
+
+    const webStub = await get(port, "/connect/web/?S=session-1");
+    assert.equal(webStub.statusCode, 200);
+    assert.equal(webStub.body, WEB_STUB_HTML);
+    assert.match(webStub.body, /sceneto:\/\/2100/);
 
     process.stdout.write("bootstrap-server self-check passed\n");
   } finally {

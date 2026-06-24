@@ -1,5 +1,5 @@
 param(
-  [ValidateSet("status", "configure", "start", "wait", "install", "preload-rest", "preload-small", "launch", "run", "logcat", "stop")]
+  [ValidateSet("status", "configure", "start", "wait", "install", "hosts", "preload-rest", "preload-small", "launch", "run", "logcat", "stop")]
   [string]$Action = "status",
   [string]$ApkPath,
   [switch]$WipeData
@@ -201,7 +201,23 @@ function Wait-Runtime {
 function Install-Game {
   $resolvedApkPath = Resolve-ApkPath
   Wait-Runtime
-  Invoke-Adb @("-s", $serial, "install", "-r", "-f", $resolvedApkPath)
+  Invoke-Adb -Arguments @("-s", $serial, "install", "-r", "-f", $resolvedApkPath) -TimeoutSeconds 600
+}
+
+function Set-LocalHosts {
+  Wait-Runtime
+  Invoke-Adb -Arguments @("-s", $serial, "root") -TimeoutSeconds 10 -AllowFailure | Out-Null
+  Invoke-Adb -Arguments @("-s", $serial, "remount") -TimeoutSeconds 20 | Out-Null
+  $hosts = "127.0.0.1 localhost`n10.0.2.2 game.ma.mobimon.com.tw`n"
+  $hostsPath = Join-Path $env:TEMP "kssma-arm19-hosts"
+  try {
+    Set-Content -LiteralPath $hostsPath -Value $hosts -NoNewline
+    Invoke-Adb -Arguments @("-s", $serial, "push", $hostsPath, "/system/etc/hosts") -TimeoutSeconds 20 | Out-Null
+    Invoke-Adb -Arguments @("-s", $serial, "shell", "chmod", "644", "/system/etc/hosts") | Out-Null
+  } finally {
+    Remove-Item -LiteralPath $hostsPath -Force -ErrorAction SilentlyContinue
+  }
+  Invoke-Adb -Arguments @("-s", $serial, "shell", "cat", "/system/etc/hosts")
 }
 
 function Preload-DownloadDir {
@@ -357,12 +373,14 @@ switch ($Action) {
   "start" { Start-Runtime; Show-Status }
   "wait" { Wait-Runtime; Show-Status }
   "install" { Start-Runtime; Install-Game }
+  "hosts" { Start-Runtime; Set-LocalHosts }
   "preload-rest" { Start-Runtime; Preload-RestResources }
   "preload-small" { Start-Runtime; Preload-SmallResources }
   "launch" { Launch-Game }
   "run" {
     Start-Runtime
     Wait-Runtime
+    Set-LocalHosts | Out-Null
     Invoke-Adb @("-s", $serial, "logcat", "-c") | Out-Null
     Launch-Game
     Start-Sleep -Seconds 35

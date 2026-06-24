@@ -258,16 +258,14 @@ The dumped ZIP already contains real samples for `save/download/rest/`.
 4. Use the ZIP dump and `save/download/rest/` naming to map resource IDs to responses.
 5. Only then move to exploration, battle, card, gacha, and billing.
 
-## Practical blocker
+## Practical blocker status
 
-Without the runtime `k2`, plain HTTP stubbing is not enough for the main native routes.
+The runtime keys are no longer the active blocker. The client logs now expose:
 
-So the shortest next step is:
+- `k1`: `A1dPUcrvur2CRQyl`
+- `k2`: `rBwj1MIAivVN222b`
 
-1. hook `com.test.Utils.sendK`
-2. print `k1`, `k2`, and `urlTop`
-3. proxy one real request
-4. reproduce the crypto in a local server
+The bootstrap server uses `k2` for `/connect/app/` AES responses. The active work is now filling the smallest useful `/connect/app/` and `/connect/web/` behavior after login.
 
 ## Android 4.4 ARM runtime
 
@@ -288,6 +286,7 @@ Useful commands:
 powershell -NoProfile -ExecutionPolicy Bypass -File .\work\android44-arm19.ps1 configure
 powershell -NoProfile -ExecutionPolicy Bypass -File .\work\android44-arm19.ps1 start
 powershell -NoProfile -ExecutionPolicy Bypass -File .\work\android44-arm19.ps1 install -ApkPath .\work\million-cn-animationguard-signed.apk
+powershell -NoProfile -ExecutionPolicy Bypass -File .\work\android44-arm19.ps1 hosts
 powershell -NoProfile -ExecutionPolicy Bypass -File .\work\android44-arm19.ps1 preload-rest
 powershell -NoProfile -ExecutionPolicy Bypass -File .\work\android44-arm19.ps1 preload-small
 powershell -NoProfile -ExecutionPolicy Bypass -File .\work\android44-arm19.ps1 run
@@ -334,8 +333,12 @@ Current ARM runtime blocker:
 - Preloading `save_version` plus the `master_*` samples makes the client skip first-run masterdata/resource updater churn and enter mainmenu scene `2100`.
 - Missing `save/download/image/adv/adv_chara111` previously caused a CheckJNI abort through `jni_loadTexture`; preloading that fixed the false blocker.
 - Missing `save/download/sound/bgm_common1.ogg` was the next warning; preloading it removes the BGM warning.
-- The current stable blocker after those fixes is:
-  - `Fatal signal 11 (SIGSEGV) at 0x00000098`
-  - stack: `_Layout::event(smart_ptr<_MtTouchEvent> const&)+148 -> LayoutScene::task(...) -> _Main::update(...) -> _Main::main(bool) -> Java_com_test_GLRenderer_nativeMain`
-  - screenshot: `work/kssma-arm19-last-run.png`, showing the Android crash dialog over a partially visible main menu.
-- This is no longer the BlueStacks `libhoudini.so` crash and no longer a missing `rest`, `adv_chara111`, or `bgm_common1` issue. Next work should inspect why `local_battle_player.xml` jumps directly to mainmenu scene `2100` with only header/your_data and no mainmenu body model data.
+- The ARM `_Layout::event(...)` `0x00000098` crash is fixed in the rebuilt APK:
+  - `work/build-animation-nullguard.py` changes the stale layout callback path at `0x0038D478` / `0x0038D47C`.
+  - The root cause was an earlier null-guard branch that still reached a `blx r3` with `r3 = 0x98`; real ARM jumped to `0x98`.
+  - The patched path skips missing layout event nodes and no-ops the bogus callback while keeping the existing non-null success result.
+- The app now stays alive as the top activity after login and reaches a WebView for `http://game.ma.mobimon.com.tw:10001/connect/web/?S=...`.
+- `work/android44-arm19.ps1 hosts` maps `game.ma.mobimon.com.tw` to `10.0.2.2`; `run` applies it automatically.
+- The bootstrap server should be launched with `PORTS=50005,10001` so both native `/connect/app/` rewrites and WebView `/connect/web/` hit the same local process.
+- `/connect/web/` currently returns a minimal local HTML stub with a `sceneto://2100` link. This proves the original web route is localizable without patching WebView code.
+- This is no longer the BlueStacks `libhoudini.so` crash and no longer a missing `rest`, `adv_chara111`, `bgm_common1`, or `_Layout::event` `0x98` issue. Next work should replace the placeholder `/connect/web/` content or drive the `sceneto://2100` return path, then continue implementing real `/connect/app/` menu/mainmenu routes.
