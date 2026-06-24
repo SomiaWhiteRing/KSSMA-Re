@@ -8,6 +8,8 @@ const {
   decryptAes128EcbBase64,
   encryptAes128Ecb,
   encryptAes128EcbBuffer,
+  EXPLORATION_AREA_XML,
+  EXPLORATION_FLOOR_XML,
   getLoginOkXml,
   getLoginXmlSource,
   LOGIN_OK_XML,
@@ -91,6 +93,13 @@ async function main() {
   );
   assert.equal(decryptAes128EcbBase64("ySboruTbjYskjVUIf7U3Ew==", "rBwj1MIAivVN222b"), "13800138000");
   assert.equal(decryptAes128EcbBase64("8qAl04QoOI2mCN0/MwrBKg==", "rBwj1MIAivVN222b"), "testpass1");
+  assert.match(EXPLORATION_AREA_XML, /<next_scene>6100<\/next_scene>/);
+  assert.match(EXPLORATION_AREA_XML, /<exploration_area>/);
+  assert.match(EXPLORATION_AREA_XML, /<prog_area>0<\/prog_area>/);
+  assert.match(EXPLORATION_FLOOR_XML, /<exploration_floor>/);
+  assert.match(EXPLORATION_FLOOR_XML, /<id>2<\/id>/);
+  assert.match(EXPLORATION_FLOOR_XML, /<unlock>1<\/unlock>/);
+  assert.match(EXPLORATION_FLOOR_XML, /<boss_down>0<\/boss_down>/);
   assert.equal(getLoginOkXml(), CHECK_INSPECTION_OK_XML);
   assert.equal(getLoginXmlSource(getLoginOkXml()), "minimal");
   process.env.LOGIN_RESPONSE = "tutorial";
@@ -168,6 +177,33 @@ async function main() {
     assert.equal(login.statusCode, 200);
     const loginDecoded = decryptAes128EcbBase64(login.buffer.toString("base64"), "rBwj1MIAivVN222b");
     assert.equal(loginDecoded, CHECK_INSPECTION_OK_XML);
+
+    const explorationArea = await post(
+      port,
+      "/connect/app/exploration/area?cyt=1",
+      ""
+    );
+    assert.equal(explorationArea.statusCode, 200);
+    const explorationAreaDecoded = decryptAes128EcbBase64(
+      explorationArea.buffer.toString("base64"),
+      "rBwj1MIAivVN222b"
+    );
+    assert.equal(explorationAreaDecoded, EXPLORATION_AREA_XML);
+    assert.match(explorationAreaDecoded, /<area_info>/);
+    assert.match(explorationAreaDecoded, /<floor_info>/);
+    assert.match(explorationAreaDecoded, /<found_item_list>/);
+
+    const explorationFloor = await post(
+      port,
+      "/connect/app/exploration/floor?cyt=1",
+      "area_id=NzgOGTK08BvkZN5q8XvG6Q%3D%3D%0A"
+    );
+    assert.equal(explorationFloor.statusCode, 200);
+    const explorationFloorDecoded = decryptAes128EcbBase64(
+      explorationFloor.buffer.toString("base64"),
+      "rBwj1MIAivVN222b"
+    );
+    assert.equal(explorationFloorDecoded, EXPLORATION_FLOOR_XML);
 
     const webStub = await get(port, "/connect/web/?S=session-1");
     assert.equal(webStub.statusCode, 200);

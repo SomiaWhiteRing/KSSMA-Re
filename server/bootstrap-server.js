@@ -215,6 +215,71 @@ const CHECK_INSPECTION_OK_XML = [
   "</response>",
 ].join("\n");
 const POST_DEVICE_TOKEN_OK_XML = CHECK_INSPECTION_OK_XML;
+const EXPLORATION_AREA_XML = [
+  '<?xml version="1.0" encoding="UTF-8"?>',
+  "<response>",
+  "  <header>",
+  "    <error><code>0</code></error>",
+  "    <session_id>local-exploration</session_id>",
+  "    <next_scene>6100</next_scene>",
+  "  </header>",
+  "  <body>",
+  "    <exploration_area>",
+  "      <area_id>0</area_id>",
+  "      <locations>0</locations>",
+  "      <area_info_list>",
+  "        <area_info>",
+  "          <id>0</id>",
+  "          <name>Local Area</name>",
+  "          <x>0</x>",
+  "          <y>0</y>",
+  "          <area_type>1</area_type>",
+  "          <prog_area>0</prog_area>",
+  "          <prog_item>0</prog_item>",
+  "          <floor_info_list>",
+  "            <floor_info>",
+  "              <id>2</id>",
+  "              <type>0</type>",
+  "              <unlock>1</unlock>",
+  "              <progress>0</progress>",
+  "              <cost>1</cost>",
+  "              <boss_id>0</boss_id>",
+  "              <found_item_list></found_item_list>",
+  "            </floor_info>",
+  "          </floor_info_list>",
+  "        </area_info>",
+  "      </area_info_list>",
+  "    </exploration_area>",
+  "  </body>",
+  "</response>",
+].join("");
+const EXPLORATION_FLOOR_XML = [
+  '<?xml version="1.0" encoding="UTF-8"?>',
+  "<response>",
+  "  <header>",
+  "    <error><code>0</code></error>",
+  "    <session_id>local-exploration</session_id>",
+  "    <next_scene>6100</next_scene>",
+  "  </header>",
+  "  <body>",
+  "    <exploration_floor>",
+  "      <area_id>0</area_id>",
+  "      <boss_down>0</boss_down>",
+  "      <floor_info_list>",
+  "        <floor_info>",
+  "          <id>2</id>",
+  "          <type>0</type>",
+  "          <unlock>1</unlock>",
+  "          <progress>0</progress>",
+  "          <cost>1</cost>",
+  "          <boss_id>0</boss_id>",
+  "          <found_item_list></found_item_list>",
+  "        </floor_info>",
+  "      </floor_info_list>",
+  "    </exploration_floor>",
+  "  </body>",
+  "</response>",
+].join("");
 const LOGIN_TUTORIAL_XML = readBundledXml("local_forward_tutorial.xml", CHECK_INSPECTION_OK_XML);
 const WEB_STUB_HTML = [
   "<!doctype html>",
@@ -414,6 +479,34 @@ function createServer() {
         return;
       }
 
+      if (req.method === "POST" && url.pathname === "/connect/app/exploration/area") {
+        // ponytail: one selectable area is enough to unblock the scene; add real progression when floor/explore proves it needs it.
+        const encrypted = encryptAes128Ecb(EXPLORATION_AREA_XML, connectAppKey);
+        logRequest("connect_app_response", {
+          path: url.pathname,
+          mode: "aes-128-ecb",
+          key: connectAppKey,
+          bytes: encrypted.length,
+          source: "minimal exploration area",
+        });
+        sendBinary(res, 200, encrypted);
+        return;
+      }
+
+      if (req.method === "POST" && url.pathname === "/connect/app/exploration/floor") {
+        // ponytail: one unlocked floor is enough to expose the next protocol edge.
+        const encrypted = encryptAes128Ecb(EXPLORATION_FLOOR_XML, connectAppKey);
+        logRequest("connect_app_response", {
+          path: url.pathname,
+          mode: "aes-128-ecb",
+          key: connectAppKey,
+          bytes: encrypted.length,
+          source: "minimal exploration floor",
+        });
+        sendBinary(res, 200, encrypted);
+        return;
+      }
+
       const masterdataSample = MASTERDATA_SAMPLES[url.pathname];
       if (req.method === "POST" && masterdataSample) {
         if (!masterdataSample.bytes) {
@@ -479,6 +572,8 @@ module.exports = {
   parseConnectAppBody,
   parsePortList,
   CHECK_INSPECTION_OK_XML,
+  EXPLORATION_AREA_XML,
+  EXPLORATION_FLOOR_XML,
   LOGIN_TUTORIAL_XML,
   LOGIN_OK_XML,
   MASTERDATA_ROUTE_FILES,

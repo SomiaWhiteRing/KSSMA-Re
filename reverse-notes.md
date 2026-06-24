@@ -343,3 +343,26 @@ Current ARM runtime blocker:
 - `/connect/web/` currently returns a minimal local HTML stub that auto-navigates to `sceneto://2100`.
 - ARM19 retest confirms the Java WebView client handles that URL, logs `sceneto : [sceneto://2100]`, closes the WebView, and returns to the visible main menu without a native crash.
 - This is no longer the BlueStacks `libhoudini.so` crash and no longer a missing `rest`, `adv_chara111`, `bgm_common1`, `_Layout::event` `0x98`, or blocked original WebView issue. Next work should interact with main menu entries and implement the next missing `/connect/app/` route.
+
+## Exploration reconstruction status
+
+- Runtime is confirmed suitable: Android 4.4.2/API19 ARM `emulator-5582` enters the main menu and can drive exploration; do not switch back to Android 12 or x86/Houdini runtimes for this APK.
+- `server/bootstrap-server.js` now answers encrypted:
+  - `POST /connect/app/exploration/area`
+  - `POST /connect/app/exploration/floor`
+- `server/test-bootstrap-server.js` covers both encrypted routes and passed after adding the current exploration XML fields.
+- `AreaInfoTagParser` fields confirmed from `librooneyj.so`:
+  - `id`, `name`, `x`, `y`, `prog_area`, `prog_item`, `area_type`
+- `ExplorationFloorTagParser` fields confirmed:
+  - `area_id`, `boss_down`, `floor_info_list`
+- `FloorInfoTagParser` fields confirmed:
+  - `id`, `type`, `unlock`, `progress`, `cost`, `boss_id`, `found_item_list`
+- ARM19 retest with `<id>2</id>`, `<type>0</type>`, and `<unlock>1</unlock>`:
+  - `/connect/app/exploration/area` returns 200 and renders `Local Area` on the map.
+  - `/connect/app/exploration/floor` returns 200, decrypts through the client, and does not crash.
+  - UI still stays on the area map after selecting the area; waiting 20s does not produce another request.
+- Native notes:
+  - `_ExplorationModel::update(TiXmlElement)` recognizes the floor response and calls `_ExplorationFloorTagParser::parse` then `_ExplorationModel::init(ExplorationFloorTagData)`.
+  - `_ExplorationModel::init(ExplorationFloorTagData)` copies `area_id`, `boss_down`, and `floor_info_list` into model offsets `0x50`, `0x54`, and `0x58`.
+  - `_ExplorationArea::preUpdate()` only rebuilds the visible floor list via `createFloorList()` after a UI/model completion flag path reaches the `floor_list_active2` branch; current data reaches the server but does not trigger that visible branch.
+  - Next debugging should inspect the model/connection completion callback or `_ExplorationArea` flag updates around object offsets `0x55` and `0x56`, not the Android runtime.
