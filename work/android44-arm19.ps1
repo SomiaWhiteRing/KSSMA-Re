@@ -27,6 +27,8 @@ $runProcesses = Join-Path $PSScriptRoot "android44-arm19-last-run-processes.txt"
 $runScreenshot = Join-Path $PSScriptRoot "kssma-arm19-last-run.png"
 $sampleSaveDir = Join-Path $PSScriptRoot "million_cn\sdcard_dump\sdcard\Android\data\com.square_enix.million_cn\files\save"
 $deviceSaveDir = "/storage/sdcard/Android/data/$package/files/save"
+$displaySize = "640x960"
+$displayDensity = "320"
 
 function Ensure-File {
   param([string]$Path)
@@ -189,6 +191,7 @@ function Wait-Runtime {
         ""
       }
       if ($boot -eq "1") {
+        Set-DisplayProfile
         return
       }
     }
@@ -196,6 +199,12 @@ function Wait-Runtime {
   }
 
   throw "Timed out waiting for $serial"
+}
+
+function Set-DisplayProfile {
+  # ponytail: the classic ARM emulator can boot from stale 320x480 hardware-qemu.ini; wm override is the shortest reliable fix.
+  Invoke-Adb -Arguments @("-s", $serial, "shell", "wm", "size", $displaySize) -TimeoutSeconds 10 | Out-Null
+  Invoke-Adb -Arguments @("-s", $serial, "shell", "wm", "density", $displayDensity) -TimeoutSeconds 10 | Out-Null
 }
 
 function Install-Game {
@@ -350,6 +359,16 @@ function Stop-Runtime {
 }
 
 function Show-Status {
+  $display = if ((Get-DeviceState) -eq "device") {
+    try {
+      ((Invoke-Adb -Arguments @("-s", $serial, "shell", "wm", "size") -TimeoutSeconds 5) + (Invoke-Adb -Arguments @("-s", $serial, "shell", "wm", "density") -TimeoutSeconds 5)) -join "; "
+    } catch {
+      "unavailable"
+    }
+  } else {
+    "device not ready"
+  }
+
   [pscustomobject]@{
     AvdName      = $avdName
     Serial       = $serial
@@ -364,6 +383,7 @@ function Show-Status {
     RunEvents    = $runEvents
     RunProcesses = $runProcesses
     RunScreenshot = $runScreenshot
+    Display      = $display
   }
 }
 
