@@ -13,10 +13,6 @@ BASE_APK = ROOT.parent / "base" / "com.square_enix.million_cn-1.0.0.100.0712.M33
 LIB_PATH = ROOT / "million_cn" / "apktool" / "lib" / "armeabi" / "librooneyj.so"
 LIB_ENTRY = "lib/armeabi/librooneyj.so"
 DEX_ENTRY = "classes.dex"
-ROUTE_XML_PATH = (
-    ROOT / "million_cn" / "apktool" / "assets" / "bundle" / "rule_resource_route.xml"
-)
-ROUTE_XML_ENTRY = "assets/bundle/rule_resource_route.xml"
 OUTPUT_APK = ROOT / "million-cn-animationguard-signed.apk"
 DEBUG_KEYSTORE = Path.home() / ".android" / "debug.keystore"
 DEBUG_ALIAS = "androiddebugkey"
@@ -357,7 +353,6 @@ def copy_entry(
 
 def rebuild_apk(input_apk: Path, lib_blob: bytes) -> Path:
     temp_apk = OUTPUT_APK.with_suffix(".unsigned.apk")
-    route_xml = ROUTE_XML_PATH.read_bytes()
     if temp_apk.exists():
         temp_apk.unlink()
     if OUTPUT_APK.exists():
@@ -377,10 +372,6 @@ def rebuild_apk(input_apk: Path, lib_blob: bytes) -> Path:
 
             if src_info.filename == DEX_ENTRY:
                 copy_entry(src_zip, src_info, dst_zip, patch_dex(src_zip.read(src_info)))
-                continue
-
-            if src_info.filename == ROUTE_XML_ENTRY:
-                copy_entry(src_zip, src_info, dst_zip, route_xml)
                 continue
 
             copy_entry(src_zip, src_info, dst_zip, None)

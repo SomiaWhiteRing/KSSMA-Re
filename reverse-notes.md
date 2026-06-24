@@ -299,7 +299,7 @@ Notes:
 - Install must use `adb install -r -f` because the manifest has `android:installLocation="preferExternal"` and Android 4.4 external ASEC install is unreliable here.
 - `-gpu on` removes the `called unimplemented OpenGL ES API` noise seen with `-gpu off`.
 - `-no-jni` made the classic ARM emulator stay offline, so do not use it as the default.
-- Rebuilt APKs now come from the clean `base/com.square_enix.million_cn-1.0.0.100.0712.M330.apk` plus the current native/resource patches. Do not rebuild from the latest signed APK by default; that carried the old `layout_exploration_area.xml` experiment forward and made main-menu/resource debugging look like a black-screen regression.
+- Rebuilt APKs now come from the clean `base/com.square_enix.million_cn-1.0.0.100.0712.M330.apk` plus the current native/dex patches, with no XML/asset replacement from `work/million_cn/apktool`. Do not rebuild from the latest signed APK or the dirty apktool resource tree by default; that carried old resource experiments forward and made main-menu/resource debugging look like a black-screen regression.
 
 Current ARM runtime blocker:
 
@@ -344,7 +344,7 @@ Current ARM runtime blocker:
 - The bootstrap server should be launched with `PORTS=50005,10001` so both native `/connect/app/` rewrites and WebView `/connect/web/` hit the same local process.
 - `/connect/web/` currently returns a minimal local HTML stub that auto-navigates to `sceneto://2100`.
 - ARM19 retest confirms the Java WebView client handles that URL, logs `sceneto : [sceneto://2100]`, closes the WebView, and returns to the visible main menu without a native crash.
-- Latest clean-base retest installed `work/million-cn-animationguard-signed.apk`, confirmed `assets/bundle/layout_exploration_area.xml` matches the base APK by SHA-256, and captured `work/kssma-mainmenu-clean.png`. The main UI/menu renders and is not the previous full black-screen resource regression. The central main-menu background is still black even though `save/download/pack/mainbg/*` exists on device; treat that as a separate mainbg/rendering issue, not as the bad layout-resource inheritance bug.
+- Latest clean-base retest installed `work/million-cn-animationguard-signed.apk`, confirmed `assets/bundle/rule_resource_route.xml`, `layout_mainmenu.xml`, `layout_exploration_area.xml`, `1000_main_menu_badge.anm`, and `local_battle_player.xml` all match the base APK by SHA-256, and captured `work/kssma-clean-resources-mainmenu.png`. The main UI/menu renders and is not the previous full black-screen resource regression. The central main-menu background is still black even though `save/download/pack/mainbg/*` exists on device; treat that as a separate mainbg/rendering issue, not as dirty APK resource inheritance.
 - This is no longer the BlueStacks `libhoudini.so` crash and no longer a missing `rest`, `adv_chara111`, `bgm_common1`, `_Layout::event` `0x98`, or blocked original WebView issue. Next work should interact with main menu entries and implement the next missing `/connect/app/` route.
 
 ## Exploration reconstruction status
