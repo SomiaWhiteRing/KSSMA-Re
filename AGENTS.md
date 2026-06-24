@@ -22,6 +22,7 @@
 
 - 默认只使用 `reverse-notes.md` 记录的 Android 4.4.2/API19 ARM 运行时。
 - 不要切回 Android 12、x86、BlueStacks 或 Houdini，除非用户明确要求调查运行时。
+- ARM19 默认应开启音频；不要用 `-no-audio` 启动，否则 BGM 和角色语音测试无效。
 - 默认从干净 base APK 加最小已知补丁重建，不要从被大改过的 APK 继续叠补丁。
 - 已知 key：
   - `k1`: `A1dPUcrvur2CRQyl`
@@ -68,6 +69,7 @@ world_list.php
 - `_Layout::event(...)` 跳到 `0x98`
 - 原服 `/connect/web/` 弹窗陷阱
 - dirty apktool 资源继承
+- BGM/角色语音的模拟器音频基线；音频只作为运行环境检查项，不属于当前主界面视觉差异 frontier
 
 这些画面问题暂时不作为主线：
 
@@ -141,4 +143,3 @@ node .\server\test-bootstrap-server.js
 - next frontier
 
 失败实验也要记录。阻止下一位代理重复弯路就是进展。
-

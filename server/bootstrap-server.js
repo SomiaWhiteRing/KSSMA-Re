@@ -291,13 +291,10 @@ const EXPLORATION_FLOOR_XML = [
 // ponytail: getCurrentMainBg only appends the day/night suffix; the saved base name already includes mainbg_.
 const MAINMENU_BGFILE = "mainbg_an";
 const MAINMENU_FIELDS = [
-  `    <bgAnmType>1</bgAnmType>`,
-  `    <current_bgfile>${MAINMENU_BGFILE}</current_bgfile>`,
-  `    <previous_bgfile>${MAINMENU_BGFILE}</previous_bgfile>`,
-  `    <currentBgfile>${MAINMENU_BGFILE}</currentBgfile>`,
-  `    <previousBgfile>${MAINMENU_BGFILE}</previousBgfile>`,
-  `    <fairy_pose>1</fairy_pose>`,
-  `    <fairy_face>1</fairy_face>`,
+  "    <mainmenu>",
+  `      <current_bgfile>${MAINMENU_BGFILE}</current_bgfile>`,
+  `      <previous_bgfile>${MAINMENU_BGFILE}</previous_bgfile>`,
+  "    </mainmenu>",
 ];
 const MAINMENU_UPDATE_XML = [
   '<?xml version="1.0" encoding="UTF-8"?>',

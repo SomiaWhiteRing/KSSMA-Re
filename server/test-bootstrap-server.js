@@ -104,10 +104,11 @@ async function main() {
   assert.match(EXPLORATION_FLOOR_XML, /<id>2<\/id>/);
   assert.match(EXPLORATION_FLOOR_XML, /<unlock>1<\/unlock>/);
   assert.match(EXPLORATION_FLOOR_XML, /<boss_down>0<\/boss_down>/);
+  assert.match(MAINMENU_UPDATE_XML, /<mainmenu>/);
   assert.match(MAINMENU_UPDATE_XML, /<current_bgfile>mainbg_an<\/current_bgfile>/);
-  assert.match(MAINMENU_UPDATE_XML, /<bgAnmType>1<\/bgAnmType>/);
-  assert.match(MAINMENU_UPDATE_XML, /<currentBgfile>mainbg_an<\/currentBgfile>/);
-  assert.match(MAINMENU_UPDATE_XML, /<fairy_face>1<\/fairy_face>/);
+  assert.match(MAINMENU_UPDATE_XML, /<previous_bgfile>mainbg_an<\/previous_bgfile>/);
+  assert.doesNotMatch(MAINMENU_UPDATE_XML, /<currentBgfile>/);
+  assert.doesNotMatch(MAINMENU_UPDATE_XML, /<fairy_face>/);
   assert.equal(getLoginOkXml(), CHECK_INSPECTION_OK_XML);
   assert.equal(getLoginXmlSource(getLoginOkXml()), "minimal");
   process.env.LOGIN_RESPONSE = "tutorial";
@@ -116,9 +117,11 @@ async function main() {
   process.env.LOGIN_RESPONSE = "sample";
   assert.equal(getLoginOkXml(), LOGIN_MAINMENU_XML);
   assert.equal(getLoginXmlSource(getLoginOkXml()), "assets/bundle/local_battle_player.xml + mainmenu bg");
+  assert.match(getLoginOkXml(), /<mainmenu>/);
   assert.match(getLoginOkXml(), /<current_bgfile>mainbg_an<\/current_bgfile>/);
-  assert.match(getLoginOkXml(), /<currentBgfile>mainbg_an<\/currentBgfile>/);
-  assert.match(getLoginOkXml(), /<fairy_face>1<\/fairy_face>/);
+  assert.match(getLoginOkXml(), /<previous_bgfile>mainbg_an<\/previous_bgfile>/);
+  assert.doesNotMatch(getLoginOkXml(), /<currentBgfile>/);
+  assert.doesNotMatch(getLoginOkXml(), /<fairy_face>/);
   assert.doesNotMatch(getLoginOkXml(), /<card_rev>[1-9]/);
   assert.doesNotMatch(getLoginOkXml(), /<resource_rev>[\s\S]*?<revision>[1-9]/);
   delete process.env.LOGIN_RESPONSE;

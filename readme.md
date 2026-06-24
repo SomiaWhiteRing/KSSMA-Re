@@ -19,6 +19,20 @@
 先启动本地引导服务。当前 ARM 主线使用 `sample`，它能走到主菜单：
 
 ```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File .\work\kssma-server.ps1 start
+```
+
+查看状态、日志或停止服务：
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File .\work\kssma-server.ps1 status
+powershell -NoProfile -ExecutionPolicy Bypass -File .\work\kssma-server.ps1 log
+powershell -NoProfile -ExecutionPolicy Bypass -File .\work\kssma-server.ps1 stop
+```
+
+手动启动等价于：
+
+```powershell
 $env:CHECK_INSPECTION_KEY='rBwj1MIAivVN222b'
 $env:CONNECT_APP_KEY='rBwj1MIAivVN222b'
 $env:LOGIN_RESPONSE='sample'
@@ -40,6 +54,15 @@ node .\server\bootstrap-server.js
 用途是先顶住世界选择、入场注册、密钥加密和资源入口，把请求打印出来，再继续补 `/connect/app/` 协议。`LOGIN_RESPONSE` 不设置时只返回最小成功 XML；`sample` 是当前最远路径；`tutorial` 会进入教程 scene 100，但会在教程资源路径上更早崩溃，暂时不是主线。
 服务端默认把客户端回调地址写成 `http://10.0.2.2:50005/`，这是 Android 模拟器访问宿主机的地址；如果换真机或不同虚拟化网络，再用 `GUEST_HOST` 或 `WORLD_URL`/`TOP_URL` 覆盖。
 
+开始人工测试前，可以跑只读 preflight：
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File .\work\kssma-preflight.ps1
+```
+
+它不会启动、停止、root、push 或修改模拟器，只检查 server 端口、ARM19 ADB 目标、
+hosts、显示、音频和几个关键资源文件，并给出下一条该执行的修复命令。
+
 ## 旧安卓运行时
 
 不要再用本机的 Android 12 模拟器跑这个客户端。
@@ -53,6 +76,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\work\android44-arm19.ps1 c
 powershell -NoProfile -ExecutionPolicy Bypass -File .\work\android44-arm19.ps1 start
 powershell -NoProfile -ExecutionPolicy Bypass -File .\work\android44-arm19.ps1 install -ApkPath .\work\million-cn-animationguard-signed.apk
 powershell -NoProfile -ExecutionPolicy Bypass -File .\work\android44-arm19.ps1 hosts
+powershell -NoProfile -ExecutionPolicy Bypass -File .\work\android44-arm19.ps1 mount
 powershell -NoProfile -ExecutionPolicy Bypass -File .\work\android44-arm19.ps1 preload-small
 powershell -NoProfile -ExecutionPolicy Bypass -File .\work\android44-arm19.ps1 run
 ```
@@ -62,8 +86,12 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\work\android44-arm19.ps1 r
 - `preload-small` 只推 `download/rest`、`download/scenario`、`download/pack` 和少量必需文件，用来快速验证启动链；完整资源仍用 `preload-full` 单独处理。
 - `preload-small` 也会推已证明需要的小文件：`save_version`、`master_*`、`adv_chara111`、`bgm_common1.ogg`。
 - `hosts` 把模拟器里的 `game.ma.mobimon.com.tw` 指向 `10.0.2.2`；`run` 会自动执行一次，服务端需同时监听原服 WebView 端口 `10001`。
+- `mount` 只恢复已经推到 `/data/local/tmp/kssma-save` 的 full resource bind mount；模拟器冷启动后 mount 会丢，但不需要每次重新推 500MB 资源。
+- `launch` 和 `run` 会自动恢复 hosts，并在 full resource 底稿存在时自动恢复 bind mount。
+- 如果游戏提示无法连接服务器，先检查 `work\kssma-server.ps1 status`，确认 `50005` 和 `10001` 都在监听。
 - `install` 使用内部安装，绕过 Android 4.4 外置 ASEC 安装不稳定的问题。
 - `-gpu on` 是当前默认；`-gpu off` 会产生误导性的 OpenGL ES 噪声。
+- 音频是当前运行时基线的一部分；不要用 `-no-audio` 启动 ARM19，否则无法验证 BGM 和角色语音。
 - BlueStacks 脚本还保留在 `work\bluestacks-nougat32.ps1`，但只作为排查对照，不再是默认运行时。
 
 当前运行时已经能进入主菜单并加载 `adv_chara111` 与 `bgm_common1.ogg`。`_Layout::event(...)` 的 ARM `0x98` 崩溃已通过 `work\build-animation-nullguard.py` 中的最小 native guard 绕过；后续会打开本地 `/connect/web/` 占位页，日志和截图会保存到 `work\android44-arm19-last-run-*`。

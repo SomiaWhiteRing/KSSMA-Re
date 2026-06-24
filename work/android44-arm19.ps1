@@ -1,5 +1,5 @@
 param(
-  [ValidateSet("status", "configure", "start", "wait", "install", "hosts", "preload-rest", "preload-small", "preload-full", "launch", "run", "logcat", "stop")]
+  [ValidateSet("status", "configure", "start", "wait", "install", "hosts", "mount", "preload-rest", "preload-small", "preload-full", "launch", "run", "logcat", "stop")]
   [string]$Action = "status",
   [string]$ApkPath,
   [switch]$WipeData
@@ -223,6 +223,8 @@ function Configure-Runtime {
   Set-AvdConfigValue "disk.dataPartition.size" "1536M"
   Set-AvdConfigValue "hw.ramSize" "2048"
   Set-AvdConfigValue "vm.heapSize" "256M"
+  Set-AvdConfigValue "hw.audioInput" "yes"
+  Set-AvdConfigValue "hw.audioOutput" "yes"
   Set-AvdConfigValue "hw.lcd.width" "1280"
   Set-AvdConfigValue "hw.lcd.height" "720"
   Set-AvdConfigValue "hw.lcd.density" "240"
@@ -269,7 +271,6 @@ function Start-Runtime {
     "-no-snapshot-load",
     "-no-snapshot-save",
     "-no-boot-anim",
-    "-no-audio",
     "-gpu", "on",
     "-show-kernel",
     "-verbose"
@@ -512,11 +513,16 @@ function Mount-SaveResources {
   Invoke-Adb -Arguments @("-s", $serial, "shell", "mount", "-o", "bind", $internalSaveDir, $deviceSaveDir) | Out-Null
 }
 
-function Launch-Game {
-  Wait-Runtime
+function Restore-RuntimeBaseline {
+  Set-LocalHosts | Out-Null
   if (Test-DeviceFile "$internalSaveDir/download/rest/treasurebox") {
     Mount-SaveResources
   }
+}
+
+function Launch-Game {
+  Wait-Runtime
+  Restore-RuntimeBaseline
   Invoke-Adb @("-s", $serial, "shell", "input", "keyevent", "66") | Out-Null
   Invoke-Adb @("-s", $serial, "shell", "am", "force-stop", $package) | Out-Null
   Invoke-Adb @("-s", $serial, "shell", "am", "start", "-n", "$package/$activity")
@@ -600,6 +606,7 @@ switch ($Action) {
   "wait" { Wait-Runtime; Show-Status }
   "install" { Start-Runtime; Install-Game }
   "hosts" { Start-Runtime; Set-LocalHosts }
+  "mount" { Start-Runtime; Mount-SaveResources }
   "preload-rest" { Start-Runtime; Preload-RestResources }
   "preload-small" { Start-Runtime; Preload-SmallResources }
   "preload-full" { Start-Runtime; Preload-FullResources }
@@ -607,7 +614,7 @@ switch ($Action) {
   "run" {
     Start-Runtime
     Wait-Runtime
-    Set-LocalHosts | Out-Null
+    Restore-RuntimeBaseline
     Invoke-Adb @("-s", $serial, "logcat", "-c") | Out-Null
     Launch-Game
     Start-Sleep -Seconds 35
