@@ -496,3 +496,113 @@ Current ARM runtime blocker:
 - Observed: artifact prefix `work/kssma-runtime-mainmenu-mainmenu-node-rerun`; requests reached `/check_inspection`, `/connect/app/notification/post_devicetoken`, `/connect/app/login`, and `/connect/web/`; resources still showed `face_1`, `face_111`, `adv_chara111`, and `mainbg_an_0_0` present. Screenshot `work/kssma-runtime-mainmenu-mainmenu-node-rerun.png` showed the mainbg image instead of a black background, but the WebView dismiss helper pressed Back and opened the exit confirmation dialog. After tapping `No`, screenshot `work/kssma-after-mainmenu-node-no.png` showed the main menu with background, pixie, buttons, AP/BC/card/friend counters visible.
 - Conclusion: `<mainmenu>` with `current_bgfile` and `previous_bgfile` is a valid fix candidate for the black main-menu background/pixie startup state. The earlier `<main_menu>` wrapper and direct `<body>` fields are the wrong shapes for this parser path.
 - Next: keep this minimal response shape. If face expression still needs refinement, investigate which `fairy_pose`/`fairy_face` values the pixie model expects, but do not reopen resource mount, audio, or broad XML-field guessing.
+
+## Mainmenu fairy_pose schema check
+
+- Frontier: validate one formed schema hypothesis for mainmenu pixie fields, not discover schema by runtime guessing.
+- Schema card source: `work/mainmenu-fairy-schema-card.md`; static anchors are `work/million_cn/jadx/resources/assets/bundle/layout_mainmenu.xml:21`-`23` and `work/mainmenu-parser-annotated.txt` `_AnmPixie::setPropertyValues` at `0x2898ac`, which looks up `fairy_pose`/`fairy_face` and calls `updateFairyImage`.
+- Hypothesis: adding only `<fairy_pose>1</fairy_pose>` under the already-proven `<body><mainmenu>` node changes the visible pixie pose/face state or produces a new face/fairy resource/log observable.
+- Changed one variable: temporarily added only `<fairy_pose>1</fairy_pose>` to `MAINMENU_FIELDS`; no `fairy_face`, APK, emulator, resource, contents/loginBonus/badge/dialogue, or audio change.
+- Expected observable: login response size increases by one field, request chain still reaches scene `2100`, and clean screenshot or logcat shows a pixie/face change versus `work/kssma-runtime-mainmenu-fairy-baseline-clean.png`.
+- Server check: `node .\server\test-bootstrap-server.js` passed; `mainmenu/update` encrypted response grew from `336` to `368` bytes during the experiment.
+- ARM19 check: `powershell -NoProfile -ExecutionPolicy Bypass -File C:\Users\旻\.codex\skills\kssma-re-runtime\scripts\kssma_runtime_check.ps1 -Repo C:\Users\旻\Documents\GitHub\KSSMA-Re -DriveLogin -DismissNoticeWebView -WaitMainMenuAfterWebView 20 -WaitSeconds 60 -Tag mainmenu-fairy-pose-1`.
+- Artifact prefix: `work/kssma-runtime-mainmenu-fairy-pose-1`; baseline prefix `work/kssma-runtime-mainmenu-fairy-baseline`.
+- Observed: login response size was `1936` versus baseline `1904`, proving the single field was served. Requests reached `/check_inspection`, `/connect/app/notification/post_devicetoken`, `/connect/app/login`, and `/connect/web/`. Logcat had no new `JResourceLoader`, `getSDPackFile`, `loadTexture`, `face`, `fairy`, or fatal signal evidence. Clean screenshot `work/kssma-runtime-mainmenu-fairy-pose-1-clean.png` matched baseline visually; pixel diff was `0.0594%` full screen and `0%` in the marked face area, with changed pixels only around `x=358..474,y=632..636`.
+- Conclusion: `fairy_pose=1` alone did not produce a useful mainmenu face/character observable.
+- Next: validate `fairy_face` as the second and final candidate from the same schema card; stop if it also produces no new observable.
+
+## Mainmenu fairy_face schema check
+
+- Frontier: validate the second formed schema hypothesis for mainmenu pixie fields.
+- Schema card source: `work/mainmenu-fairy-schema-card.md`; same `layout_mainmenu.xml` pixie binding and `_AnmPixie::setPropertyValues -> updateFairyImage` static path.
+- Hypothesis: adding only `<fairy_face>1</fairy_face>` under `<body><mainmenu>` changes the visible pixie face state or produces a new face/fairy resource/log observable.
+- Changed one variable: removed the temporary `fairy_pose` field and temporarily added only `<fairy_face>1</fairy_face>` to `MAINMENU_FIELDS`; no other response shape, APK, emulator, resource, contents/loginBonus/badge/dialogue, or audio change.
+- Expected observable: login response size increases by one field, request chain still reaches scene `2100`, and clean screenshot or logcat shows a face-specific change versus baseline.
+- Server check: `node .\server\test-bootstrap-server.js` passed; `mainmenu/update` encrypted response was `368` bytes during the experiment.
+- ARM19 check: `powershell -NoProfile -ExecutionPolicy Bypass -File C:\Users\旻\.codex\skills\kssma-re-runtime\scripts\kssma_runtime_check.ps1 -Repo C:\Users\旻\Documents\GitHub\KSSMA-Re -DriveLogin -DismissNoticeWebView -WaitMainMenuAfterWebView 20 -WaitSeconds 60 -Tag mainmenu-fairy-face-1`.
+- Artifact prefix: `work/kssma-runtime-mainmenu-fairy-face-1`.
+- Observed: login response size was `1936`, proving the single field was served. Requests reached `/check_inspection`, `/connect/app/notification/post_devicetoken`, `/connect/app/login`, and `/connect/web/`. Logcat had no new `JResourceLoader`, `getSDPackFile`, `loadTexture`, `face`, `fairy`, or fatal signal evidence. Clean screenshot `work/kssma-runtime-mainmenu-fairy-face-1-clean.png` still did not reveal a face change; pixel diff versus baseline was `0.3424%` full screen and `0%` in the marked face area, with changed pixels localized around the lower AP/BC bar region `x=332..496,y=611..647`.
+- Conclusion: `fairy_face=1` alone did not produce a useful mainmenu face observable. Together with the `fairy_pose=1` negative result, this satisfies the hard stop: two candidate field checks produced no new face/character observable.
+- Next: stop runtime field trials. The server was restored to the minimal `<mainmenu><current_bgfile>mainbg_an</current_bgfile><previous_bgfile>mainbg_an</previous_bgfile></mainmenu>` shape; future work should recover the value domain or missing model data statically before another runtime check.
+
+## Master/resource static mapping proof
+
+- Frontier: static proof for face/character dialog resource mapping without changing server, APK, runtime, or audio.
+- Hypothesis: an existing sample `leader_serial_id` or `master_card_id` can be linked to `master_card`, then to concrete `face_*` / `adv_chara*` files in the 140330 save dump.
+- Command: `node .\work\master-resource-map-proof.js`; report written to `work/master-resource-map-20260625.md`.
+- Observed:
+  - `local_battle_player.xml` only exposes `leader_serial_id=2367`; it has no `master_card_id`, `owner_card_list`, `user_card`, or `leader_card` body.
+  - Parsed `save/database/master_card` as a big-endian offset table with 480 records. `2367` is not a master id and no parsed record contains u32 value `2367`.
+  - Other bundle samples prove the direct chain when `master_card_id` is present:
+    - `local_battle_result.xml`: `serial_id=13822704 -> master_card_id=9 -> face_9/adv_chara9 and face_5009/adv_chara5009` exist; `card9_0.pack` contains the aliases.
+    - `local_battle_result.xml`: `serial_id=7 -> master_card_id=101 -> face_101/adv_chara101 and face_5101/adv_chara5101` exist; `card101_0.pack` contains the aliases.
+    - `local_users_event_list.xml` and `local_battle_area.xml` similarly close for `master_card_id` 22, 179, and 30.
+- Conclusion: `master_card_id -> master_card -> card pack alias -> face/adv resource` is a viable static chain, but `local_battle_player.xml leader_serial_id=2367 -> master_card_id` remains unproven. Do not infer `face_2367` or `adv_chara2367` from the leader serial.
+- Next: find or capture one owner-card payload containing `serial_id=2367` beside `master_card_id`; then add exactly one proven `2367 -> N -> face_N/adv_charaN` row.
+
+## Owner-card evidence static search
+
+- Frontier: resolve `leader_serial_id=2367` to a sibling owned-card `master_card_id` without runtime, server, APK, or audio changes.
+- Hypothesis: an existing bundle sample, 140330 save dump file, server sample, or `work/` runtime/log/decrypted artifact contains an owner-card structure with `serial_id=2367` and `master_card_id` in the same block.
+- Command: `node .\work\owner-card-evidence-proof.js`; report written to `work/owner-card-evidence-20260625.md`.
+- Observed: scanned jadx bundle, apktool bundle, non-audio sdcard dump files, the 140330 ZIP database/appdata/text candidates, `server/`, and top-level `work/` artifacts. The only valid payload hit remains `local_battle_player.xml` with `your_data/leader_serial_id=2367`; no searched source contains `serial_id=2367 -> master_card_id=N`. Binary/log hits for `2367` were PNG bytes, Android process ids, or existing proof notes.
+- Conclusion: the chain still cannot close. `2367` remains an owned-card serial id only and must not be used as `master_card_id`, `face_2367`, or `adv_chara2367`.
+- Next: the minimum proof is one captured/static owner-card or deck payload, likely from `roundtable/edit`, `roundtable/preview`, `menu/playerinfo`, `menu/cardcollection`, `cardselect/savedeckcard`, or `card/exchange`, containing `<serial_id>2367</serial_id>` beside `<master_card_id>N</master_card_id>`.
+
+## Mainmenu infomation 2/1 runtime attempt
+
+- Frontier: mainmenu infomation candidate might repair or change the pixie face or character-click dialogue.
+- Hypothesis: one `<mainmenu><infomation>` entry with `fairy_pose=2`, `fairy_face=1`, and a `Welcome back.` message will be consumed by `TownModel` / `NavigatorModel` and produce a pixie or dialogue observable.
+- Changed one variable: temporarily added one `<infomation>` child under the already-proven `<body><mainmenu>` fields in `MAINMENU_FIELDS`, so it covered both `LOGIN_RESPONSE=sample` login seeding and `/connect/app/mainmenu/update`. No `imagefile`, `focus`, `link`, `banner`, `rewards`, `event_type`, APK, emulator, resource, or audio change.
+- Server check: `node .\server\test-bootstrap-server.js` passed with the candidate; encrypted `/connect/app/mainmenu/update` grew from the mainbg-only 336 bytes to 576 bytes. After the failed runtime attempt produced no client observable, server/test were restored to the mainbg-only state and the same self-check passed again with `mainmenu/update` back at 336 bytes.
+- ARM19 check: ran exactly once: `powershell -NoProfile -ExecutionPolicy Bypass -File C:\Users\旻\.codex\skills\kssma-re-runtime\scripts\kssma_runtime_check.ps1 -Repo C:\Users\旻\Documents\GitHub\KSSMA-Re -DriveLogin -DismissNoticeWebView -WaitMainMenuAfterWebView 20 -WaitSeconds 60 -Tag mainmenu-infomation-2-1`. The outer shell timed out after about 604 seconds before the helper wrote its summary/logcat/screenshot artifacts.
+- Observed: artifact prefix `work/kssma-runtime-mainmenu-infomation-2-1`; only `*-server.out.log`, `*-server.err.log`, and `*-login-driver.txt` were produced. `*-server.out.log` contains only bootstrap server startup on `50005` and `10001`; `*-login-driver.txt` only reached `drive_login start login_id=13800138000`. There were no `world_list`, `check_inspection`, `/connect/app/login`, `/connect/app/mainmenu/update`, or `/connect/web/` requests. No summary, logcat key line, screenshot, RooneyJActivity/mainmenu proof, pixie change, dialogue proof, resource miss, or native crash artifact was produced. The one-shot `node .\server\bootstrap-server.js` process and the timed-out `kssma_runtime_check.ps1` PowerShell process left by the timeout were stopped after confirming their command lines.
+- Conclusion: this run produced no valid runtime observable for the `infomation` candidate, so the candidate XML was not kept. It does not prove the values fail; it only proves this one-shot run did not reach the client flow.
+- Next: keep the server at the mainbg-only `<mainmenu>` baseline. Before any future rerun of this exact candidate, first diagnose why the runtime helper hung before login/request capture; do not change schema, APK, resources, emulator target, or audio to explain this attempt.
+
+## Runtime harness observability restored
+
+- Frontier: the one-shot runtime helper timed out before producing request, logcat, activity, or screenshot artifacts for the prior `infomation` trial.
+- Hypothesis: the helper was losing observability before the login driver because ARM19 was not actually online on the expected serial during cold start; it was not a protocol/XML failure.
+- Changed one variable: no server XML, APK, resource, or emulator-target change. Ran read-only preflight/status checks first, then retried the baseline helper after standard ARM19 was online and `hosts`/`launch` had been verified individually.
+- Server check: baseline server remained the mainbg-only `<mainmenu>` shape before candidate retest.
+- ARM19 check:
+  - Read-only preflight: `powershell -NoProfile -ExecutionPolicy Bypass -File .\work\kssma-preflight.ps1`.
+  - Cold helper attempt: `powershell -NoProfile -ExecutionPolicy Bypass -File C:\Users\旻\.codex\skills\kssma-re-runtime\scripts\kssma_runtime_check.ps1 -Repo C:\Users\旻\Documents\GitHub\KSSMA-Re -DriveLogin -DismissNoticeWebView -WaitMainMenuAfterWebView 20 -WaitSeconds 60 -Tag harness-baseline-mainbg-only` timed out externally after 900s.
+  - Online helper retry: `powershell -NoProfile -ExecutionPolicy Bypass -File C:\Users\旻\.codex\skills\kssma-re-runtime\scripts\kssma_runtime_check.ps1 -Repo C:\Users\旻\Documents\GitHub\KSSMA-Re -DriveLogin -DismissNoticeWebView -WaitMainMenuAfterWebView 20 -WaitSeconds 60 -Tag harness-baseline-online-mainbg-only`.
+- Observed: preflight initially showed `ServerPort50005=False`, `ServerPort10001=False`, and no ARM19 serial; the visible ADB devices were Android 12/x86_64. The cold helper left only `work/kssma-runtime-harness-baseline-mainbg-only-server.out.log` and `server.err.log`; manual captures showed ARM19 later online as `emulator-5582` (`armeabi-v7a`, Android `4.4.2`) but still at Launcher, with no server requests. After verifying `android44-arm19.ps1 hosts` and `launch` separately, the online retry produced full artifacts under `work/kssma-runtime-harness-baseline-online-mainbg-only*`: requests reached `/check_inspection`, `/connect/app/notification/post_devicetoken`, `/connect/app/login`, and `/connect/web/`; activity/logcat/resources/screenshot were captured.
+- Conclusion: runtime observability is restored when ARM19 is already online on `emulator-5582`; the prior 604s candidate run and the repeated cold helper timeout were harness/ADB startup observability failures, not evidence against the XML candidate.
+- Next: rerun only the fixed `infomation 2/1 + message` candidate now that baseline request, activity, logcat, and screenshot artifacts are available.
+
+## Mainmenu infomation 2/1 result
+
+- Frontier: validate the fixed `infomation` candidate, not discover new schema.
+- Hypothesis: one `<mainmenu><infomation>` entry with `fairy_pose=2`, `fairy_face=1`, and a `Welcome back.` message will be consumed by `TownModel` / `NavigatorModel` and produce a pixie or dialogue observable.
+- Changed one variable: kept the proven `<mainmenu><current_bgfile>mainbg_an</current_bgfile><previous_bgfile>mainbg_an</previous_bgfile>` baseline and added only:
+  `<infomation><fairy_pose>2</fairy_pose><fairy_face>1</fairy_face><message><text>Welcome back.</text><color>0xFFFFFF</color><size>20</size></message></infomation>`.
+  The shared `MAINMENU_FIELDS` covers both `LOGIN_RESPONSE=sample` login seeding and `/connect/app/mainmenu/update`; no `imagefile`, `focus`, `link`, `banner`, `rewards`, `event_type`, APK, emulator, resource, or audio change.
+- Server check: `node .\server\test-bootstrap-server.js` passed. `/connect/app/mainmenu/update` encrypted response grew from the mainbg-only 336 bytes to 576 bytes, and the test asserts the candidate fields are present while the excluded fields are absent.
+- ARM19 check: `powershell -NoProfile -ExecutionPolicy Bypass -File C:\Users\旻\.codex\skills\kssma-re-runtime\scripts\kssma_runtime_check.ps1 -Repo C:\Users\旻\Documents\GitHub\KSSMA-Re -DriveLogin -DismissNoticeWebView -WaitMainMenuAfterWebView 20 -WaitSeconds 60 -Tag mainmenu-infomation-2-1-result`.
+- Observed: artifact prefix `work/kssma-runtime-mainmenu-infomation-2-1-result`; requests reached `/check_inspection`, `/connect/app/notification/post_devicetoken`, `/connect/app/login`, and `/connect/web/`. Login response size was `2144` bytes versus baseline `1904`, proving the candidate was served through `LOGIN_RESPONSE=sample`. No runtime `/connect/app/mainmenu/update` request was emitted during this flow, but the same shared body is covered by the server self-check. Screenshot `work/kssma-runtime-mainmenu-infomation-2-1-result.png` shows the main menu information box rendering `Welcome back.`. A minimal tap at `300,360`, chosen from the 1280x720 screenshot's visible character region, was saved as `work/kssma-runtime-mainmenu-infomation-2-1-result-before-tap.png` and `work/kssma-runtime-mainmenu-infomation-2-1-result-after-tap.png`; after the tap, the pixie changes from the back/side state to a visible front face expression. Logcat after the run/tap showed no new `JResourceLoader`, `getSDPackFile`, `loadTexture`, `Fatal signal`, `SIGABRT`, or `SIGSEGV` evidence.
+- Conclusion: the fixed `infomation 2/1 + message` candidate is valid enough to keep. It gives a concrete main-menu dialogue/message observable and a character-tap pixie/face observable without new resource or native-crash failures.
+- Next: keep the minimal server/test change. Future work can refine real message rotation or pixie value domains from captured server data, but should not add `imagefile`, `banner`, rewards, or event fields without new evidence.
+
+## Mainmenu infomation 2/5 result
+
+- Frontier: fix the initial unclicked main-menu pixie face, not the clicked/selected face path.
+- Hypothesis: `fairy_pose=2` is the supported pose for `adv_chara111`, and changing only `fairy_face` from `1` to `5` will select the front-facing initial expression indicated by the static `adv_chara111_2_5` resource/native string evidence.
+- Changed one variable: kept the proven `<mainmenu><current_bgfile>mainbg_an</current_bgfile><previous_bgfile>mainbg_an</previous_bgfile><infomation>...<message>Welcome back.</message></infomation></mainmenu>` shape and changed only `<fairy_face>1</fairy_face>` to `<fairy_face>5</fairy_face>` in the shared `MAINMENU_FIELDS`. No APK, emulator, resource, `imagefile`, `focus`, `link`, `banner`, rewards, event, or audio change.
+- Server check: `node .\server\test-bootstrap-server.js` passed. `/connect/app/mainmenu/update` encrypted response stayed `576` bytes, and the test now asserts `<fairy_face>5</fairy_face>` is present in both `MAINMENU_UPDATE_XML` and the `LOGIN_RESPONSE=sample` login-seeded payload.
+- ARM19 check: the standard runtime helper first failed before launch at `stage=start-arm19` because `android44-arm19.ps1 start` reported `Display=unavailable` while `emulator-5582` was already `device`; that produced no server requests and is not evidence against `face5`. A manual equivalent run then started `bootstrap-server.js` with `CHECK_INSPECTION_KEY=rBwj1MIAivVN222b`, `CONNECT_APP_KEY=rBwj1MIAivVN222b`, `LOGIN_RESPONSE=sample`, and `PORTS=50005,10001`; verified hosts/resources; force-stopped and started `com.square_enix.million_cn/com.test.enter.LogoActivity`; waited 90 seconds; and collected artifacts under `work/kssma-runtime-mainmenu-infomation-2-5-manual*`.
+- Observed: server requests reached `/check_inspection`, `/connect/app/notification/post_devicetoken`, `/connect/app/login`, and `/connect/web/`. Login response size was `2144` bytes, proving the `face5` payload was served through the same login-seeded path as `face1`. Top activity stayed `com.test.RooneyJActivity`. Screenshot `work/kssma-runtime-mainmenu-infomation-2-5-manual.png` shows the unclicked initial main menu with the pixie facing forward and smiling. Logcat had no new `JResourceLoader`, `getSDPackFile`, `loadTexture`, `Fatal signal`, `SIGABRT`, or `SIGSEGV` evidence.
+- Conclusion: `fairy_pose=2` + `fairy_face=5` fixes the initial unclicked face state for the current local main menu. The earlier `fairy_face=1` run only proved the `infomation/message` node was consumed; its clicked screenshot was the separate selected/touch path and must not be counted as an initial-state fix.
+- Next: keep `face5` as the current baseline for `adv_chara111`. If future work changes the navigator character, recover that character's valid `pose/face` value domain statically before runtime trials.
+
+## Main menu visual restoration closure
+
+- Frontier: close the main-menu visual restoration loop before returning to gameplay/protocol reconstruction.
+- New evidence: the user recovered pre-shutdown gameplay footage and confirmed that tapping the main-menu character originally showed synchronized subtitle text without a bottom/backing dialogue box.
+- Observed current baseline: `fairy_pose=2` + `fairy_face=5` fixes the initial unclicked face for `adv_chara111`; `<mainmenu><current_bgfile>mainbg_an</current_bgfile><previous_bgfile>mainbg_an</previous_bgfile>` fixes the main background; `<mainmenu><infomation><message>...` drives the main-menu information box; BGM/voice runtime baseline is enabled; tapping the character changes expression and shows synchronized text.
+- Correction: the earlier "missing tap dialogue/backing box" reports were based on a false memory of the original UI. They must not be used as evidence for another XML, resource, layout, emulator, or APK fix.
+- Conclusion: main-menu restoration is stage-complete for the current local baseline.
+- Next: resume the post-main-menu frontier, currently gameplay/protocol progression after the visible main menu, such as exploration request/state-machine work. Reopen main-menu visuals only if a new run produces a resource-miss log, texture/native crash, or screenshot regression against this baseline.

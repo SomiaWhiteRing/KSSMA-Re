@@ -294,6 +294,15 @@ const MAINMENU_FIELDS = [
   "    <mainmenu>",
   `      <current_bgfile>${MAINMENU_BGFILE}</current_bgfile>`,
   `      <previous_bgfile>${MAINMENU_BGFILE}</previous_bgfile>`,
+  "      <infomation>",
+  "        <fairy_pose>2</fairy_pose>",
+  "        <fairy_face>5</fairy_face>",
+  "        <message>",
+  "          <text>Welcome back.</text>",
+  "          <color>0xFFFFFF</color>",
+  "          <size>20</size>",
+  "        </message>",
+  "      </infomation>",
   "    </mainmenu>",
 ];
 const MAINMENU_UPDATE_XML = [

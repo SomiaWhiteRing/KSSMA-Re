@@ -16,7 +16,9 @@
 
 ## 当前可用的最短流程
 
-先启动本地引导服务。当前 ARM 主线使用 `sample`，它能走到主菜单：
+先启动本地引导服务。当前 ARM 主线使用 `sample`，它能走到主菜单；主菜单背景、
+初始角色脸图、信息框、BGM/角色语音、点角色表情变化与同步台词已完成第一轮验收。
+关服前录像确认点角色台词本来就没有底色/对话框背景。
 
 ```powershell
 powershell -NoProfile -ExecutionPolicy Bypass -File .\work\kssma-server.ps1 start
@@ -94,6 +96,6 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\work\android44-arm19.ps1 r
 - 音频是当前运行时基线的一部分；不要用 `-no-audio` 启动 ARM19，否则无法验证 BGM 和角色语音。
 - BlueStacks 脚本还保留在 `work\bluestacks-nougat32.ps1`，但只作为排查对照，不再是默认运行时。
 
-当前运行时已经能进入主菜单并加载 `adv_chara111` 与 `bgm_common1.ogg`。`_Layout::event(...)` 的 ARM `0x98` 崩溃已通过 `work\build-animation-nullguard.py` 中的最小 native guard 绕过；后续会打开本地 `/connect/web/` 占位页，日志和截图会保存到 `work\android44-arm19-last-run-*`。
+当前运行时已经能进入并验收主菜单，加载 `adv_chara111` 与 `bgm_common1.ogg`。`_Layout::event(...)` 的 ARM `0x98` 崩溃已通过 `work\build-animation-nullguard.py` 中的最小 native guard 绕过；后续会打开本地 `/connect/web/` 占位页，日志和截图会保存到 `work\android44-arm19-last-run-*`。
 
 已整理的逆向笔记见 `reverse-notes.md`。
