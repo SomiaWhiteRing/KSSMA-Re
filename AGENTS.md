@@ -21,9 +21,33 @@
 ## 固定基线
 
 - 默认只使用 `reverse-notes.md` 记录的 Android 4.4.2/API19 ARM 运行时。
+- 运行时控制入口是 `work/kssma-runtime.ps1`；`work/android44-arm19.ps1` 只是旧命令兼容
+  shim。不要在两个脚本里维护两套 ADB/serial/hosts/mount 逻辑。
+- ARM19 主 serial 固定为 `127.0.0.1:5583`。`emulator-5582` 只作为兼容别名和诊断信息；
+  `emulator-5582 offline` 与 `127.0.0.1:5583 device` 并存时不算失败。
+- 实机测试前必须先跑：
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File .\work\kssma-runtime.ps1 fast-health
+```
+
+  `fast-health` 只允许做 `adb connect 127.0.0.1:5583` 和三个 `getprop`：
+  `ro.product.cpu.abi`、`ro.build.version.release`、`sys.boot_completed`。禁止把 `wm`、
+  `dumpsys`、`logcat`、`screencap`、`df` 放进连接健康检查。
+- 只有 `fast-health` 明确失败才跑 `repair-adb`；只有 `repair-adb` 也失败并给出
+  `restartAllowed=true`，才允许考虑 `restart-runtime`。`restart-runtime` 必须显式带
+  `-Force -Reason "..."`，普通 start/connect/repair 不得杀模拟器。
 - 不要切回 Android 12、x86、BlueStacks 或 Houdini，除非用户明确要求调查运行时。
 - ARM19 默认应开启音频；不要用 `-no-audio` 启动，否则 BGM 和角色语音测试无效。
 - 默认从干净 base APK 加最小已知补丁重建，不要从被大改过的 APK 继续叠补丁。
+- native-only 改动默认用 `work/kssma-runtime.ps1 patch-lib -ApkPath <apk-or-so>` 直接替换
+  已安装包里的 `librooneyj.so`。只有 Java/resources/manifest/签名/包结构变化时才完整
+  `install-apk`。
+- 完整安装前先跑 `work/kssma-runtime.ps1 clean-install`，并看 `status`/`diagnose` 里的
+  `/data` 空间；
+  如果 `adb install` 超时，不要立刻重试，先看 helper 对已安装 lib/hash 和 install log 的诊断。
+- Frida 不是默认运行时探针；它可能让 ARM19 ADB transport 变成 offline。除非有明确 hook
+  假设，否则不要为了“看看”启动 Frida。
 - 已知 key：
   - `k1`: `A1dPUcrvur2CRQyl`
   - `k2`: `rBwj1MIAivVN222b`
@@ -95,6 +119,53 @@ world_list.php
 4. 只改变一个变量。
 5. 跑最小检查。
 6. 把结果写入 `reverse-notes.md`。
+
+## 失败止损硬约束
+
+不要接受“继续直到跑通”作为可执行任务。遇到这种目标，必须先把它切成一个
+不超过 90 分钟的可交付回合，并写清：
+
+- Frontier：本轮唯一卡点。
+- Success：本轮成功标准。
+- Non-goal：本轮明确不碰什么。
+- Stop：触发停止的条件。
+
+每个回合必须交付至少一个可审计产物：
+
+- 已验证修复；
+- 可复现实验 artifact；
+- 写入 `reverse-notes.md` 的结论；
+- 明确废弃的假设或坏探针；
+- 带最小自检的脚本。
+
+以下情况必须立刻停下并写账，不准继续补丁循环：
+
+- 连续两个补丁没有产生新的 route、logcat、PC、截图状态或 activity observable。
+- 任一 native 探针被证明自身有错；必须先写入“坏探针记录”，不得基于它继续推理。
+- 单次实机回合超过 20 分钟仍没有核心 observable；先收束 runtime 链路，不继续玩法逻辑。
+- ADB/模拟器/server 生命周期消耗超过 15 分钟；本轮改为运行时问题，不继续 APK/server 逻辑。
+- 已经得到有效 observable，但还没有写入 `reverse-notes.md`；不得开始下一轮补丁。
+
+native 探针上实机前必须先过静态验收门槛：
+
+- patch 地址原始 bytes 已用脚本 `require(...)` 校验；
+- code cave 已校验不覆盖非零字节；
+- 反汇编确认所有 replay/branch 回到正确地址；
+- trap PC map 写清每个 PC 的含义；
+- 明确写出哪些 PC 是有效证据，哪些只是坏探针/时序证据；
+- `patch-lib` 后必须校验 installed SHA-256 与 source SHA-256 一致。
+
+如果上述任一项缺失，不得安装到实机。实机 logcat 出现 trap 但 installed hash 不匹配时，
+该 run 无效，不能写成产品行为证据。
+
+探索状态机当前额外约束：
+
+- 不要把 `0x00342108` 当成无条件 floor-only 锚点；它属于 `_ExplorationArea::preUpdate`
+  的状态流，必须结合请求链、flag gate 或更深的 floor-list/vector 证据使用。
+- 不要把 successful-return-only `getSelected` 探针当成“未进入分支”的证明；它只能证明
+  已成功选中时的分支，不能证明负返回或未进入。
+- 不要继续 server `floor_info` 字段扫值、found_item/cost/boss 猜测、XML-only 修复、
+  `+0x84` 单点视觉修复，除非先有新的 native observable 指向这些方向。
 
 好的 observable：
 

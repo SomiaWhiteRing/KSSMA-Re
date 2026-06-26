@@ -551,6 +551,20 @@ function createServer() {
         return;
       }
 
+      if (req.method === "POST" && url.pathname === "/connect/app/mainmenu") {
+        // ponytail: the exploration return path only needs the same mainmenu payload as update; split behavior later if evidence demands it.
+        const encrypted = encryptAes128Ecb(MAINMENU_UPDATE_XML, connectAppKey);
+        logRequest("connect_app_response", {
+          path: url.pathname,
+          mode: "aes-128-ecb",
+          key: connectAppKey,
+          bytes: encrypted.length,
+          source: "minimal mainmenu",
+        });
+        sendBinary(res, 200, encrypted);
+        return;
+      }
+
       if (req.method === "POST" && url.pathname === "/connect/app/exploration/area") {
         // ponytail: one selectable area is enough to unblock the scene; add real progression when floor/explore proves it needs it.
         const encrypted = encryptAes128Ecb(EXPLORATION_AREA_XML, connectAppKey);

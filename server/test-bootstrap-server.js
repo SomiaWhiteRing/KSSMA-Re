@@ -228,6 +228,14 @@ async function main() {
     );
     assert.equal(mainmenuUpdateDecoded, MAINMENU_UPDATE_XML);
 
+    const mainmenu = await post(port, "/connect/app/mainmenu?cyt=1", "");
+    assert.equal(mainmenu.statusCode, 200);
+    const mainmenuDecoded = decryptAes128EcbBase64(
+      mainmenu.buffer.toString("base64"),
+      "rBwj1MIAivVN222b"
+    );
+    assert.equal(mainmenuDecoded, MAINMENU_UPDATE_XML);
+
     const explorationArea = await post(
       port,
       "/connect/app/exploration/area?cyt=1",

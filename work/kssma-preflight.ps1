@@ -1,6 +1,6 @@
 param(
-  [string]$PreferredSerial = "emulator-5582",
-  [string[]]$FallbackSerials = @("127.0.0.1:5583")
+  [string]$PreferredSerial = "127.0.0.1:5583",
+  [string[]]$FallbackSerials = @("emulator-5582")
 )
 
 $ErrorActionPreference = "Stop"
@@ -144,7 +144,7 @@ $serial = Resolve-Serial
 $checks.Serial = if ($serial) { $serial } else { "" }
 $checks.Arm19Device = [bool]$serial
 if (-not $serial) {
-  $recommendations.Add("Start ARM19 or fix ADB: powershell -NoProfile -ExecutionPolicy Bypass -File .\work\android44-arm19.ps1 start")
+  $recommendations.Add("Start ARM19 or fix ADB: powershell -NoProfile -ExecutionPolicy Bypass -File .\work\kssma-runtime.ps1 ensure-runtime")
 } else {
   $checks.Abi = (Invoke-Adb -Arguments @("-s", $serial, "shell", "getprop", "ro.product.cpu.abi") -AllowFailure | Out-String).Trim()
   $checks.Android = (Invoke-Adb -Arguments @("-s", $serial, "shell", "getprop", "ro.build.version.release") -AllowFailure | Out-String).Trim()
@@ -157,7 +157,7 @@ if (-not $serial) {
   $checks.HostsOk = $missingHosts.Count -eq 0
   $checks.Hosts = ($hostsText -replace "`n", "; ")
   if ($missingHosts.Count -gt 0) {
-    $recommendations.Add("Repair ARM19 hosts: powershell -NoProfile -ExecutionPolicy Bypass -File .\work\android44-arm19.ps1 hosts")
+    $recommendations.Add("Repair ARM19 hosts: powershell -NoProfile -ExecutionPolicy Bypass -File .\work\kssma-runtime.ps1 hosts")
   }
 
   foreach ($relativePath in $requiredFiles) {
@@ -168,9 +168,9 @@ if (-not $serial) {
   $missingFiles = $requiredFiles | Where-Object { -not $checks["File:$_"] }
   if ($missingFiles.Count -gt 0) {
     if ($internalTreasurebox) {
-      $recommendations.Add("Remount existing full runtime resources: powershell -NoProfile -ExecutionPolicy Bypass -File .\work\android44-arm19.ps1 mount")
+      $recommendations.Add("Remount existing full runtime resources: powershell -NoProfile -ExecutionPolicy Bypass -File .\work\kssma-runtime.ps1 mount")
     } else {
-      $recommendations.Add("Preload full runtime resources before visual/audio checks: powershell -NoProfile -ExecutionPolicy Bypass -File .\work\android44-arm19.ps1 preload-full")
+      $recommendations.Add("Preload full runtime resources before visual/audio checks: powershell -NoProfile -ExecutionPolicy Bypass -File .\work\kssma-runtime.ps1 preload-full")
     }
   }
 

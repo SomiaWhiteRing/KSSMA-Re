@@ -3,4 +3,7 @@ work/*
 !work/
 !work/*.ps1
 !work/*.py
+!work/*.md
+!work/*.js
+work/runtime-state.json
 HUMAN-ROADMAP.local.md
