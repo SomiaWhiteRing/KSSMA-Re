@@ -244,17 +244,6 @@ const EXPLORATION_AREA_XML = [
   "          <area_type>1</area_type>",
   "          <prog_area>0</prog_area>",
   "          <prog_item>0</prog_item>",
-  "          <floor_info_list>",
-  "            <floor_info>",
-  "              <id>2</id>",
-  "              <type>0</type>",
-  "              <unlock>1</unlock>",
-  "              <progress>0</progress>",
-  "              <cost>1</cost>",
-  "              <boss_id>0</boss_id>",
-  "              <found_item_list></found_item_list>",
-  "            </floor_info>",
-  "          </floor_info_list>",
   "        </area_info>",
   "      </area_info_list>",
   "    </exploration_area>",
@@ -285,6 +274,60 @@ const EXPLORATION_FLOOR_XML = [
   "        </floor_info>",
   "      </floor_info_list>",
   "    </exploration_floor>",
+  "  </body>",
+  "</response>",
+].join("");
+const EXPLORATION_GET_FLOOR_XML = [
+  '<?xml version="1.0" encoding="UTF-8"?>',
+  "<response>",
+  "  <header>",
+  "    <error><code>0</code></error>",
+  "    <session_id>local-exploration</session_id>",
+  "    <next_scene>6200</next_scene>",
+  "  </header>",
+  "  <body>",
+  "    <get_floor>",
+  "      <area_id>0</area_id>",
+  "      <bg>exp_sarch</bg>",
+  "      <bgm>bgm_sarch1</bgm>",
+  "      <area_name>Local Area</area_name>",
+  "      <next_exp>0</next_exp>",
+  "      <next_floor>0</next_floor>",
+  "      <floor_info>",
+  "        <id>2</id>",
+  "        <type>0</type>",
+  "        <unlock>1</unlock>",
+  "        <progress>1</progress>",
+  "        <cost>1</cost>",
+  "        <boss_id>0</boss_id>",
+  "        <found_item_list></found_item_list>",
+  "      </floor_info>",
+  "    </get_floor>",
+  "  </body>",
+  "</response>",
+].join("");
+const EXPLORATION_EXPLORE_XML = [
+  '<?xml version="1.0" encoding="UTF-8"?>',
+  "<response>",
+  "  <header>",
+  "    <error><code>0</code></error>",
+  "    <session_id>local-exploration</session_id>",
+  "    <next_scene>6200</next_scene>",
+  "  </header>",
+  "  <body>",
+  "    <explore>",
+  "      <progress>2</progress>",
+  "      <event_type>0</event_type>",
+  "      <gold>0</gold>",
+  "      <get_exp>0</get_exp>",
+  "      <next_exp>0</next_exp>",
+  "      <next_floor>0</next_floor>",
+  "      <friendship_point>0</friendship_point>",
+  "      <recover>0</recover>",
+  "      <encounter>0</encounter>",
+  "      <fairy_pose>2</fairy_pose>",
+  "      <fairy_face>5</fairy_face>",
+  "    </explore>",
   "  </body>",
   "</response>",
 ].join("");
@@ -593,6 +636,34 @@ function createServer() {
         return;
       }
 
+      if (req.method === "POST" && url.pathname === "/connect/app/exploration/get_floor") {
+        // ponytail: one no-branch floor entry is enough to test exploration_main; real event routing comes after the next route proves it.
+        const encrypted = encryptAes128Ecb(EXPLORATION_GET_FLOOR_XML, connectAppKey);
+        logRequest("connect_app_response", {
+          path: url.pathname,
+          mode: "aes-128-ecb",
+          key: connectAppKey,
+          bytes: encrypted.length,
+          source: "minimal exploration get_floor",
+        });
+        sendBinary(res, 200, encrypted);
+        return;
+      }
+
+      if (req.method === "POST" && url.pathname === "/connect/app/exploration/explore") {
+        // ponytail: keep this as the no-branch walking candidate; battle/fairy/reward routes stay separate frontiers.
+        const encrypted = encryptAes128Ecb(EXPLORATION_EXPLORE_XML, connectAppKey);
+        logRequest("connect_app_response", {
+          path: url.pathname,
+          mode: "aes-128-ecb",
+          key: connectAppKey,
+          bytes: encrypted.length,
+          source: "minimal exploration explore",
+        });
+        sendBinary(res, 200, encrypted);
+        return;
+      }
+
       const masterdataSample = MASTERDATA_SAMPLES[url.pathname];
       if (req.method === "POST" && masterdataSample) {
         if (!masterdataSample.bytes) {
@@ -660,6 +731,8 @@ module.exports = {
   CHECK_INSPECTION_OK_XML,
   EXPLORATION_AREA_XML,
   EXPLORATION_FLOOR_XML,
+  EXPLORATION_GET_FLOOR_XML,
+  EXPLORATION_EXPLORE_XML,
   MAINMENU_UPDATE_XML,
   LOGIN_TUTORIAL_XML,
   LOGIN_OK_XML,

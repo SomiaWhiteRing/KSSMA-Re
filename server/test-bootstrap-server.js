@@ -9,7 +9,9 @@ const {
   encryptAes128Ecb,
   encryptAes128EcbBuffer,
   EXPLORATION_AREA_XML,
+  EXPLORATION_EXPLORE_XML,
   EXPLORATION_FLOOR_XML,
+  EXPLORATION_GET_FLOOR_XML,
   MAINMENU_UPDATE_XML,
   getLoginOkXml,
   getLoginXmlSource,
@@ -104,6 +106,17 @@ async function main() {
   assert.match(EXPLORATION_FLOOR_XML, /<id>2<\/id>/);
   assert.match(EXPLORATION_FLOOR_XML, /<unlock>1<\/unlock>/);
   assert.match(EXPLORATION_FLOOR_XML, /<boss_down>0<\/boss_down>/);
+  assert.match(EXPLORATION_GET_FLOOR_XML, /<next_scene>6200<\/next_scene>/);
+  assert.match(EXPLORATION_GET_FLOOR_XML, /<get_floor>/);
+  assert.match(EXPLORATION_GET_FLOOR_XML, /<area_id>0<\/area_id>/);
+  assert.match(EXPLORATION_GET_FLOOR_XML, /<bg>exp_sarch<\/bg>/);
+  assert.match(EXPLORATION_GET_FLOOR_XML, /<bgm>bgm_sarch1<\/bgm>/);
+  assert.match(EXPLORATION_GET_FLOOR_XML, /<floor_info>/);
+  assert.match(EXPLORATION_EXPLORE_XML, /<next_scene>6200<\/next_scene>/);
+  assert.match(EXPLORATION_EXPLORE_XML, /<explore>/);
+  assert.match(EXPLORATION_EXPLORE_XML, /<progress>2<\/progress>/);
+  assert.match(EXPLORATION_EXPLORE_XML, /<event_type>0<\/event_type>/);
+  assert.match(EXPLORATION_EXPLORE_XML, /<get_exp>0<\/get_exp>/);
   assert.match(MAINMENU_UPDATE_XML, /<mainmenu>/);
   assert.match(MAINMENU_UPDATE_XML, /<current_bgfile>mainbg_an<\/current_bgfile>/);
   assert.match(MAINMENU_UPDATE_XML, /<previous_bgfile>mainbg_an<\/previous_bgfile>/);
@@ -248,8 +261,8 @@ async function main() {
     );
     assert.equal(explorationAreaDecoded, EXPLORATION_AREA_XML);
     assert.match(explorationAreaDecoded, /<area_info>/);
-    assert.match(explorationAreaDecoded, /<floor_info>/);
-    assert.match(explorationAreaDecoded, /<found_item_list>/);
+    assert.doesNotMatch(explorationAreaDecoded, /<floor_info_list>/);
+    assert.doesNotMatch(explorationAreaDecoded, /<floor_info>/);
 
     const explorationFloor = await post(
       port,
@@ -262,6 +275,30 @@ async function main() {
       "rBwj1MIAivVN222b"
     );
     assert.equal(explorationFloorDecoded, EXPLORATION_FLOOR_XML);
+
+    const explorationGetFloor = await post(
+      port,
+      "/connect/app/exploration/get_floor?cyt=1",
+      "area_id=NzgOGTK08BvkZN5q8XvG6Q%3D%3D%0A&check=HJQrxs%2FKaF3hyO81WS2jdA%3D%3D%0A&floor_id=vEVHSbIy52rSa1oy06FUIg%3D%3D%0A"
+    );
+    assert.equal(explorationGetFloor.statusCode, 200);
+    const explorationGetFloorDecoded = decryptAes128EcbBase64(
+      explorationGetFloor.buffer.toString("base64"),
+      "rBwj1MIAivVN222b"
+    );
+    assert.equal(explorationGetFloorDecoded, EXPLORATION_GET_FLOOR_XML);
+
+    const explorationExplore = await post(
+      port,
+      "/connect/app/exploration/explore?cyt=1",
+      "area_id=NzgOGTK08BvkZN5q8XvG6Q%3D%3D%0A&auto_build=HJQrxs%2FKaF3hyO81WS2jdA%3D%3D%0A&floor_id=vEVHSbIy52rSa1oy06FUIg%3D%3D%0A"
+    );
+    assert.equal(explorationExplore.statusCode, 200);
+    const explorationExploreDecoded = decryptAes128EcbBase64(
+      explorationExplore.buffer.toString("base64"),
+      "rBwj1MIAivVN222b"
+    );
+    assert.equal(explorationExploreDecoded, EXPLORATION_EXPLORE_XML);
 
     const webStub = await get(port, "/connect/web/?S=session-1");
     assert.equal(webStub.statusCode, 302);

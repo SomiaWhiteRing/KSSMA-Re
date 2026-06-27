@@ -63,14 +63,22 @@ node .\server\bootstrap-server.js
 
 ## 当前主线
 
-按 `clean-start.md` 执行。项目正在保留已有证据的前提下，重新从原始客户端流程
-建立主线。
+按 `clean-start.md` 执行。项目正在保留已有证据的前提下，沿原始客户端流程推进。
+不要把所有问题都压成“下一条请求”。启动阶段可以按下一条 route 推进；进入主菜单后的
+玩法阶段必须按“流程边”推进：
+
+```text
+用户动作 -> 请求/响应 -> 客户端状态切换 -> 可见 UI 迁移 -> 下一次点击目标/下一条 route
+```
+
+HTTP 200 只证明 server 应答了，不证明客户端站到了正确页面。玩法功能的验收必须同时看
+请求顺序、截图/scene、下一次点击发出的 route，必要时看 native 调用路径。
 
 主菜单视觉还原已阶段完成：当前 `sample` 路径能进入可见主菜单，背景、初始角色
 脸图、主菜单信息框、BGM/角色语音、点角色后的表情变化与同步台词都已对照关服前
 录像验收。录像确认点角色台词本来就没有底色/对话框背景；不要再把这点当作缺陷。
 
-优先重新打通启动请求链：
+启动链回归时优先检查：
 
 ```text
 world_list.php
@@ -113,12 +121,25 @@ world_list.php
 
 每个非平凡改动必须按这个顺序：
 
-1. 说清当前 frontier。
-2. 提出一个可证伪假设。
-3. 定义最小 observable。
-4. 只改变一个变量。
-5. 跑最小检查。
-6. 把结果写入 `reverse-notes.md`。
+1. 说清当前 frontier。玩法阶段写成一条流程边，不要只写 route 名。
+2. 先问：有没有已验收的正确路径能产生同一目标画面、状态或下一条 route？
+3. 如果有，优先静态恢复并复用这条完整正确路径；不要先手搓其中一个 UI 事件、
+   state 写值、列表字段或绘制标志。
+4. 提出一个可证伪假设。
+5. 定义最小 observable。玩法阶段至少覆盖请求顺序和 UI/下一次点击目标中的一个。
+6. 只改变一个变量。一个变量可以是一条已静态闭合的完整 native 请求/scene 路径；
+   禁止的是同时混改 server XML、native 状态、资源和值域。
+7. 跑最小检查。
+8. 把结果写入 `reverse-notes.md`。
+
+正确路径复用必须先写 path card，至少包含：
+
+- 已验收正确路径的入口动作和结果截图/route。
+- native 入口函数、route id、参数来源和回调/scene 触发路径。
+- 错误路径的接入点。
+- 为什么复用完整路径比局部重建 UI 更可靠。
+
+只能确认 route 字符串、不能确认调用约定时，停止在 path card，不写产品 patch。
 
 ## 失败止损硬约束
 
@@ -141,6 +162,8 @@ world_list.php
 以下情况必须立刻停下并写账，不准继续补丁循环：
 
 - 连续两个补丁没有产生新的 route、logcat、PC、截图状态或 activity observable。
+- 连续两个局部 UI/state/behavior 补丁没有修复流程边时，下一轮禁止继续同类补丁；
+  必须改为正确路径差分、请求路径复用，或只读 classifier。
 - 任一 native 探针被证明自身有错；必须先写入“坏探针记录”，不得基于它继续推理。
 - 单次实机回合超过 20 分钟仍没有核心 observable；先收束 runtime 链路，不继续玩法逻辑。
 - ADB/模拟器/server 生命周期消耗超过 15 分钟；本轮改为运行时问题，不继续 APK/server 逻辑。
@@ -151,7 +174,7 @@ native 探针上实机前必须先过静态验收门槛：
 - patch 地址原始 bytes 已用脚本 `require(...)` 校验；
 - code cave 已校验不覆盖非零字节；
 - 反汇编确认所有 replay/branch 回到正确地址；
-- trap PC map 写清每个 PC 的含义；
+- trap PC map 写清每个 PC 的含义；没有 trap 的产品 patch 必须输出 branch map 和 request/path map；
 - 明确写出哪些 PC 是有效证据，哪些只是坏探针/时序证据；
 - `patch-lib` 后必须校验 installed SHA-256 与 source SHA-256 一致。
 
@@ -160,19 +183,34 @@ native 探针上实机前必须先过静态验收门槛：
 
 探索状态机当前额外约束：
 
+- 秘境列表、楼层列表和关卡页都是核心层级，不能跳过。修复必须保持逐级下落和逐级返回。
+- `/connect/app/exploration/*` 返回 200 且数据进入模型，不等于页面已经切换。必须用截图和
+  下一次点击 route 证明客户端当前站在哪一层。
+- 如果“本该进入下一层/上一层”的点击重复发上一层 route，这是前景/点击目标仍停在旧层级的
+  强证据。此时不要继续优先猜 XML 字段。
+- 已验收正确路径优先级最高：
+  - 首页 -> `/connect/app/exploration/area` -> 非空 `Local Area` 是正确秘境列表路径。
+  - `Local Area` -> `/connect/app/exploration/floor` -> `区域 1` 是正确楼层列表路径。
+  - 楼层返回需要秘境列表时，优先复用完整 `/exploration/area` 请求路径，而不是局部
+    `area_list_sp`、remake、draw flag 或列表内部状态。
 - 不要把 `0x00342108` 当成无条件 floor-only 锚点；它属于 `_ExplorationArea::preUpdate`
   的状态流，必须结合请求链、flag gate 或更深的 floor-list/vector 证据使用。
 - 不要把 successful-return-only `getSelected` 探针当成“未进入分支”的证明；它只能证明
   已成功选中时的分支，不能证明负返回或未进入。
 - 不要继续 server `floor_info` 字段扫值、found_item/cost/boss 猜测、XML-only 修复、
-  `+0x84` 单点视觉修复，除非先有新的 native observable 指向这些方向。
+  `+0x84` 单点视觉修复、`area_list_sp` 局部行为补丁，除非先有新的 native observable
+  指向这些方向。
+- 探索背景图是独立 value-domain frontier。不要把背景图修复和层级/route 修复合并。
 
 好的 observable：
 
 - 下一条 HTTP route
+- 请求顺序，例如 `/area -> /floor -> /area -> /floor`
+- 本该切层的点击是否重复上一层 route
 - 解密后的请求或响应
 - logcat 行
 - native symbol / address / call path
+- 已验收正确路径和错误路径的差分
 - scene id
 - 截图证明 UI 迁移
 - top activity 仍然存活
@@ -180,9 +218,11 @@ native 探针上实机前必须先过静态验收门槛：
 坏的 observable：
 
 - “看起来更好了”
+- “HTTP 200 所以协议已经对了”
 - “也许还缺 XML”
 - “换个模拟器试试”
 - 没有缺失文件日志却继续扩大资源预载
+- 只证明某个列表内部字段变化，却没有 route、截图或下一次点击目标变化
 
 ## 代码规则
 
