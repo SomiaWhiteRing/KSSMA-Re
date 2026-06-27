@@ -39,7 +39,10 @@ Confirmed response fields:
 - `bgm` | string | parser compare at `0x00300476`.
 - `area_name` | string | parser compare at `0x00300486`.
 - `next_exp` | int | parser compare at `0x00300496`.
-- `next_floor` | int | parser compare at `0x00300436`.
+- `next_floor` | nested `_NextFloorTagParser` data | parser compare at
+  `0x00300436`; matching branch `0x003007de` calls
+  `_NextFloorTagParser::parse` at `0x00300842` and stores the parsed smart ptr
+  into `GetFloorTagData+0x2c` at `0x00300852..0x00300854`.
 - `floor_info` | nested `_FloorInfoTagParser` data | parser compare at `0x003004b0`.
 - `special_item` | optional nested/scalar branch | parser compare at `0x00300446`; omitted from the minimal no-branch payload until its consumer is needed.
 
@@ -52,7 +55,18 @@ Minimal server payload:
   <bgm>bgm_sarch1</bgm>
   <area_name>Local Area</area_name>
   <next_exp>0</next_exp>
-  <next_floor>0</next_floor>
+  <next_floor>
+    <area_id>1</area_id>
+    <floor_info>
+      <id>3</id>
+      <type>0</type>
+      <unlock>1</unlock>
+      <progress>0</progress>
+      <cost>1</cost>
+      <boss_id>0</boss_id>
+      <found_item_list></found_item_list>
+    </floor_info>
+  </next_floor>
   <floor_info>
     <id>2</id>
     <type>0</type>
@@ -71,6 +85,16 @@ Value notes:
 - `bgm_sarch1` and `exp_sarch` are local resource-backed candidates from the
   exploration resource family; runtime still has to prove rendering.
 - `special_item` stays omitted because this pass is no-branch floor entry.
+- `_ExplorationModel::init(GetFloorTagData)` copies `GetFloorTagData+0x2c` to
+  `_ExplorationModel+0x4c` at `0x001d594a..0x001d5950`.
+- The floor-clear predicate at `0x001d519c` checks progress
+  `_ExplorationModel+0xf8 == 100`, then reads `_ExplorationModel+0x4c`, then
+  tests the parsed `NextFloorTagData` first integer for nonzero at
+  `0x001d51aa..0x001d51b8`.
+- `_NextFloorTagParser::parse` direct child scalar compare resolves to
+  `area_id` and stores the integer into `NextFloorTagData+0` at
+  `0x003080f6..0x00308112`; direct child `floor_info` is parsed by
+  `_FloorInfoTagParser` at `0x00308050..0x003080bc`.
 
 Rejected shapes:
 - `<exploration_get_floor>` parent: no native compare evidence.
@@ -78,6 +102,13 @@ Rejected shapes:
   `0x001d6eb0..0x001d6f26`, not floor entry.
 - Putting `floor_info` inside `floor_info_list`: `_GetFloorTagParser` compares
   direct child `floor_info`; the list wrapper belongs to `/exploration/floor`.
+- Treating `/get_floor` `<next_floor>` as scalar: current static evidence shows
+  it uses `_NextFloorTagParser`, not integer parsing.
+- Putting the nested `next_floor` only under `/exploration/explore`: runtime
+  served that shape at `progress=100`, but the UI stayed on the normal 100%
+  walking screen. Static follow-up shows `explore.next_floor` is parsed into
+  `ExploreTagData+0x60`, while the floor-clear predicate reads the model copy
+  populated from `/get_floor`.
 
 Runtime observable:
 - After tapping floor row, `/exploration/get_floor` returns 200, no connection
@@ -87,3 +118,6 @@ Runtime observable:
 Open questions:
 - Exact `special_item` shape and no-item default.
 - Exact `bg` value expected by `exploration_bg` beyond resource-backed candidate.
+- Whether `area_id=1` and `floor_info.id=3` are accepted value-domain choices
+  for the next floor. They are only the current single-variable runtime
+  candidate because the predicate requires a nonzero first integer.

@@ -149,7 +149,40 @@ function Invoke-Adb {
     [switch]$AllowFailure
   )
 
-  Invoke-RuntimeProcess -FilePath $script:AdbExe -ArgumentList $Arguments -TimeoutSeconds $TimeoutSeconds -AllowFailure:$AllowFailure
+  $stage = Invoke-RuntimeProcess -FilePath $script:AdbExe -ArgumentList $Arguments -TimeoutSeconds $TimeoutSeconds -AllowFailure:$AllowFailure
+  if (Test-AdbFailureOutput $stage) {
+    $stage.ok = $false
+    $stage.failureClass = Get-AdbFailureClass $stage
+  }
+  $stage
+}
+
+function Test-AdbFailureOutput {
+  param($Stage)
+  $text = "$($Stage.stdout)`n$($Stage.stderr)"
+  if ([string]::IsNullOrWhiteSpace($text)) {
+    return $false
+  }
+  return $text -match "device '.+' not found" -or
+    $text -match "device not found" -or
+    $text -match "device offline" -or
+    $text -match "unauthorized" -or
+    $text -match "cannot connect" -or
+    $text -match "actively refused" -or
+    $text -match "积极拒绝" -or
+    $text -match "protocol fault" -or
+    $text -match "no devices/emulators found"
+}
+
+function Get-AdbFailureClass {
+  param($Stage)
+  $text = "$($Stage.stdout)`n$($Stage.stderr)"
+  if ($text -match "unauthorized") { return "unauthorized" }
+  if ($text -match "device offline") { return "adb-offline" }
+  if ($text -match "device '.+' not found" -or $text -match "device not found") { return "device-not-found" }
+  if ($text -match "cannot connect" -or $text -match "actively refused" -or $text -match "积极拒绝") { return "adb-port-refused" }
+  if ($text -match "protocol fault") { return "adb-protocol-fault" }
+  return "adb-failed"
 }
 
 function Get-OutputLines {
@@ -276,7 +309,7 @@ function Invoke-GetPropWithRetry {
     Add-Stage $Context $name $stage
     $value = (($stage.stdout -as [string]).Trim())
     $last = $stage
-    if (-not $stage.timedOut -and $value -ne "") {
+    if ($stage.ok -and -not $stage.timedOut -and $value -ne "") {
       return [ordered]@{ ok = $true; value = $value; stage = $stage }
     }
   }
@@ -304,15 +337,128 @@ function Get-EmulatorProcesses {
     })
 }
 
+function Test-TcpPortOpen {
+  param([int]$Port, [int]$TimeoutMs = 500)
+  $client = [System.Net.Sockets.TcpClient]::new()
+  try {
+    $async = $client.BeginConnect("127.0.0.1", $Port, $null, $null)
+    if (-not $async.AsyncWaitHandle.WaitOne($TimeoutMs)) {
+      return [ordered]@{ port = $Port; open = $false; error = "timeout" }
+    }
+    $client.EndConnect($async)
+    [ordered]@{ port = $Port; open = $true; error = "" }
+  } catch {
+    [ordered]@{ port = $Port; open = $false; error = $_.Exception.Message }
+  } finally {
+    $client.Close()
+  }
+}
+
+function Get-TargetPortSummary {
+  [ordered]@{
+    console5582 = Test-TcpPortOpen -Port 5582
+    adb5583 = Test-TcpPortOpen -Port 5583
+  }
+}
+
 function Get-AdbDeviceRows {
   $result = Invoke-Adb -Arguments @("devices", "-l") -TimeoutSeconds 5 -AllowFailure
   Get-OutputLines $result.stdout | Where-Object { $_ -match "\s+(device|offline|unauthorized)\b" }
 }
 
+function Get-AdbRowState {
+  param([string[]]$Rows, [string]$Serial)
+  $row = @($Rows | Where-Object { $_ -match "^$([regex]::Escape($Serial))\s+" } | Select-Object -First 1)
+  if (-not $row) {
+    return [ordered]@{ serial = $Serial; present = $false; state = "missing"; row = "" }
+  }
+  if ($row -match "\s+device\b") { $state = "device" }
+  elseif ($row -match "\s+offline\b") { $state = "offline" }
+  elseif ($row -match "\s+unauthorized\b") { $state = "unauthorized" }
+  else { $state = "unknown" }
+  [ordered]@{ serial = $Serial; present = $true; state = $state; row = $row[0] }
+}
+
+function Get-DeviceSummary {
+  $rows = @(Get-AdbDeviceRows)
+  $primary = Get-AdbRowState -Rows $rows -Serial $script:KssmaRuntimeConfig.PrimarySerial
+  $legacy = Get-AdbRowState -Rows $rows -Serial $script:KssmaRuntimeConfig.LegacySerial
+  $others = @($rows | Where-Object {
+      $_ -notmatch "^$([regex]::Escape($script:KssmaRuntimeConfig.PrimarySerial))\s+" -and
+      $_ -notmatch "^$([regex]::Escape($script:KssmaRuntimeConfig.LegacySerial))\s+"
+    })
+  [ordered]@{
+    rows = $rows
+    primary = $primary
+    legacy = $legacy
+    otherDevices = $others
+    legacyOffline = $legacy.state -eq "offline"
+    primaryDevice = $primary.state -eq "device"
+  }
+}
+
+function Get-TransportClassification {
+  param(
+    $PrimaryHealth,
+    $LegacyHealth,
+    $Devices,
+    $EmulatorProcesses,
+    $Ports
+  )
+
+  $selected = ""
+  if ($PrimaryHealth.ok) {
+    $selected = $PrimaryHealth.serial
+    return [ordered]@{
+      class = "healthy-arm19"
+      selectedSerial = $selected
+      restartAllowed = $false
+      reason = "primary ARM19 health check passed"
+      devices = $Devices
+      ports = $Ports
+      emulatorProcesses = $EmulatorProcesses
+    }
+  }
+  if ($LegacyHealth.ok) {
+    $selected = $LegacyHealth.serial
+    return [ordered]@{
+      class = "healthy-arm19"
+      selectedSerial = $selected
+      restartAllowed = $false
+      reason = "legacy ARM19 health check passed"
+      devices = $Devices
+      ports = $Ports
+      emulatorProcesses = $EmulatorProcesses
+    }
+  }
+
+  $targetRows = @($Devices.primary, $Devices.legacy)
+  if ($targetRows | Where-Object { $_.state -eq "unauthorized" }) {
+    return [ordered]@{ class = "unauthorized"; selectedSerial = ""; restartAllowed = $false; reason = "target serial is unauthorized"; devices = $Devices; ports = $Ports; emulatorProcesses = $EmulatorProcesses }
+  }
+  if ($targetRows | Where-Object { $_.state -eq "offline" }) {
+    return [ordered]@{ class = "adb-offline"; selectedSerial = ""; restartAllowed = $true; reason = "target serial is offline"; devices = $Devices; ports = $Ports; emulatorProcesses = $EmulatorProcesses }
+  }
+  if ($PrimaryHealth.transportOk -or $LegacyHealth.transportOk) {
+    if ($PrimaryHealth.abi -ne "" -or $LegacyHealth.abi -ne "") {
+      return [ordered]@{ class = "wrong-runtime"; selectedSerial = ""; restartAllowed = $false; reason = "target shell responded but ABI/release/boot did not match ARM19"; devices = $Devices; ports = $Ports; emulatorProcesses = $EmulatorProcesses }
+    }
+    return [ordered]@{ class = "not-booted"; selectedSerial = ""; restartAllowed = $false; reason = "target shell responded without complete boot properties"; devices = $Devices; ports = $Ports; emulatorProcesses = $EmulatorProcesses }
+  }
+  if ($EmulatorProcesses.Count -gt 0) {
+    return [ordered]@{ class = "detached-arm19"; selectedSerial = ""; restartAllowed = $true; reason = "classic ARM19 process exists but no target ADB shell is reachable"; devices = $Devices; ports = $Ports; emulatorProcesses = $EmulatorProcesses }
+  }
+  if ($Devices.otherDevices.Count -gt 0) {
+    return [ordered]@{ class = "wrong-runtime-only"; selectedSerial = ""; restartAllowed = $false; reason = "ADB sees only non-ARM19 devices"; devices = $Devices; ports = $Ports; emulatorProcesses = $EmulatorProcesses }
+  }
+  [ordered]@{ class = "adb-transport"; selectedSerial = ""; restartAllowed = $false; reason = "no ARM19 target and no classic emulator process"; devices = $Devices; ports = $Ports; emulatorProcesses = $EmulatorProcesses }
+}
+
 function Get-PrimaryHealthData {
   param(
     $Context,
-    [int]$TimeoutSeconds = 1
+    [int]$TimeoutSeconds = 1,
+    [switch]$IncludeTransport
   )
 
   $serial = $script:KssmaRuntimeConfig.PrimarySerial
@@ -330,35 +476,7 @@ function Get-PrimaryHealthData {
   $boot = $bootRead.value
   $transportOk = $abiRead.ok -or $releaseRead.ok -or $bootRead.ok
   $ok = ($abi -eq $script:KssmaRuntimeConfig.ExpectedAbi -and $release -eq $script:KssmaRuntimeConfig.ExpectedRelease -and $boot -eq "1")
-
-  if (-not $ok) {
-    $legacySerial = $script:KssmaRuntimeConfig.LegacySerial
-    $legacyAbiRead = Invoke-GetPropWithRetry -Context $Context -Serial $legacySerial -Property "ro.product.cpu.abi" -StageName "legacy-getprop-abi"
-    $legacyReleaseRead = Invoke-GetPropWithRetry -Context $Context -Serial $legacySerial -Property "ro.build.version.release" -StageName "legacy-getprop-release"
-    $legacyBootRead = Invoke-GetPropWithRetry -Context $Context -Serial $legacySerial -Property "sys.boot_completed" -StageName "legacy-getprop-boot"
-    $legacyAbi = $legacyAbiRead.value
-    $legacyRelease = $legacyReleaseRead.value
-    $legacyBoot = $legacyBootRead.value
-    $legacyOk = ($legacyAbi -eq $script:KssmaRuntimeConfig.ExpectedAbi -and $legacyRelease -eq $script:KssmaRuntimeConfig.ExpectedRelease -and $legacyBoot -eq "1")
-    if ($legacyOk) {
-      # ponytail: use the emulator's canonical ADB serial when the TCP alias is
-      # stale/offline; upgrade path is repairing the TCP alias without blocking work.
-      $Context.warnings += "Primary TCP serial $serial is unavailable; using healthy ARM19 legacy serial $legacySerial for this command."
-      $script:KssmaRuntimeConfig.PrimarySerial = $legacySerial
-      return [ordered]@{
-        serial = $legacySerial
-        connect = $connect.stdout
-        abi = $legacyAbi
-        release = $legacyRelease
-        bootCompleted = $legacyBoot
-        transportOk = $true
-        ok = $true
-        fallbackFrom = $serial
-      }
-    }
-  }
-
-  [ordered]@{
+  $primaryHealth = [ordered]@{
     serial = $serial
     connect = $connect.stdout
     abi = $abi
@@ -366,6 +484,54 @@ function Get-PrimaryHealthData {
     bootCompleted = $boot
     transportOk = $transportOk
     ok = $ok
+  }
+
+  if (-not $IncludeTransport) {
+    return $primaryHealth
+  }
+
+  $legacySerial = $script:KssmaRuntimeConfig.LegacySerial
+  $legacyAbiRead = Invoke-GetPropWithRetry -Context $Context -Serial $legacySerial -Property "ro.product.cpu.abi" -StageName "legacy-getprop-abi"
+  $legacyReleaseRead = Invoke-GetPropWithRetry -Context $Context -Serial $legacySerial -Property "ro.build.version.release" -StageName "legacy-getprop-release"
+  $legacyBootRead = Invoke-GetPropWithRetry -Context $Context -Serial $legacySerial -Property "sys.boot_completed" -StageName "legacy-getprop-boot"
+  $legacyAbi = $legacyAbiRead.value
+  $legacyRelease = $legacyReleaseRead.value
+  $legacyBoot = $legacyBootRead.value
+  $legacyTransportOk = $legacyAbiRead.ok -or $legacyReleaseRead.ok -or $legacyBootRead.ok
+  $legacyOk = ($legacyAbi -eq $script:KssmaRuntimeConfig.ExpectedAbi -and $legacyRelease -eq $script:KssmaRuntimeConfig.ExpectedRelease -and $legacyBoot -eq "1")
+  $legacyHealth = [ordered]@{
+    serial = $legacySerial
+    connect = ""
+    abi = $legacyAbi
+    release = $legacyRelease
+    bootCompleted = $legacyBoot
+    transportOk = $legacyTransportOk
+    ok = $legacyOk
+  }
+
+  $devices = Get-DeviceSummary
+  $emulators = @(Get-EmulatorProcesses)
+  $ports = Get-TargetPortSummary
+  $transport = Get-TransportClassification -PrimaryHealth $primaryHealth -LegacyHealth $legacyHealth -Devices $devices -EmulatorProcesses $emulators -Ports $ports
+
+  if ($transport.selectedSerial -and $transport.selectedSerial -ne $script:KssmaRuntimeConfig.PrimarySerial) {
+    # ponytail: use the emulator's canonical ADB serial when the TCP alias is stale.
+    $Context.warnings += "Primary TCP serial $serial is unavailable; using healthy ARM19 legacy serial $($transport.selectedSerial) for this command."
+    $script:KssmaRuntimeConfig.PrimarySerial = $transport.selectedSerial
+  }
+
+  $selectedHealth = if ($legacyOk -and -not $ok) { $legacyHealth } else { $primaryHealth }
+  [ordered]@{
+    serial = $selectedHealth.serial
+    connect = $connect.stdout
+    abi = $selectedHealth.abi
+    release = $selectedHealth.release
+    bootCompleted = $selectedHealth.bootCompleted
+    transportOk = ($primaryHealth.transportOk -or $legacyHealth.transportOk)
+    ok = ($primaryHealth.ok -or $legacyHealth.ok)
+    primary = $primaryHealth
+    legacy = $legacyHealth
+    transport = $transport
   }
 }
 
@@ -409,25 +575,11 @@ function Invoke-FastHealth {
   Complete-RuntimeResult -Context $ctx -Ok $false -FailureClass $failure -RestartAllowed $false -RecommendedCommand "powershell -NoProfile -ExecutionPolicy Bypass -File .\work\kssma-runtime.ps1 repair-adb" -Data $data
 }
 
-function Get-DeviceSummary {
-  $rows = @(Get-AdbDeviceRows)
-  $others = @($rows | Where-Object {
-      $_ -notmatch "^$([regex]::Escape($script:KssmaRuntimeConfig.PrimarySerial))\s+" -and
-      $_ -notmatch "^$([regex]::Escape($script:KssmaRuntimeConfig.LegacySerial))\s+"
-    })
-  [ordered]@{
-    rows = $rows
-    otherDevices = $others
-    legacyOffline = [bool]($rows | Where-Object { $_ -match "^$([regex]::Escape($script:KssmaRuntimeConfig.LegacySerial))\s+offline\b" })
-    primaryDevice = [bool]($rows | Where-Object { $_ -match "^$([regex]::Escape($script:KssmaRuntimeConfig.PrimarySerial))\s+device\b" })
-  }
-}
-
 function Invoke-ConnectRuntime {
   $ctx = New-RuntimeContext "connect"
-  $health = Get-PrimaryHealthData -Context $ctx -TimeoutSeconds 2
+  $health = Get-PrimaryHealthData -Context $ctx -TimeoutSeconds 2 -IncludeTransport
   $ctx.serial = $health.serial
-  $devices = Get-DeviceSummary
+  $devices = $health.transport.devices
   if ($devices.otherDevices.Count -gt 0) {
     $ctx.warnings += "Other ADB devices present; ignored by KSSMA runtime control plane."
   }
@@ -439,6 +591,7 @@ function Invoke-ConnectRuntime {
     release = $health.release
     bootCompleted = $health.bootCompleted
     devices = $devices
+    transport = $health.transport
   }
   if ($health.ok) {
     Update-RuntimeState ([ordered]@{
@@ -449,7 +602,7 @@ function Invoke-ConnectRuntime {
     })
     return Complete-RuntimeResult -Context $ctx -Ok $true -Data $data
   }
-  $failure = if (-not $health.transportOk) { "adb-transport" } elseif ($health.bootCompleted -ne "1") { "not-booted" } else { "wrong-runtime" }
+  $failure = if ($health.transport) { $health.transport.class } elseif (-not $health.transportOk) { "adb-transport" } elseif ($health.bootCompleted -ne "1") { "not-booted" } else { "wrong-runtime" }
   Complete-RuntimeResult -Context $ctx -Ok $false -FailureClass $failure -RestartAllowed $false -RecommendedCommand "powershell -NoProfile -ExecutionPolicy Bypass -File .\work\kssma-runtime.ps1 repair-adb" -Data $data
 }
 
@@ -459,9 +612,9 @@ function Invoke-RepairAdb {
 
   $connect1 = Invoke-Adb -Arguments @("connect", $serial) -TimeoutSeconds 3 -AllowFailure
   Add-Stage $ctx "connect-primary" $connect1
-  $health = Get-PrimaryHealthData -Context $ctx -TimeoutSeconds 2
+  $health = Get-PrimaryHealthData -Context $ctx -TimeoutSeconds 2 -IncludeTransport
   if ($health.ok) {
-    return Complete-RuntimeResult -Context $ctx -Ok $true -Data ([ordered]@{ abi = $health.abi; release = $health.release; bootCompleted = $health.bootCompleted })
+    return Complete-RuntimeResult -Context $ctx -Ok $true -Data ([ordered]@{ abi = $health.abi; release = $health.release; bootCompleted = $health.bootCompleted; transport = $health.transport; recovery = "none" })
   }
 
   $disconnect = Invoke-Adb -Arguments @("disconnect", $serial) -TimeoutSeconds 3 -AllowFailure
@@ -470,29 +623,47 @@ function Invoke-RepairAdb {
   Add-Stage $ctx "reconnect-offline" $reconnectOffline
   $connect2 = Invoke-Adb -Arguments @("connect", $serial) -TimeoutSeconds 3 -AllowFailure
   Add-Stage $ctx "reconnect-primary" $connect2
-  $health2 = Get-PrimaryHealthData -Context $ctx -TimeoutSeconds 2
+  $health2 = Get-PrimaryHealthData -Context $ctx -TimeoutSeconds 2 -IncludeTransport
   if ($health2.ok) {
-    return Complete-RuntimeResult -Context $ctx -Ok $true -Data ([ordered]@{ abi = $health2.abi; release = $health2.release; bootCompleted = $health2.bootCompleted })
+    return Complete-RuntimeResult -Context $ctx -Ok $true -Data ([ordered]@{ abi = $health2.abi; release = $health2.release; bootCompleted = $health2.bootCompleted; transport = $health2.transport; recovery = "reconnect" })
   }
 
-  $kill = Invoke-Adb -Arguments @("kill-server") -TimeoutSeconds 5 -AllowFailure
-  Add-Stage $ctx "adb-kill-server" $kill
-  $start = Invoke-Adb -Arguments @("start-server") -TimeoutSeconds 5 -AllowFailure
-  Add-Stage $ctx "adb-start-server" $start
-  $connect3 = Invoke-Adb -Arguments @("connect", $serial) -TimeoutSeconds 3 -AllowFailure
-  Add-Stage $ctx "connect-after-server-restart" $connect3
-  $health3 = Get-PrimaryHealthData -Context $ctx -TimeoutSeconds 2
-  if ($health3.ok) {
-    return Complete-RuntimeResult -Context $ctx -Ok $true -Data ([ordered]@{ abi = $health3.abi; release = $health3.release; bootCompleted = $health3.bootCompleted })
+  $transport = $health2.transport
+  if ($transport.class -eq "detached-arm19") {
+    Add-Stage $ctx "transport-recovery-decision" ([ordered]@{ ok = $true; elapsedMs = 0; details = "warm-restart for detached-arm19" })
+    $restart = Invoke-RestartRuntime -Force -Reason "automatic warm restart after $($transport.class)"
+    $ctx.stages += $restart.stages
+    if ($restart.ok) {
+      $post = Get-PrimaryHealthData -Context $ctx -TimeoutSeconds 2 -IncludeTransport
+      if ($post.ok) {
+        $killed = @()
+        if ($restart.data -and $restart.data.Contains("killed")) {
+          $killed = @($restart.data.killed)
+        }
+        return Complete-RuntimeResult -Context $ctx -Ok $true -Data ([ordered]@{
+            recovery = "warm-restart"
+            before = $transport
+            after = $post.transport
+            abi = $post.abi
+            release = $post.release
+            bootCompleted = $post.bootCompleted
+            restart = [ordered]@{
+              reason = $restart.data.reason
+              killedCount = $killed.Count
+            }
+          })
+      }
+      return Complete-RuntimeResult -Context $ctx -Ok $false -FailureClass $post.transport.class -RestartAllowed:$post.transport.restartAllowed -RecommendedCommand "Warm restart completed, but ARM19 health check still failed; run status before gameplay work." -Data ([ordered]@{ recovery = "warm-restart-postcheck-failed"; before = $transport; after = $post.transport })
+    }
+    return Complete-RuntimeResult -Context $ctx -Ok $false -FailureClass $restart.failureClass -RestartAllowed:$restart.restartAllowed -RecommendedCommand $restart.recommendedCommand -Data ([ordered]@{ recovery = "warm-restart-failed"; before = $transport; restart = $restart.data })
   }
 
-  $emulators = @(Get-EmulatorProcesses)
-  $restartAllowed = $emulators.Count -gt 0
-  Complete-RuntimeResult -Context $ctx -Ok $false -FailureClass "adb-transport" -RestartAllowed:$restartAllowed -RecommendedCommand "powershell -NoProfile -ExecutionPolicy Bypass -File .\work\kssma-runtime.ps1 restart-runtime -Force -Reason `"ADB repair failed after primary TCP reconnect and adb server restart`"" -Data ([ordered]@{
-      lastAbi = $health3.abi
-      lastRelease = $health3.release
-      lastBootCompleted = $health3.bootCompleted
-      emulatorProcesses = $emulators
+  Complete-RuntimeResult -Context $ctx -Ok $false -FailureClass $transport.class -RestartAllowed:$transport.restartAllowed -RecommendedCommand "Fix the transport class shown in data.transport; detached-arm19 is the only automatic warm-restart path." -Data ([ordered]@{
+      lastAbi = $health2.abi
+      lastRelease = $health2.release
+      lastBootCompleted = $health2.bootCompleted
+      transport = $transport
+      recovery = "none"
     })
 }
 
@@ -531,7 +702,7 @@ function Ensure-AvdConfig {
   Set-AvdConfigValue "target" "android-19"
   Set-AvdConfigValue "image.sysdir.1" "system-images\android-19\default\armeabi-v7a\"
   Set-AvdConfigValue "disk.dataPartition.size" "1536M"
-  Set-AvdConfigValue "hw.ramSize" "2048"
+  Set-AvdConfigValue "hw.ramSize" "1536"
   Set-AvdConfigValue "vm.heapSize" "256M"
   Set-AvdConfigValue "hw.audioInput" "yes"
   Set-AvdConfigValue "hw.audioOutput" "yes"
@@ -642,33 +813,32 @@ function Invoke-EnsureRuntime {
     $ctx.warnings += "Fresh runtime-state cache was invalidated by fast-health."
   }
 
-  $health = Get-PrimaryHealthData -Context $ctx -TimeoutSeconds 2
+  $health = Get-PrimaryHealthData -Context $ctx -TimeoutSeconds 2 -IncludeTransport
   if ($health.ok) {
     $boot = Get-DeviceBootFingerprint -Serial $health.serial
     Add-Stage $ctx "boot-fingerprint" $boot.stage
     Update-RuntimeState ([ordered]@{ serial = $health.serial; fastHealthOk = $true; bootCompleted = $true; abi = $health.abi; release = $health.release; bootUptimeSeconds = $boot.uptimeSeconds })
-    return Complete-RuntimeResult -Context $ctx -Ok $true -Data ([ordered]@{ abi = $health.abi; release = $health.release; bootCompleted = $health.bootCompleted })
+    return Complete-RuntimeResult -Context $ctx -Ok $true -Data ([ordered]@{ abi = $health.abi; release = $health.release; bootCompleted = $health.bootCompleted; transport = $health.transport })
   }
 
-  $repair = Invoke-RepairAdb
-  $ctx.stages += $repair.stages
-  if ($repair.ok) {
-    return Complete-RuntimeResult -Context $ctx -Ok $true -Data ([ordered]@{ repair = "ok" })
-  }
-
-  $emulators = @(Get-EmulatorProcesses)
-  if ($emulators.Count -eq 0) {
+  if ($health.transport.class -eq "adb-transport" -and $health.transport.emulatorProcesses.Count -eq 0) {
     Start-ClassicEmulator -Context $ctx -WipeData:$WipeData
     if (Wait-PrimaryBoot -Context $ctx -TimeoutSeconds 240) {
       $boot = Get-DeviceBootFingerprint -Serial $script:KssmaRuntimeConfig.PrimarySerial
       Add-Stage $ctx "boot-fingerprint" $boot.stage
       Reset-BaselineStateValues ([ordered]@{ fastHealthOk = $true; bootCompleted = $true; bootUptimeSeconds = $boot.uptimeSeconds })
-      return Complete-RuntimeResult -Context $ctx -Ok $true -Data ([ordered]@{ started = $true })
+      return Complete-RuntimeResult -Context $ctx -Ok $true -Data ([ordered]@{ started = $true; transport = $health.transport })
     }
     return Complete-RuntimeResult -Context $ctx -Ok $false -FailureClass "boot-timeout" -RestartAllowed $false -RecommendedCommand "powershell -NoProfile -ExecutionPolicy Bypass -File .\work\kssma-runtime.ps1 diagnose" -Data ([ordered]@{ emulatorProcesses = @(Get-EmulatorProcesses) })
   }
 
-  Complete-RuntimeResult -Context $ctx -Ok $false -FailureClass "adb-transport" -RestartAllowed $true -RecommendedCommand "powershell -NoProfile -ExecutionPolicy Bypass -File .\work\kssma-runtime.ps1 restart-runtime -Force -Reason `"primary serial failed and ADB repair failed`"" -Data ([ordered]@{ emulatorProcesses = $emulators })
+  $repair = Invoke-RepairAdb
+  $ctx.stages += $repair.stages
+  if ($repair.ok) {
+    return Complete-RuntimeResult -Context $ctx -Ok $true -Data ([ordered]@{ repair = "ok"; repairData = $repair.data })
+  }
+
+  Complete-RuntimeResult -Context $ctx -Ok $false -FailureClass $repair.failureClass -RestartAllowed:$repair.restartAllowed -RecommendedCommand $repair.recommendedCommand -Data ([ordered]@{ transport = $health.transport; repair = $repair.data })
 }
 
 function Assert-RuntimeReady {
@@ -1171,13 +1341,14 @@ function Invoke-Observe {
 
 function Invoke-Diagnose {
   $ctx = New-RuntimeContext "diagnose"
-  $health = Get-PrimaryHealthData -Context $ctx -TimeoutSeconds 2
-  $devices = Get-DeviceSummary
-  $emulators = @(Get-EmulatorProcesses)
+  $health = Get-PrimaryHealthData -Context $ctx -TimeoutSeconds 2 -IncludeTransport
+  $devices = $health.transport.devices
+  $emulators = $health.transport.emulatorProcesses
   $data = [ordered]@{
     health = $health
     devices = $devices
     emulatorProcesses = $emulators
+    transport = $health.transport
     adbExe = $script:AdbExe
     emulatorExe = $script:EmulatorExe
     statePath = $script:StatePath
@@ -1195,7 +1366,7 @@ function Invoke-Diagnose {
     $ctx.stages += $obs.stages
     $data.artifacts = $obs.data.artifacts
   }
-  Complete-RuntimeResult -Context $ctx -Ok $health.ok -FailureClass $(if ($health.ok) { "" } else { "runtime-not-ready" }) -RestartAllowed:(-not $health.ok -and $emulators.Count -gt 0) -RecommendedCommand $(if ($health.ok) { "" } else { "repair-adb; if still failing, restart-runtime -Force with reason" }) -Data $data
+  Complete-RuntimeResult -Context $ctx -Ok $health.ok -FailureClass $(if ($health.ok) { "" } else { $health.transport.class }) -RestartAllowed:$health.transport.restartAllowed -RecommendedCommand $(if ($health.ok) { "" } else { "powershell -NoProfile -ExecutionPolicy Bypass -File .\work\kssma-runtime.ps1 repair-adb" }) -Data $data
 }
 
 function Invoke-RestartRuntime {
@@ -1225,9 +1396,9 @@ function Invoke-RestartRuntime {
     $boot = Get-DeviceBootFingerprint -Serial $script:KssmaRuntimeConfig.PrimarySerial
     Add-Stage $ctx "boot-fingerprint" $boot.stage
     Reset-BaselineStateValues ([ordered]@{ fastHealthOk = $true; bootCompleted = $true; bootUptimeSeconds = $boot.uptimeSeconds; lastRestartReason = $Reason })
-    Complete-RuntimeResult -Context $ctx -Ok $true -Data ([ordered]@{ reason = $Reason; killed = $killed })
+    return Complete-RuntimeResult -Context $ctx -Ok $true -Data ([ordered]@{ reason = $Reason; killed = $killed })
   } else {
-    Complete-RuntimeResult -Context $ctx -Ok $false -FailureClass "restart-boot-timeout" -RestartAllowed $false -RecommendedCommand "Run diagnose and inspect emulator stdout/stderr logs." -Data ([ordered]@{ reason = $Reason; killed = $killed; stdoutLog = $script:StdoutLog; stderrLog = $script:StderrLog })
+    return Complete-RuntimeResult -Context $ctx -Ok $false -FailureClass "restart-boot-timeout" -RestartAllowed $false -RecommendedCommand "Run diagnose and inspect emulator stdout/stderr logs." -Data ([ordered]@{ reason = $Reason; killed = $killed; stdoutLog = $script:StdoutLog; stderrLog = $script:StderrLog })
   }
 }
 
@@ -1413,14 +1584,15 @@ function Invoke-PreloadResources {
 
 function Invoke-Status {
   $ctx = New-RuntimeContext "status"
-  $health = Get-PrimaryHealthData -Context $ctx -TimeoutSeconds 2
-  $devices = Get-DeviceSummary
+  $health = Get-PrimaryHealthData -Context $ctx -TimeoutSeconds 2 -IncludeTransport
+  $devices = $health.transport.devices
   $data = [ordered]@{
     abi = $health.abi
     release = $health.release
     bootCompleted = $health.bootCompleted
     devices = $devices
-    emulatorProcesses = @(Get-EmulatorProcesses)
+    emulatorProcesses = $health.transport.emulatorProcesses
+    transport = $health.transport
     state = Read-RuntimeState
   }
   if ($health.ok) {
@@ -1433,5 +1605,110 @@ function Invoke-Status {
     $data.mountOk = $mount.ok
     $data.package = $package
   }
-  Complete-RuntimeResult -Context $ctx -Ok $health.ok -FailureClass $(if ($health.ok) { "" } else { "runtime-not-ready" }) -RestartAllowed:$false -RecommendedCommand $(if ($health.ok) { "" } else { "repair-adb" }) -Data $data
+  Complete-RuntimeResult -Context $ctx -Ok $health.ok -FailureClass $(if ($health.ok) { "" } else { $health.transport.class }) -RestartAllowed:$health.transport.restartAllowed -RecommendedCommand $(if ($health.ok) { "" } else { "repair-adb" }) -Data $data
+}
+
+function New-FakeHealth {
+  param(
+    [string]$Serial,
+    [bool]$Ok = $false,
+    [bool]$TransportOk = $false,
+    [string]$Abi = "",
+    [string]$Release = "",
+    [string]$Boot = ""
+  )
+  [ordered]@{
+    serial = $Serial
+    connect = ""
+    abi = $Abi
+    release = $Release
+    bootCompleted = $Boot
+    transportOk = $TransportOk
+    ok = $Ok
+  }
+}
+
+function New-FakeDevices {
+  param([string[]]$Rows)
+  $primary = Get-AdbRowState -Rows $Rows -Serial "127.0.0.1:5583"
+  $legacy = Get-AdbRowState -Rows $Rows -Serial "emulator-5582"
+  [ordered]@{
+    rows = $Rows
+    primary = $primary
+    legacy = $legacy
+    otherDevices = @($Rows | Where-Object {
+        $_ -notmatch "^127\.0\.0\.1:5583\s+" -and $_ -notmatch "^emulator-5582\s+"
+      })
+    legacyOffline = $legacy.state -eq "offline"
+    primaryDevice = $primary.state -eq "device"
+  }
+}
+
+function Invoke-TransportSelfCheck {
+  $ctx = New-RuntimeContext "self-check-transport"
+  $ports = [ordered]@{
+    console5582 = [ordered]@{ port = 5582; open = $true; error = "" }
+    adb5583 = [ordered]@{ port = 5583; open = $false; error = "actively refused" }
+  }
+  $emulators = @([ordered]@{ processId = 1; name = "emulator-arm.exe"; commandLine = "emulator-arm.exe -avd kssma_arm19 -ports 5582,5583" })
+  $cases = @(
+    [ordered]@{
+      name = "healthy-primary"
+      expected = "healthy-arm19"
+      primary = New-FakeHealth -Serial "127.0.0.1:5583" -Ok $true -TransportOk $true -Abi "armeabi-v7a" -Release "4.4.2" -Boot "1"
+      legacy = New-FakeHealth -Serial "emulator-5582"
+      devices = New-FakeDevices -Rows @("127.0.0.1:5583 device product:sdk model:sdk device:generic")
+      emulators = $emulators
+    },
+    [ordered]@{
+      name = "healthy-legacy"
+      expected = "healthy-arm19"
+      primary = New-FakeHealth -Serial "127.0.0.1:5583"
+      legacy = New-FakeHealth -Serial "emulator-5582" -Ok $true -TransportOk $true -Abi "armeabi-v7a" -Release "4.4.2" -Boot "1"
+      devices = New-FakeDevices -Rows @("emulator-5582 device product:sdk model:sdk device:generic")
+      emulators = $emulators
+    },
+    [ordered]@{
+      name = "detached-arm19"
+      expected = "detached-arm19"
+      primary = New-FakeHealth -Serial "127.0.0.1:5583"
+      legacy = New-FakeHealth -Serial "emulator-5582"
+      devices = New-FakeDevices -Rows @("emulator-5554 device product:MI model:MI device:MI")
+      emulators = $emulators
+    },
+    [ordered]@{
+      name = "wrong-runtime-only"
+      expected = "wrong-runtime-only"
+      primary = New-FakeHealth -Serial "127.0.0.1:5583"
+      legacy = New-FakeHealth -Serial "emulator-5582"
+      devices = New-FakeDevices -Rows @("emulator-5554 device product:MI model:MI device:MI")
+      emulators = @()
+    },
+    [ordered]@{
+      name = "adb-offline"
+      expected = "adb-offline"
+      primary = New-FakeHealth -Serial "127.0.0.1:5583"
+      legacy = New-FakeHealth -Serial "emulator-5582"
+      devices = New-FakeDevices -Rows @("emulator-5582 offline")
+      emulators = $emulators
+    },
+    [ordered]@{
+      name = "wrong-runtime"
+      expected = "wrong-runtime"
+      primary = New-FakeHealth -Serial "127.0.0.1:5583" -TransportOk $true -Abi "x86_64" -Release "12" -Boot "1"
+      legacy = New-FakeHealth -Serial "emulator-5582"
+      devices = New-FakeDevices -Rows @("127.0.0.1:5583 device product:MI model:MI device:MI")
+      emulators = $emulators
+    }
+  )
+
+  $results = @()
+  foreach ($case in $cases) {
+    $actual = Get-TransportClassification -PrimaryHealth $case.primary -LegacyHealth $case.legacy -Devices $case.devices -EmulatorProcesses $case.emulators -Ports $ports
+    $pass = $actual.class -eq $case.expected
+    $results += [ordered]@{ name = $case.name; expected = $case.expected; actual = $actual.class; ok = $pass }
+  }
+  $ok = -not ($results | Where-Object { -not $_.ok })
+  Add-Stage $ctx "transport-classifier-cases" ([ordered]@{ ok = $ok; elapsedMs = 0; details = "$(($results | Where-Object { $_.ok }).Count)/$($results.Count) passed" })
+  Complete-RuntimeResult -Context $ctx -Ok $ok -FailureClass $(if ($ok) { "" } else { "transport-self-check-failed" }) -Data ([ordered]@{ cases = $results })
 }

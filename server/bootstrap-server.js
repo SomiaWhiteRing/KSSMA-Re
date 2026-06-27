@@ -277,7 +277,90 @@ const EXPLORATION_FLOOR_XML = [
   "  </body>",
   "</response>",
 ].join("");
-const EXPLORATION_GET_FLOOR_XML = [
+
+const FIRST_REGION_FLOORS = [
+  { areaId: 0, floorId: 2, areaNo: 1, cost: 1, requiredMoves: 10, goldMin: 16, goldMax: 20 },
+  { areaId: 1, floorId: 3, areaNo: 2, cost: 2, requiredMoves: 11, goldMin: 30, goldMax: 40 },
+  { areaId: 2, floorId: 4, areaNo: 3, cost: 2, requiredMoves: 12, goldMin: 30, goldMax: 40 },
+  { areaId: 3, floorId: 5, areaNo: 4, cost: 2, requiredMoves: 15, goldMin: 30, goldMax: 40 },
+  { areaId: 4, floorId: 6, areaNo: 5, cost: 3, requiredMoves: 16, goldMin: 50, goldMax: 60 },
+  { areaId: 5, floorId: 7, areaNo: 6, cost: 3, requiredMoves: 20, goldMin: 50, goldMax: 60 },
+].map((floor, index) => ({ ...floor, index }));
+
+function parseInteger(value, fallback) {
+  const parsed = Number.parseInt(value, 10);
+  return Number.isFinite(parsed) ? parsed : fallback;
+}
+
+function getFirstRegionFloor(areaId = 0, floorId = 2) {
+  const requestedFloorId = parseInteger(floorId, 2);
+  const byFloorId = FIRST_REGION_FLOORS.find((floor) => floor.floorId === requestedFloorId);
+  if (byFloorId) {
+    return byFloorId;
+  }
+
+  const requestedAreaId = parseInteger(areaId, 0);
+  const byAreaId = FIRST_REGION_FLOORS.find((floor) => floor.areaId === requestedAreaId);
+  if (byAreaId) {
+    return byAreaId;
+  }
+
+  // ponytail: unknown IDs fall back to the first local row; replace with masterdata mapping when recovered.
+  return FIRST_REGION_FLOORS[0];
+}
+
+function getNextFirstRegionFloor(floor) {
+  return FIRST_REGION_FLOORS[floor.index + 1] || null;
+}
+
+function clampMoveCount(value, floor) {
+  return Math.min(Math.max(parseInteger(value, 0), 0), floor.requiredMoves);
+}
+
+function getExplorationProgress(floor, movesDone) {
+  return Math.floor((clampMoveCount(movesDone, floor) * 100) / floor.requiredMoves);
+}
+
+function getExplorationStepRewards(floor) {
+  return {
+    getExp: floor.cost * 3,
+    // ponytail: deterministic midpoint keeps tests replayable; upgrade to seeded RNG with saved state.
+    gold: Math.floor((floor.goldMin + floor.goldMax) / 2),
+  };
+}
+
+function renderFloorInfoXml(floor, progress, indent = "      ") {
+  return [
+    `${indent}<floor_info>`,
+    `${indent}  <id>${floor.floorId}</id>`,
+    `${indent}  <type>0</type>`,
+    `${indent}  <unlock>1</unlock>`,
+    `${indent}  <progress>${progress}</progress>`,
+    `${indent}  <cost>${floor.cost}</cost>`,
+    `${indent}  <boss_id>0</boss_id>`,
+    `${indent}  <found_item_list></found_item_list>`,
+    `${indent}</floor_info>`,
+  ];
+}
+
+function renderNextFloorXml(floor) {
+  if (!floor) {
+    return [];
+  }
+  return [
+    "      <next_floor>",
+    `        <area_id>${floor.areaId}</area_id>`,
+    ...renderFloorInfoXml(floor, 0, "        "),
+    "      </next_floor>",
+  ];
+}
+
+function createExplorationGetFloorXml(areaId = 0, floorId = 2, movesDone = 0) {
+  const currentFloor = getFirstRegionFloor(areaId, floorId);
+  const nextFloor = getNextFirstRegionFloor(currentFloor);
+  const progress = getExplorationProgress(currentFloor, movesDone);
+
+  return [
   '<?xml version="1.0" encoding="UTF-8"?>',
   "<response>",
   "  <header>",
@@ -287,50 +370,51 @@ const EXPLORATION_GET_FLOOR_XML = [
   "  </header>",
   "  <body>",
   "    <get_floor>",
-  "      <area_id>0</area_id>",
+  `      <area_id>${currentFloor.areaId}</area_id>`,
   "      <bg>exp_sarch</bg>",
   "      <bgm>bgm_sarch1</bgm>",
   "      <area_name>Local Area</area_name>",
   "      <next_exp>0</next_exp>",
-  "      <next_floor>0</next_floor>",
-  "      <floor_info>",
-  "        <id>2</id>",
-  "        <type>0</type>",
-  "        <unlock>1</unlock>",
-  "        <progress>1</progress>",
-  "        <cost>1</cost>",
-  "        <boss_id>0</boss_id>",
-  "        <found_item_list></found_item_list>",
-  "      </floor_info>",
+  ...renderNextFloorXml(nextFloor),
+  ...renderFloorInfoXml(currentFloor, progress),
   "    </get_floor>",
   "  </body>",
   "</response>",
 ].join("");
-const EXPLORATION_EXPLORE_XML = [
-  '<?xml version="1.0" encoding="UTF-8"?>',
-  "<response>",
-  "  <header>",
-  "    <error><code>0</code></error>",
-  "    <session_id>local-exploration</session_id>",
-  "    <next_scene>6200</next_scene>",
-  "  </header>",
-  "  <body>",
-  "    <explore>",
-  "      <progress>2</progress>",
-  "      <event_type>0</event_type>",
-  "      <gold>0</gold>",
-  "      <get_exp>0</get_exp>",
-  "      <next_exp>0</next_exp>",
-  "      <next_floor>0</next_floor>",
-  "      <friendship_point>0</friendship_point>",
-  "      <recover>0</recover>",
-  "      <encounter>0</encounter>",
-  "      <fairy_pose>2</fairy_pose>",
-  "      <fairy_face>5</fairy_face>",
-  "    </explore>",
-  "  </body>",
-  "</response>",
-].join("");
+}
+const EXPLORATION_GET_FLOOR_XML = createExplorationGetFloorXml();
+function createExplorationExploreXml(progress = 10, rewards = getExplorationStepRewards(FIRST_REGION_FLOORS[0])) {
+  const safeProgress = Math.min(Math.max(parseInteger(progress, 10), 0), 100);
+  const gold = Math.max(parseInteger(rewards.gold, 0), 0);
+  const getExp = Math.max(parseInteger(rewards.getExp, 0), 0);
+
+  return [
+    '<?xml version="1.0" encoding="UTF-8"?>',
+    "<response>",
+    "  <header>",
+    "    <error><code>0</code></error>",
+    "    <session_id>local-exploration</session_id>",
+    "    <next_scene>6200</next_scene>",
+    "  </header>",
+    "  <body>",
+    "    <explore>",
+    `      <progress>${safeProgress}</progress>`,
+    "      <event_type>0</event_type>",
+    `      <gold>${gold}</gold>`,
+    `      <get_exp>${getExp}</get_exp>`,
+    "      <next_exp>0</next_exp>",
+    "      <next_floor>0</next_floor>",
+    "      <friendship_point>0</friendship_point>",
+    "      <recover>0</recover>",
+    "      <encounter>0</encounter>",
+    "      <fairy_pose>2</fairy_pose>",
+    "      <fairy_face>5</fairy_face>",
+    "    </explore>",
+    "  </body>",
+    "</response>",
+  ].join("");
+}
+const EXPLORATION_EXPLORE_XML = createExplorationExploreXml();
 // ponytail: getCurrentMainBg only appends the day/night suffix; the saved base name already includes mainbg_.
 const MAINMENU_BGFILE = "mainbg_an";
 const MAINMENU_FIELDS = [
@@ -460,7 +544,13 @@ function getLoginXmlSource(loginXml) {
   return "minimal";
 }
 
+function getExplorationFloorKey(params) {
+  return `${params.decrypted.area_id || "0"}:${params.decrypted.floor_id || "2"}`;
+}
+
 function createServer() {
+  // ponytail: in-memory per-process progress is enough for one reconstruction run; replace with a save-backed model when persistence matters.
+  const explorationMovesByFloor = new Map();
   const server = http.createServer(async (req, res) => {
     const url = new URL(req.url, `http://${req.headers.host || "127.0.0.1"}`);
 
@@ -638,13 +728,18 @@ function createServer() {
 
       if (req.method === "POST" && url.pathname === "/connect/app/exploration/get_floor") {
         // ponytail: one no-branch floor entry is enough to test exploration_main; real event routing comes after the next route proves it.
-        const encrypted = encryptAes128Ecb(EXPLORATION_GET_FLOOR_XML, connectAppKey);
+        const floorKey = getExplorationFloorKey(params);
+        const movesDone = explorationMovesByFloor.get(floorKey) || 0;
+        const xml = createExplorationGetFloorXml(params.decrypted.area_id, params.decrypted.floor_id, movesDone);
+        const encrypted = encryptAes128Ecb(xml, connectAppKey);
         logRequest("connect_app_response", {
           path: url.pathname,
           mode: "aes-128-ecb",
           key: connectAppKey,
           bytes: encrypted.length,
           source: "minimal exploration get_floor",
+          floorKey,
+          movesDone,
         });
         sendBinary(res, 200, encrypted);
         return;
@@ -652,13 +747,24 @@ function createServer() {
 
       if (req.method === "POST" && url.pathname === "/connect/app/exploration/explore") {
         // ponytail: keep this as the no-branch walking candidate; battle/fairy/reward routes stay separate frontiers.
-        const encrypted = encryptAes128Ecb(EXPLORATION_EXPLORE_XML, connectAppKey);
+        const floor = getFirstRegionFloor(params.decrypted.area_id, params.decrypted.floor_id);
+        const floorKey = getExplorationFloorKey(params);
+        const movesDone = clampMoveCount((explorationMovesByFloor.get(floorKey) || 0) + 1, floor);
+        explorationMovesByFloor.set(floorKey, movesDone);
+        const progress = getExplorationProgress(floor, movesDone);
+        const rewards = getExplorationStepRewards(floor);
+        const encrypted = encryptAes128Ecb(createExplorationExploreXml(progress, rewards), connectAppKey);
         logRequest("connect_app_response", {
           path: url.pathname,
           mode: "aes-128-ecb",
           key: connectAppKey,
           bytes: encrypted.length,
           source: "minimal exploration explore",
+          floorKey,
+          movesDone,
+          progress,
+          gold: rewards.gold,
+          getExp: rewards.getExp,
         });
         sendBinary(res, 200, encrypted);
         return;
@@ -724,6 +830,8 @@ module.exports = {
   decryptAes128EcbBase64,
   encryptAes128Ecb,
   encryptAes128EcbBuffer,
+  createExplorationExploreXml,
+  createExplorationGetFloorXml,
   getLoginOkXml,
   getLoginXmlSource,
   parseConnectAppBody,

@@ -1,6 +1,7 @@
 param(
   [ValidateSet(
     "fast-health",
+    "self-check-transport",
     "connect",
     "repair-adb",
     "ensure-runtime",
@@ -49,6 +50,7 @@ function Normalize-ObserveList {
 try {
   $result = switch ($Command) {
     "fast-health" { Invoke-FastHealth }
+    "self-check-transport" { Invoke-TransportSelfCheck }
     "connect" { Invoke-ConnectRuntime }
     "repair-adb" { Invoke-RepairAdb }
     "ensure-runtime" { Invoke-EnsureRuntime -WipeData:$WipeData }

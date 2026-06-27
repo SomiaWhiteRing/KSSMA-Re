@@ -78,12 +78,16 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\work\kssma-runtime.ps1 fas
 ```
 
 快检只连接 `127.0.0.1:5583` 并读取 ABI、Android 版本和 boot 状态；它不会截图、
-读 logcat、跑 dumpsys、改 hosts 或重启模拟器。正常热状态应在约 1 秒内返回
+读 logcat、跑 dumpsys、改 hosts 或重启模拟器。正常热状态应在几秒内返回
 `ok=true`。如果失败，再跑：
 
 ```powershell
 powershell -NoProfile -ExecutionPolicy Bypass -File .\work\kssma-runtime.ps1 repair-adb
 ```
+
+`repair-adb` 会区分健康 ARM19、detached ARM19、offline/unauthorized、只剩
+Android 12/x86 等情况。只有 `detached-arm19` 会自动温重启 `kssma_arm19`，且不 wipe、
+不重装 APK、不重新推资源。
 
 常用命令：
 
@@ -110,8 +114,9 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\work\kssma-runtime.ps1 run
 - native-only 实验默认用 `patch-lib`，它只替换已安装包里的 `librooneyj.so`，避免每次推 304MB APK。
 - 只有 Java、resources、manifest、签名或包结构变化时才用完整 `install-apk`；安装前先跑 `clean-install` 清理 Android 4.4 遗留的临时安装文件。
 - `install-apk` 使用内部安装，绕过 Android 4.4 外置 ASEC 安装不稳定的问题；如果 ADB 客户端超时但设备端安装已完成，helper 会验证已安装 `librooneyj.so` 后给出结论。
-- `restart-runtime` 是破坏性命令，必须显式带 `-Force -Reason "..."`。普通连接、修复、
-  baseline 或安装命令不会杀模拟器进程。
+- `restart-runtime` 是破坏性命令，必须显式带 `-Force -Reason "..."`。除
+  `repair-adb` 的 `detached-arm19` 自动温重启外，普通连接、baseline 或安装命令不会杀
+  模拟器进程。
 - 不要默认用 Frida 做运行时探针；它容易让 ARM19 ADB transport 掉到 offline。只有有明确 hook 假设时再单独使用，并在回到 ADB 测试前停掉。
 - `-gpu on` 是当前默认；`-gpu off` 会产生误导性的 OpenGL ES 噪声。
 - 音频是当前运行时基线的一部分；不要用 `-no-audio` 启动 ARM19，否则无法验证 BGM 和角色语音。

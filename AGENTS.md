@@ -34,9 +34,13 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\work\kssma-runtime.ps1 fas
   `fast-health` 只允许做 `adb connect 127.0.0.1:5583` 和三个 `getprop`：
   `ro.product.cpu.abi`、`ro.build.version.release`、`sys.boot_completed`。禁止把 `wm`、
   `dumpsys`、`logcat`、`screencap`、`df` 放进连接健康检查。
-- 只有 `fast-health` 明确失败才跑 `repair-adb`；只有 `repair-adb` 也失败并给出
-  `restartAllowed=true`，才允许考虑 `restart-runtime`。`restart-runtime` 必须显式带
-  `-Force -Reason "..."`，普通 start/connect/repair 不得杀模拟器。
+- 只有 `fast-health` 明确失败才跑 `repair-adb`。`repair-adb` 会先做短链路重连；
+  只有分类为 `detached-arm19`（`kssma_arm19` 进程还活着，但 `127.0.0.1:5583` /
+  `emulator-5582` 都不能 shell）时，才允许自动温重启同一 AVD。温重启不得 wipe、
+  reinstall、push 资源或影响其他模拟器。
+- 手动 `restart-runtime` 仍是破坏性命令，必须显式带 `-Force -Reason "..."`。除
+  `repair-adb` 的 `detached-arm19` 自动温重启外，普通 start/connect/baseline/install
+  不得杀模拟器。
 - 不要切回 Android 12、x86、BlueStacks 或 Houdini，除非用户明确要求调查运行时。
 - ARM19 默认应开启音频；不要用 `-no-audio` 启动，否则 BGM 和角色语音测试无效。
 - 默认从干净 base APK 加最小已知补丁重建，不要从被大改过的 APK 继续叠补丁。
