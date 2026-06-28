@@ -16,9 +16,23 @@
 
 ## 直接游玩
 
-1. 双击 `play.cmd`。
-2. 等它自动启动本地服务器和 ARM19 模拟器，看到游戏主菜单后就能玩。
+1. 双击 `start-runtime.cmd` 启动 ARM19 模拟器并准备 hosts、显示、存档挂载、音频、包基线和探索补丁。
+2. 双击 `start-server.cmd` 启动本地服务器，然后在模拟器里打开游戏。
 3. 玩完双击 `stop.cmd` 关闭本地服务器；模拟器可以手动关，也可以留着下次更快启动。
+
+`play.cmd` 现在只保留为说明页。不要再把它当作一键启动入口；之前的一键入口把
+模拟器、server、登录和验收 flow 绑在一起，遇到已有非 ARM19 设备时会报
+`wrong-runtime-only`。
+
+如果双击入口没有窗口或出现乱码，先在项目目录运行入口自检。它只验证 Windows 能正确解析
+`.cmd`，不会启动模拟器：
+
+```cmd
+cmd /c start-runtime.cmd self-test
+cmd /c start-server.cmd self-test
+cmd /c play.cmd self-test
+cmd /c stop.cmd self-test
+```
 
 当前可体验内容：主菜单、角色点击互动/BGM/语音、探索秘境列表、楼层列表、进入关卡、
 返回秘境列表，以及前两块区域的临时背景。探索深层、战斗、妖精、奖励结算还在开发中。
@@ -31,8 +45,8 @@
 powershell -NoProfile -ExecutionPolicy Bypass -File .\work\kssma-runtime.ps1 flow -Scenario exploration-smoke
 ```
 
-`flow` 会独占重启本地 `bootstrap-server.js`、检查 ARM19、必要时修复 ADB、确保探索
-native baseline、自动登录，然后跑主菜单到探索的层级往返冒烟。结果写入
+`flow` 会独占重启本地 `bootstrap-server.js`、检查 ARM19、必要时修复 ADB、确保唯一
+client baseline、自动登录，然后跑主菜单到探索的层级往返冒烟。结果写入
 `work\kssma-flow-exploration-smoke-YYYYMMDD-HHMMSS\`，先看 `summary.txt` 或
 `summary.json`，再按需看 `requests.jsonl`、`events.jsonl`、`logcat.txt` 和关键截图。
 
@@ -120,7 +134,7 @@ Android 12/x86 等情况。只有 `detached-arm19` 会自动温重启 `kssma_arm
 powershell -NoProfile -ExecutionPolicy Bypass -File .\work\kssma-runtime.ps1 configure
 powershell -NoProfile -ExecutionPolicy Bypass -File .\work\kssma-runtime.ps1 ensure-runtime
 powershell -NoProfile -ExecutionPolicy Bypass -File .\work\kssma-runtime.ps1 ensure-baseline
-powershell -NoProfile -ExecutionPolicy Bypass -File .\work\kssma-runtime.ps1 ensure-exploration-baseline
+powershell -NoProfile -ExecutionPolicy Bypass -File .\work\kssma-runtime.ps1 ensure-client-baseline
 powershell -NoProfile -ExecutionPolicy Bypass -File .\work\kssma-runtime.ps1 clean-install
 powershell -NoProfile -ExecutionPolicy Bypass -File .\work\kssma-runtime.ps1 preload-small
 powershell -NoProfile -ExecutionPolicy Bypass -File .\work\kssma-runtime.ps1 launch
@@ -135,16 +149,15 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\work\kssma-runtime.ps1 obs
 - `preload-small` 只推 `download/rest`、`download/scenario`、`download/pack` 和少量必需文件，用来快速验证启动链；完整资源仍用 `preload-full` 单独处理。
 - `preload-small` 也会推已证明需要的小文件：`save_version`、`master_*`、`adv_chara111`、`bgm_common1.ogg`。
 - `ensure-baseline` 幂等检查 hosts、mount、display、audio 和 package；只有不符合基线才修复。
-- `ensure-exploration-baseline` 只检查已安装 `librooneyj.so` 是否等于当前探索 accepted
-  补丁 `work\librooneyj-exploration-area-return-rerequest.so`；一致时不 force-stop、不 push，
-  不一致时只替换这一份 `.so` 并校验 SHA-256。
+- `ensure-client-baseline` 检查唯一客户端 APK 和已安装 `librooneyj.so`。一致时不
+  force-stop、不 push；不一致时安装 `work\client-baseline\KSSMA-Re-client-baseline.apk`。
+- `ensure-exploration-baseline` 只是兼容别名；新流程使用 `ensure-client-baseline`。
 - `launch` 只启动游戏，不隐式重复 hosts/mount；`run` 只执行一次 `ensure-baseline`。
 - 如果游戏提示无法连接服务器，先检查 `work\kssma-server.ps1 status`，确认 `50005` 和 `10001` 都在监听。
-- native-only 实验必须显式给 `patch-lib -ApkPath <apk-or-so>`。脚本不会再自动选择
+- native-only 实验必须显式给 `patch-lib -ApkPath <explicit .so>`。脚本不会再自动选择
   `work` 里最新的 `*signed.apk`，因为旧 APK 可能携带错误的 `librooneyj.so`。
-- 只有 Java、resources、manifest、签名或包结构变化时才用完整 `install-apk`；安装前先跑 `clean-install` 清理 Android 4.4 遗留的临时安装文件。
-- `install-apk` 也必须显式给 `-ApkPath`；背景、BGM、server XML、玩法协议值域改动不需要
-  完整安装 APK。
+- `install-apk` 默认只安装唯一 client baseline；显式传入非 baseline APK 会被拒绝。
+  背景、BGM、server XML、玩法协议值域改动不需要完整安装 APK。
 - `install-apk` 使用内部安装，绕过 Android 4.4 外置 ASEC 安装不稳定的问题；如果 ADB 客户端超时但设备端安装已完成，helper 会验证已安装 `librooneyj.so` 后给出结论。
 - `restart-runtime` 是破坏性命令，必须显式带 `-Force -Reason "..."`。除
   `repair-adb` 的 `detached-arm19` 自动温重启外，普通连接、baseline 或安装命令不会杀

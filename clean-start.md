@@ -11,6 +11,8 @@
 ## 保留的成果
 
 - 原始 APK 和 140330 资源 dump 保留在 `base/`。
+- 唯一可安装客户端基线是 `work/client-baseline/KSSMA-Re-client-baseline.apk`，manifest 是
+  `work/client-baseline/client-baseline.json`。普通流程不要安装旧 APK。
 - Android 4.4.2/API19 ARM 是当前可靠运行时。
 - 旧域名转本地、双端口 server、AES key、资源预载脚本都是有效成果。
 - `work/kssma-runtime.ps1 flow` 是玩法实机验收的默认入口；它负责 server、runtime gate、
@@ -36,7 +38,8 @@
 不要再把角色大厅、脸图、mainbg 黑屏、点角色台词底框当作主线，除非当前 run 的
 logcat 明确显示缺失资源路径、纹理加载崩溃，或截图证明相对当前基线发生回归。
 
-不要从被大改过的 APK 继续叠补丁。默认从干净 base APK 加最小已知补丁重建。
+不要从被大改过的 APK 继续叠补丁。默认从干净 base APK 加最小已知补丁重建唯一
+client baseline；旧 APK 只能作为归档证据，不是运行入口。
 
 ## 新主线
 

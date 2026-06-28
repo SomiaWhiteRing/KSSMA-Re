@@ -16,6 +16,7 @@ $configPath = "C:\ProgramData\BlueStacks_nxt\bluestacks.conf"
 $playerLogPath = "C:\ProgramData\BlueStacks_nxt\Logs\Player.log"
 $crashSlicePath = Join-Path $PSScriptRoot "nougat32-latest-crash.txt"
 $tombstonePath = Join-Path $PSScriptRoot "nougat32-latest-tombstone.txt"
+$clientBaselineApk = Join-Path $PSScriptRoot "client-baseline\KSSMA-Re-client-baseline.apk"
 
 function Ensure-File {
   param([string]$Path)
@@ -32,15 +33,11 @@ function Resolve-ApkPath {
     return (Resolve-Path -LiteralPath $Candidate -ErrorAction Stop).Path
   }
 
-  $latest = Get-ChildItem -LiteralPath $PSScriptRoot -Filter "*signed.apk" -File |
-    Sort-Object LastWriteTime -Descending |
-    Select-Object -First 1
-
-  if (-not $latest) {
-    throw "No signed APK found under $PSScriptRoot"
+  if (-not (Test-Path -LiteralPath $clientBaselineApk)) {
+    throw "Missing unique client baseline APK: $clientBaselineApk"
   }
 
-  return $latest.FullName
+  return (Resolve-Path -LiteralPath $clientBaselineApk -ErrorAction Stop).Path
 }
 
 function Get-ConfigValue {
@@ -416,10 +413,6 @@ function Show-Status {
   $logcatSetting = Select-String -Path $configPath -Pattern 'bst\.instance\.Nougat32\.enable_logcat_redirection=' |
     Select-Object -First 1 -ExpandProperty Line
   $player = Get-Process -Name HD-Player -ErrorAction SilentlyContinue | Select-Object -First 1
-  $latestApk = Get-ChildItem -LiteralPath $PSScriptRoot -Filter "*signed.apk" -File |
-    Sort-Object LastWriteTime -Descending |
-    Select-Object -First 1
-
   [pscustomobject]@{
     Instance        = $instance
     PlayerRunning   = [bool]$player
@@ -428,7 +421,7 @@ function Show-Status {
     AdbEndpoint     = Get-InstanceAdbEndpoint
     HostAdbListening = Test-TcpPort "127.0.0.1" $adbPort
     LogcatRedirect  = $logcatSetting
-    LatestApk       = if ($latestApk) { $latestApk.FullName } else { $null }
+    ClientBaselineApk = if (Test-Path -LiteralPath $clientBaselineApk) { (Resolve-Path -LiteralPath $clientBaselineApk).Path } else { $null }
     PlayerLog       = $playerLogPath
     CrashSlice      = $crashSlicePath
     Tombstone       = $tombstonePath

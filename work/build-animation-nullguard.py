@@ -10,6 +10,12 @@ from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parent
+if os.environ.get("KSSMA_ALLOW_LEGACY_APK_BUILDER", "").strip() != "1":
+    raise SystemExit(
+        "Legacy APK builder disabled. Use work/build-client-baseline.py; "
+        "set KSSMA_ALLOW_LEGACY_APK_BUILDER=1 only for archived archaeology."
+    )
+
 BASE_APK = ROOT.parent / "base" / "com.square_enix.million_cn-1.0.0.100.0712.M330.apk"
 LIB_PATH = ROOT / "million_cn" / "apktool" / "lib" / "armeabi" / "librooneyj.so"
 LIB_ENTRY = "lib/armeabi/librooneyj.so"
@@ -397,21 +403,7 @@ def should_strip_signature(name: str) -> bool:
 def resolve_input_apk() -> Path:
     if BASE_APK.exists():
         return BASE_APK
-
-    candidates = sorted(
-        (
-            path
-            for path in ROOT.glob("*signed.apk")
-            if path.resolve() != OUTPUT_APK.resolve()
-        ),
-        key=lambda path: path.stat().st_mtime,
-        reverse=True,
-    )
-
-    if not candidates:
-        raise SystemExit(f"No signed APK found under {ROOT}")
-
-    return candidates[0]
+    raise SystemExit(f"Missing clean base APK: {BASE_APK}")
 
 
 def copy_entry(

@@ -667,10 +667,10 @@ function Invoke-FlowRuntimeGate {
     Stop-FlowWithFailure -Context $Context -FailureClass "runtime-not-ready" -Step "ensure-baseline" -Message "ensure-baseline failed: $($baseline.failureClass)"
   }
 
-  $native = Invoke-EnsureExplorationBaseline
-  Add-FlowEvent -Context $Context -Type "runtime-ensure-exploration-baseline" -Data ([ordered]@{ ok = $native.ok; failureClass = $native.failureClass; data = $native.data })
+  $native = Invoke-EnsureClientBaseline
+  Add-FlowEvent -Context $Context -Type "runtime-ensure-client-baseline" -Data ([ordered]@{ ok = $native.ok; failureClass = $native.failureClass; data = $native.data })
   if (-not $native.ok) {
-    Stop-FlowWithFailure -Context $Context -FailureClass "native-baseline-mismatch" -Step "ensure-exploration-baseline" -Message "ensure-exploration-baseline failed: $($native.failureClass)"
+    Stop-FlowWithFailure -Context $Context -FailureClass "client-baseline-mismatch" -Step "ensure-client-baseline" -Message "ensure-client-baseline failed: $($native.failureClass)"
   }
   $Context.serial = $script:KssmaRuntimeConfig.PrimarySerial
 }

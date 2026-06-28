@@ -38,7 +38,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\work\kssma-runtime.ps1 flo
 ```
 
   `flow` 会独占启动本地 `bootstrap-server.js`、执行 `fast-health`、必要时 `repair-adb`、
-  执行 `ensure-baseline` 和 `ensure-exploration-baseline`、自动登录、等待 route、保存关键截图，
+  执行 `ensure-baseline` 和 `ensure-client-baseline`、自动登录、等待 route、保存关键截图，
   并输出 `summary.json`、`requests.jsonl`、`events.jsonl`、`logcat.txt` 和 `activity.txt`。
   失败时先看 summary 和 failing step，再改 server/native/resource。
 - 不使用 flow 的手动实机调试才需要先跑：
@@ -59,10 +59,16 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\work\kssma-runtime.ps1 fas
   不得杀模拟器。
 - 不要切回 Android 12、x86、BlueStacks 或 Houdini，除非用户明确要求调查运行时。
 - ARM19 默认应开启音频；不要用 `-no-audio` 启动，否则 BGM 和角色语音测试无效。
-- 默认从干净 base APK 加最小已知补丁重建，不要从被大改过的 APK 继续叠补丁。
-- native-only 改动默认用 `work/kssma-runtime.ps1 patch-lib -ApkPath <apk-or-so>` 直接替换
-  已安装包里的 `librooneyj.so`。只有 Java/resources/manifest/签名/包结构变化时才完整
-  `install-apk`。
+- 默认客户端只有一个可安装基线：
+  `work/client-baseline/KSSMA-Re-client-baseline.apk`，其 manifest 是
+  `work/client-baseline/client-baseline.json`。它由干净 base APK 注入当前 accepted
+  `librooneyj.so` 生成；普通启动、flow 和安装入口只认这个 APK。
+- `install-apk` 默认安装唯一 baseline；如果显式传入非 baseline APK，必须拒绝。不要从
+  `work/`、归档目录或“最新 signed APK”挑旧 APK 安装。
+- native-only 实验仍可用 `work/kssma-runtime.ps1 patch-lib -ApkPath <explicit .so>` 直接替换
+  已安装包里的 `librooneyj.so`。实验结束后必须回到 `ensure-client-baseline`。只有 Java、
+  resources、manifest、签名或包结构变化进入新 accepted baseline 时，才重建唯一
+  client baseline。
 - 完整安装前先跑 `work/kssma-runtime.ps1 clean-install`，并看 `status`/`diagnose` 里的
   `/data` 空间；
   如果 `adb install` 超时，不要立刻重试，先看 helper 对已安装 lib/hash 和 install log 的诊断。

@@ -3,9 +3,11 @@ param(
     "fast-health",
     "self-check-transport",
     "connect",
+    "start-runtime",
     "repair-adb",
     "ensure-runtime",
     "ensure-baseline",
+    "ensure-client-baseline",
     "ensure-exploration-baseline",
     "flow",
     "play",
@@ -57,9 +59,11 @@ try {
     "fast-health" { Invoke-FastHealth }
     "self-check-transport" { Invoke-TransportSelfCheck }
     "connect" { Invoke-ConnectRuntime }
+    "start-runtime" { Invoke-StartRuntime -EnsureBaseline -EnsureClientBaseline }
     "repair-adb" { Invoke-RepairAdb }
     "ensure-runtime" { Invoke-EnsureRuntime -WipeData:$WipeData }
     "ensure-baseline" { Invoke-EnsureBaseline }
+    "ensure-client-baseline" { Invoke-EnsureClientBaseline }
     "ensure-exploration-baseline" { Invoke-EnsureExplorationBaseline }
     "flow" { Invoke-Flow -Scenario $Scenario -Tag $Tag }
     "play" { Invoke-Play -Tag $Tag }

@@ -7,6 +7,8 @@ notes are archived at
 ## Current Baseline
 
 - Source APK: `base/com.square_enix.million_cn-1.0.0.100.0712.M330.apk`.
+- Unique installable client baseline: `work/client-baseline/KSSMA-Re-client-baseline.apk`.
+- Client baseline manifest: `work/client-baseline/client-baseline.json`.
 - Resource dump: `base/com.square_enix.million_cn-140330.zip`.
 - Decompiled output and working assets: `work/million_cn/`.
 - Runtime target: Android `4.4.2` / API 19 / `armeabi-v7a` classic ARM emulator.
@@ -20,8 +22,9 @@ notes are archived at
 - Gameplay acceptance should normally use:
   `powershell -NoProfile -ExecutionPolicy Bypass -File .\work\kssma-runtime.ps1 flow -Scenario exploration-smoke`.
   The flow owns its local bootstrap server, runtime gate, login, route waits, screenshots, and summary artifacts.
-- Human play entry is `play.cmd`; it starts the local server, prepares ARM19, logs in to the main menu, and leaves
-  the server running. `stop.cmd` stops the local server after play.
+- Human play entry is split for non-developers:
+  `start-runtime.cmd` starts/prepares ARM19, `start-server.cmd` starts the local server, and `stop.cmd` stops it.
+  `play.cmd` is only a compatibility instruction page.
 - Server self-check:
   `node .\server\test-bootstrap-server.js`.
 
@@ -55,14 +58,15 @@ Archive: `docs/reverse-archive/startup-mainmenu-20260624-20260625.md`.
 
 - Use ARM19 only unless the user explicitly asks to investigate another runtime.
 - Gameplay acceptance normally runs through `flow -Scenario <name>`, which already performs `fast-health`,
-  `repair-adb` on failure, `ensure-baseline`, and `ensure-exploration-baseline`.
+  `repair-adb` on failure, `ensure-baseline`, and `ensure-client-baseline`.
 - For manual/debug device work outside flow, run `fast-health` first and run `repair-adb` only after it explicitly fails.
 - `repair-adb` first tries short reconnect repair. It may automatically warm-restart
   only `detached-arm19`: `kssma_arm19` still has classic emulator processes, but
   both `127.0.0.1:5583` and `emulator-5582` cannot shell.
 - Manual `restart-runtime -Force -Reason "..."` remains explicit-only outside that
   detached ARM19 repair path.
-- Native-only changes should use `patch-lib -ApkPath <apk-or-so>` and must verify installed/source SHA-256 equality.
+- `install-apk` only accepts the unique client baseline APK. Old APKs are archived and must not be installed.
+- Native-only changes should use `patch-lib -ApkPath <explicit .so>` and must verify installed/source SHA-256 equality.
 - Frida is not a default probe because it can destabilize ARM19 ADB.
 
 Archive: `docs/reverse-archive/runtime-control-arm19-20260625-20260627.md`.
@@ -148,11 +152,46 @@ Archives:
   `work/kssma-flow-exploration-smoke-flow-first-reset-smoke`; it passed with
   `/exploration/area -> /exploration/floor area_id=0 -> /exploration/get_floor area_id=0 floor_id=7 ->
   /exploration/area -> /exploration/floor area_id=1 -> /exploration/get_floor area_id=1 floor_id=16`.
-- Human entry frontier: `play.cmd` should remain the non-technical entry point. It is not an automated gameplay
-  assertion; it only prepares the local runtime and stops at the main menu for manual play.
+- Human entry frontier: non-technical play is split into `start-runtime.cmd`, `start-server.cmd`, and `stop.cmd`.
+  `play.cmd` is only a compatibility instruction page.
 - Human entry smoke artifact: `work/kssma-flow-play-human-entry-smoke` passed on 2026-06-28. It recovered a
   detached ARM19 by warm restart, restored the accepted exploration native baseline, logged in, and screenshot
   `screenshots/ready-mainmenu.png` shows the accepted main menu. Server was stopped after validation.
+- Human entry cmd parsing fix: `play.cmd` and `stop.cmd` are ASCII one-line wrappers because Windows `cmd.exe`
+  misparsed the previous UTF-8/LF Chinese batch text. Entry self-checks passed:
+  `cmd /c play.cmd self-test` and `cmd /c stop.cmd self-test`. Flow self-check/list and
+  `node .\server\test-bootstrap-server.js` also passed.
+- Human entry visibility fix: `play.cmd`/`stop.cmd` now keep a plain `pause` at the end of the same cmd window
+  instead of relying on a child window. This should make double-click failures visible instead of disappearing.
+  Rechecked `cmd /c play.cmd self-test`, `cmd /c stop.cmd self-test`, flow self-check, and server self-check.
+- Human entry split: one-shot `play` failed in
+  `work/kssma-flow-play-human-entry-20260628-104414` because ADB saw only non-ARM19 devices
+  (`wrong-runtime-only`) and no `kssma_arm19` process. Added `start-runtime.cmd`, `start-server.cmd`, and
+  `start-runtime` runtime command so ARM19 startup is separate from server startup and gameplay flow.
+- Manual play connectivity fix: server was healthy on `50005/10001`, but the newly started ARM19 had stale hosts
+  (`/system/etc/hosts` only contained localhost), so the client could not reach local bootstrap despite server health.
+  `ensure-baseline` repaired hosts/mount/display/audio/package. `start-runtime` now runs baseline after ARM19 startup
+  or when ARM19 is already running; verified output includes `baseline.cache=fresh` and `hostsOk=true`.
+- Manual play exploration-baseline fix: area list regressed to "tap area does not enter floor list" because the installed
+  `librooneyj.so` hash was `CC922CCCC226047B1BF6F19A7A4C06733CDD7434916085477F500E349C836C27`, not the accepted
+  exploration baseline `8D214198BFC69CC9D523BB645B0DA1FF75ABFA109A271E850F4B463FA96DD80D`. Ran
+  `ensure-exploration-baseline`; it patched only `librooneyj.so` and post-verify matched. `start-runtime` now runs
+  `ensure-exploration-baseline` after `ensure-baseline`, so manual play gets the same hierarchy baseline as flow.
+- Exploration rebaseline smoke artifact: `work/kssma-flow-exploration-smoke-area-floor-rebaseline` passed. Route
+  sequence proved `/exploration/area -> /exploration/floor area_id=0 -> /exploration/get_floor area_id=0 floor_id=7`,
+  return to `/exploration/area`, then `/exploration/floor area_id=1 -> /exploration/get_floor area_id=1 floor_id=16`.
+- Client baseline uniqueization: generated `work/client-baseline/KSSMA-Re-client-baseline.apk` from clean base APK plus
+  accepted `work/librooneyj-exploration-area-return-rerequest.so`; manifest records the current signed baseline APK
+  SHA-256 and fixed lib SHA-256 `8D214198BFC69CC9D523BB645B0DA1FF75ABFA109A271E850F4B463FA96DD80D`.
+  The APK hash can change when rebuilt because `jarsigner` rewrites signature metadata; the embedded lib hash is the
+  stable client-behavior guard. `ensure-client-baseline` passed
+  with installed/source lib match, and `install-check -ApkPath .\work\million-cn-animationguard-signed.apk` correctly
+  refused the old APK because its embedded lib was stock `CC922CCCC226047B1BF6F19A7A4C06733CDD7434916085477F500E349C836C27`.
+  Old `work/*.apk` and obsolete probe `.so` files were deleted; their removal manifest is
+  `docs/reverse-archive/client-artifacts-before-baseline-20260628/removed-binaries.tsv`.
+- Client baseline uniqueization runtime proof: `start-runtime` now reports `clientBaseline.status=already-matched`.
+  `install-check` without `-ApkPath` verifies the unique baseline, and `flow -Scenario exploration-smoke -Tag client-baseline-uniqueization`
+  passed with artifact `work/kssma-flow-exploration-smoke-client-baseline-uniqueization`.
 - The active exploration product frontier is beyond the smoke path: repeated walking, floor-clear, next-floor continuation, return behavior from exploration main, and future event/battle/fairy/reward branches. Pick one flow edge per round.
 - The active tooling frontier is adding new `flow` scenarios for new systems instead of copying login/server/ADB setup into separate scripts.
 - Detailed pre-flow-first exploration depth, media, ADB, native-baseline, and smoke-run notes were moved to:

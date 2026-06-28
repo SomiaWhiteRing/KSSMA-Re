@@ -33,6 +33,10 @@ $script:ResourceZipPath = Join-Path $script:RepoRoot "base\com.square_enix.milli
 $script:DeviceSaveDir = "/storage/sdcard/Android/data/$($script:KssmaRuntimeConfig.Package)/files/save"
 $script:MediaSaveDir = "/mnt/media_rw/sdcard/Android/data/$($script:KssmaRuntimeConfig.Package)/files/save"
 $script:InternalSaveDir = "/data/local/tmp/kssma-save"
+$script:ClientBaselineDir = Join-Path $PSScriptRoot "client-baseline"
+$script:ClientBaselineApkPath = Join-Path $script:ClientBaselineDir "KSSMA-Re-client-baseline.apk"
+$script:ClientBaselineManifestPath = Join-Path $script:ClientBaselineDir "client-baseline.json"
+$script:ClientBaselineBuilderPath = Join-Path $PSScriptRoot "build-client-baseline.py"
 $script:ExplorationAcceptedLibPath = Join-Path $PSScriptRoot "librooneyj-exploration-area-return-rerequest.so"
 $script:ExplorationAcceptedLibSha256 = "8D214198BFC69CC9D523BB645B0DA1FF75ABFA109A271E850F4B463FA96DD80D"
 
@@ -843,6 +847,122 @@ function Invoke-EnsureRuntime {
   Complete-RuntimeResult -Context $ctx -Ok $false -FailureClass $repair.failureClass -RestartAllowed:$repair.restartAllowed -RecommendedCommand $repair.recommendedCommand -Data ([ordered]@{ transport = $health.transport; repair = $repair.data })
 }
 
+function Invoke-StartRuntime {
+  param(
+    [switch]$EnsureBaseline,
+    [switch]$EnsureClientBaseline
+  )
+
+  $ctx = New-RuntimeContext "start-runtime"
+
+  function Complete-StartedRuntime {
+    param(
+      $Context,
+      [string]$Status,
+      $Data
+    )
+
+    if ($EnsureBaseline) {
+      $baseline = Invoke-EnsureBaseline
+      $Context.stages += $baseline.stages
+      if (-not $baseline.ok) {
+        return Complete-RuntimeResult -Context $Context -Ok $false -FailureClass $baseline.failureClass -RestartAllowed:$baseline.restartAllowed -RecommendedCommand $baseline.recommendedCommand -Data ([ordered]@{
+            status = "baseline-failed"
+            beforeStatus = $Status
+            before = $Data
+            baseline = $baseline.data
+          })
+      }
+      $Data["baseline"] = $baseline.data
+    }
+    if ($EnsureClientBaseline) {
+      $clientBaseline = Invoke-EnsureClientBaseline
+      $Context.stages += $clientBaseline.stages
+      if (-not $clientBaseline.ok) {
+        return Complete-RuntimeResult -Context $Context -Ok $false -FailureClass $clientBaseline.failureClass -RestartAllowed:$clientBaseline.restartAllowed -RecommendedCommand $clientBaseline.recommendedCommand -Data ([ordered]@{
+            status = "client-baseline-failed"
+            beforeStatus = $Status
+            before = $Data
+            clientBaseline = $clientBaseline.data
+          })
+      }
+      $Data["clientBaseline"] = $clientBaseline.data
+    }
+    return Complete-RuntimeResult -Context $Context -Ok $true -Data $Data
+  }
+
+  $health = Get-PrimaryHealthData -Context $ctx -TimeoutSeconds 2 -IncludeTransport
+  if ($health.ok) {
+    $boot = Get-DeviceBootFingerprint -Serial $health.serial
+    Add-Stage $ctx "boot-fingerprint" $boot.stage
+    Update-RuntimeState ([ordered]@{
+        serial = $health.serial
+        fastHealthOk = $true
+        bootCompleted = $true
+        abi = $health.abi
+        release = $health.release
+        bootUptimeSeconds = $boot.uptimeSeconds
+      })
+    return Complete-StartedRuntime -Context $ctx -Status "already-running" -Data ([ordered]@{
+        status = "already-running"
+        abi = $health.abi
+        release = $health.release
+        bootCompleted = $health.bootCompleted
+        transport = $health.transport
+      })
+  }
+
+  $transportClass = if ($health.transport) { $health.transport.class } else { "unknown" }
+  if (@(Get-EmulatorProcesses).Count -gt 0) {
+    $repair = Invoke-RepairAdb
+    $ctx.stages += $repair.stages
+    if ($repair.ok) {
+      return Complete-StartedRuntime -Context $ctx -Status "repaired-existing-arm19" -Data ([ordered]@{
+          status = "repaired-existing-arm19"
+          repair = $repair.data
+        })
+    }
+    return Complete-RuntimeResult -Context $ctx -Ok $false -FailureClass $repair.failureClass -RestartAllowed:$repair.restartAllowed -RecommendedCommand $repair.recommendedCommand -Data ([ordered]@{
+        status = "repair-existing-arm19-failed"
+        before = $health.transport
+        repair = $repair.data
+      })
+  }
+
+  Start-ClassicEmulator -Context $ctx
+  if (Wait-PrimaryBoot -Context $ctx -TimeoutSeconds 240) {
+    $post = Get-PrimaryHealthData -Context $ctx -TimeoutSeconds 2 -IncludeTransport
+    if ($post.ok) {
+      $boot = Get-DeviceBootFingerprint -Serial $post.serial
+      Add-Stage $ctx "boot-fingerprint" $boot.stage
+      Reset-BaselineStateValues ([ordered]@{
+          serial = $post.serial
+          fastHealthOk = $true
+          bootCompleted = $true
+          abi = $post.abi
+          release = $post.release
+          bootUptimeSeconds = $boot.uptimeSeconds
+        })
+      return Complete-StartedRuntime -Context $ctx -Status "started-arm19" -Data ([ordered]@{
+          status = "started-arm19"
+          beforeClass = $transportClass
+          abi = $post.abi
+          release = $post.release
+          bootCompleted = $post.bootCompleted
+          transport = $post.transport
+        })
+    }
+  }
+
+  Complete-RuntimeResult -Context $ctx -Ok $false -FailureClass "boot-timeout" -RestartAllowed $false -RecommendedCommand "Run diagnose and inspect emulator stdout/stderr logs." -Data ([ordered]@{
+      status = "start-arm19-failed"
+      before = $health.transport
+      emulatorProcesses = @(Get-EmulatorProcesses)
+      stdoutLog = $script:StdoutLog
+      stderrLog = $script:StderrLog
+    })
+}
+
 function Assert-RuntimeReady {
   $result = Invoke-EnsureRuntime
   if (-not $result.ok) {
@@ -1189,49 +1309,175 @@ function Assert-ExpectedLibHash {
   }
 }
 
-function Invoke-EnsureExplorationBaseline {
-  $ctx = New-RuntimeContext "ensure-exploration-baseline"
+function Ensure-ClientBaselineArtifact {
+  param($Context)
+  if ((-not (Test-Path -LiteralPath $script:ClientBaselineApkPath)) -or (-not (Test-Path -LiteralPath $script:ClientBaselineManifestPath))) {
+    if (-not (Test-Path -LiteralPath $script:ClientBaselineBuilderPath)) {
+      throw "Missing client baseline builder: $($script:ClientBaselineBuilderPath)"
+    }
+    $stage = Invoke-RuntimeProcess -FilePath "python" -ArgumentList @($script:ClientBaselineBuilderPath) -TimeoutSeconds 240 -AllowFailure
+    Add-Stage $Context "build-client-baseline" $stage
+    if (-not $stage.ok) {
+      throw "client baseline builder failed: $($stage.stderr) $($stage.stdout)"
+    }
+  }
+}
+
+function Read-ClientBaselineManifest {
+  param($Context)
+  Ensure-ClientBaselineArtifact -Context $Context
+  try {
+    return Get-Content -Raw -Encoding UTF8 -LiteralPath $script:ClientBaselineManifestPath | ConvertFrom-Json
+  } catch {
+    throw "Invalid client baseline manifest: $($script:ClientBaselineManifestPath): $($_.Exception.Message)"
+  }
+}
+
+function Get-ApkEntryBytes {
+  param([string]$ApkPath, [string]$EntryName)
+  Add-Type -AssemblyName System.IO.Compression.FileSystem
+  $zip = [System.IO.Compression.ZipFile]::OpenRead($ApkPath)
+  try {
+    $entry = $zip.GetEntry($EntryName)
+    if (-not $entry) {
+      throw "APK does not contain $EntryName`: $ApkPath"
+    }
+    $stream = $entry.Open()
+    try {
+      $memory = [System.IO.MemoryStream]::new()
+      $stream.CopyTo($memory)
+      return $memory.ToArray()
+    } finally {
+      $stream.Dispose()
+      if ($memory) { $memory.Dispose() }
+    }
+  } finally {
+    $zip.Dispose()
+  }
+}
+
+function Get-BytesSha256 {
+  param([byte[]]$Bytes)
+  $sha = [System.Security.Cryptography.SHA256]::Create()
+  try {
+    return ([System.BitConverter]::ToString($sha.ComputeHash($Bytes)) -replace "-", "").ToUpperInvariant()
+  } finally {
+    $sha.Dispose()
+  }
+}
+
+function Test-ApkMatchesClientBaseline {
+  param([string]$ApkPath, $Manifest)
+  $resolved = (Resolve-Path -LiteralPath $ApkPath).Path
+  $apkHash = (Get-FileHash -Algorithm SHA256 -LiteralPath $resolved).Hash
+  $expectedApkHash = ($Manifest.baselineApk.sha256 -as [string])
+  $libEntry = ($Manifest.nativeLib.entry -as [string])
+  $expectedLibHash = ($Manifest.nativeLib.sha256 -as [string])
+  $libHash = ""
+  $libOk = $false
+  try {
+    $libHash = Get-BytesSha256 (Get-ApkEntryBytes -ApkPath $resolved -EntryName $libEntry)
+    $libOk = ($libHash -eq $expectedLibHash)
+  } catch {
+    return [ordered]@{ ok = $false; apk = $resolved; apkHash = $apkHash; expectedApkHash = $expectedApkHash; libEntry = $libEntry; libHash = ""; expectedLibHash = $expectedLibHash; failureClass = "apk-lib-missing"; error = $_.Exception.Message }
+  }
+  $ok = ($apkHash -eq $expectedApkHash) -and $libOk
+  [ordered]@{ ok = $ok; apk = $resolved; apkHash = $apkHash; expectedApkHash = $expectedApkHash; libEntry = $libEntry; libHash = $libHash; expectedLibHash = $expectedLibHash; failureClass = $(if ($ok) { "" } elseif (-not $libOk) { "apk-lib-hash-mismatch" } else { "apk-hash-mismatch" }) }
+}
+
+function Resolve-ClientBaselineApk {
+  param($Context)
+  $manifest = Read-ClientBaselineManifest -Context $Context
+  $apkPath = Join-Path $script:RepoRoot ($manifest.baselineApk.path -as [string])
+  $check = Test-ApkMatchesClientBaseline -ApkPath $apkPath -Manifest $manifest
+  Add-Stage $Context "check-client-baseline-apk" ([ordered]@{ ok = $check.ok; elapsedMs = 0; details = "apkHash=$($check.apkHash); libHash=$($check.libHash)" })
+  if (-not $check.ok) {
+    throw "Client baseline APK mismatch: $($check.failureClass)"
+  }
+  [ordered]@{ manifest = $manifest; apkPath = (Resolve-Path -LiteralPath $apkPath).Path; check = $check }
+}
+
+function Invoke-InstallClientBaselineApk {
+  param($Context, [string]$ApkPath)
+  Clear-InstallScratch -Context $Context
+  $dataInfo = Get-DataPartitionInfo -Context $Context
+  if ($dataInfo) {
+    $apkBytes = (Get-Item -LiteralPath $ApkPath).Length
+    $requiredBytes = $apkBytes + 256MB
+    if ($dataInfo.freeBytes -lt $requiredBytes) {
+      return [ordered]@{ ok = $false; failureClass = "insufficient-data-space"; data = [ordered]@{ data = $dataInfo; apkBytes = $apkBytes; requiredBytes = $requiredBytes } }
+    }
+  }
+  $install = Invoke-Adb -Arguments @("-s", $script:KssmaRuntimeConfig.PrimarySerial, "install", "-r", "-f", $ApkPath) -TimeoutSeconds 900 -AllowFailure
+  Add-Stage $Context "adb-install-client-baseline" $install
+  $sourceLib = $null
+  try {
+    $sourceLib = Get-LibrooneySource -SourcePath $ApkPath
+    $verify = Test-InstalledLibMatches -SourceLibPath $sourceLib.Path -Context $Context
+    $success = ($install.ok -and -not $install.timedOut -and $install.stdout -match "Success")
+    if ($success -and $verify.ok) {
+      return [ordered]@{ ok = $true; status = "installed-client-baseline"; install = $install.stdout; verify = $verify; data = $dataInfo }
+    }
+    if ($verify.ok) {
+      return [ordered]@{ ok = $true; status = "client-baseline-lib-verified-after-install"; install = $install.stdout; verify = $verify; data = $dataInfo; note = "adb install did not report clean Success, but installed librooneyj.so matches baseline" }
+    }
+    return [ordered]@{ ok = $false; failureClass = $(if ($verify.unknown) { $verify.failureClass } else { "install-failed" }); install = $install; verify = $verify; data = $dataInfo }
+  } finally {
+    if ($sourceLib -and $sourceLib.Temporary) {
+      Remove-Item -LiteralPath $sourceLib.Path -Force -ErrorAction SilentlyContinue
+    }
+  }
+}
+
+function Invoke-EnsureClientBaseline {
+  $ctx = New-RuntimeContext "ensure-client-baseline"
   $runtime = Invoke-EnsureRuntime
   $ctx.stages += $runtime.stages
   if (-not $runtime.ok) {
     return Complete-RuntimeResult -Context $ctx -Ok $false -FailureClass $runtime.failureClass -RestartAllowed:$runtime.restartAllowed -RecommendedCommand $runtime.recommendedCommand
   }
   try {
-    if (-not (Test-Path -LiteralPath $script:ExplorationAcceptedLibPath)) {
-      throw "Missing accepted exploration native baseline: $($script:ExplorationAcceptedLibPath)"
+    $baseline = Resolve-ClientBaselineApk -Context $ctx
+    $sourceLib = Get-LibrooneySource -SourcePath $baseline.apkPath
+    try {
+      $verify = Test-InstalledLibMatches -SourceLibPath $sourceLib.Path -Context $ctx
+    } finally {
+      if ($sourceLib -and $sourceLib.Temporary) {
+        Remove-Item -LiteralPath $sourceLib.Path -Force -ErrorAction SilentlyContinue
+      }
     }
-    Assert-ExpectedLibHash -SourceLibPath $script:ExplorationAcceptedLibPath -ExpectedSha256 $script:ExplorationAcceptedLibSha256 -Name "accepted exploration native baseline"
-    $verify = Test-InstalledLibMatches -SourceLibPath $script:ExplorationAcceptedLibPath -Context $ctx
     if ($verify.ok) {
       return Complete-RuntimeResult -Context $ctx -Ok $true -Data ([ordered]@{
-          source = $script:ExplorationAcceptedLibPath
           status = "already-matched"
+          apk = $baseline.apkPath
+          manifest = $script:ClientBaselineManifestPath
           verify = $verify
+          apkCheck = $baseline.check
         })
     }
-    Add-Stage $ctx "force-stop-before-exploration-patch" (Invoke-Adb -Arguments @("-s", $script:KssmaRuntimeConfig.PrimarySerial, "shell", "am", "force-stop", $script:KssmaRuntimeConfig.Package) -TimeoutSeconds 10 -AllowFailure)
-    $remoteLibPath = Get-InstalledLibPath -Context $ctx
-    Add-Stage $ctx "push-accepted-exploration-librooneyj" (Invoke-Adb -Arguments @("-s", $script:KssmaRuntimeConfig.PrimarySerial, "push", $script:ExplorationAcceptedLibPath, $remoteLibPath) -TimeoutSeconds 120 -AllowFailure)
-    Add-Stage $ctx "chmod-librooneyj" (Invoke-Adb -Arguments @("-s", $script:KssmaRuntimeConfig.PrimarySerial, "shell", "chmod", "644", $remoteLibPath) -TimeoutSeconds 10 -AllowFailure)
-    Add-Stage $ctx "chown-librooneyj" (Invoke-Adb -Arguments @("-s", $script:KssmaRuntimeConfig.PrimarySerial, "shell", "chown", "system:system", $remoteLibPath) -TimeoutSeconds 10 -AllowFailure)
-    $postVerify = Test-InstalledLibMatches -SourceLibPath $script:ExplorationAcceptedLibPath -Context $ctx
-    if (-not $postVerify.ok) {
-      return Complete-RuntimeResult -Context $ctx -Ok $false -FailureClass $postVerify.failureClass -RecommendedCommand "Do not continue gameplay validation; installed librooneyj.so still does not match the accepted exploration baseline." -Data ([ordered]@{
-          source = $script:ExplorationAcceptedLibPath
-          expectedHash = $script:ExplorationAcceptedLibSha256
-          before = $verify
-          after = $postVerify
-        })
+    Add-Stage $ctx "force-stop-before-client-baseline-install" (Invoke-Adb -Arguments @("-s", $script:KssmaRuntimeConfig.PrimarySerial, "shell", "am", "force-stop", $script:KssmaRuntimeConfig.Package) -TimeoutSeconds 10 -AllowFailure)
+    $installResult = Invoke-InstallClientBaselineApk -Context $ctx -ApkPath $baseline.apkPath
+    if (-not $installResult.ok) {
+      return Complete-RuntimeResult -Context $ctx -Ok $false -FailureClass $installResult.failureClass -RecommendedCommand "Inspect install stages; do not install old APKs or patch a random librooneyj.so." -Data ([ordered]@{ apk = $baseline.apkPath; before = $verify; install = $installResult })
     }
     Complete-RuntimeResult -Context $ctx -Ok $true -Data ([ordered]@{
-        source = $script:ExplorationAcceptedLibPath
-        status = "patched-accepted-exploration-librooneyj"
+        status = $installResult.status
+        apk = $baseline.apkPath
+        manifest = $script:ClientBaselineManifestPath
         before = $verify
-        verify = $postVerify
+        verify = $installResult.verify
+        apkCheck = $baseline.check
       })
   } catch {
-    Complete-RuntimeResult -Context $ctx -Ok $false -FailureClass "ensure-exploration-baseline-failed" -RecommendedCommand "Inspect data.error; do not run generic patch-lib or install-apk without an explicit -ApkPath." -Data ([ordered]@{ error = $_.Exception.Message })
+    Complete-RuntimeResult -Context $ctx -Ok $false -FailureClass "ensure-client-baseline-failed" -RecommendedCommand "Run python .\work\build-client-baseline.py, then rerun ensure-client-baseline." -Data ([ordered]@{ error = $_.Exception.Message })
   }
+}
+
+function Invoke-EnsureExplorationBaseline {
+  $result = Invoke-EnsureClientBaseline
+  $result.command = "ensure-exploration-baseline"
+  $result.warnings += "ensure-exploration-baseline is a compatibility alias; use ensure-client-baseline. It no longer hot-patches librooneyj.so by default."
+  return $result
 }
 
 function Invoke-PatchLib {
@@ -1316,9 +1562,20 @@ function Invoke-InstallApk {
   param([string]$ApkPath)
   $ctx = New-RuntimeContext "install-apk"
   try {
-    $resolvedApkPath = Resolve-ApkPath -ApkPath $ApkPath
+    $baseline = Resolve-ClientBaselineApk -Context $ctx
+    if ([string]::IsNullOrWhiteSpace($ApkPath)) {
+      $resolvedApkPath = $baseline.apkPath
+    } else {
+      $candidatePath = Resolve-ApkPath -ApkPath $ApkPath
+      $candidateCheck = Test-ApkMatchesClientBaseline -ApkPath $candidatePath -Manifest $baseline.manifest
+      Add-Stage $ctx "check-install-apk-source" ([ordered]@{ ok = $candidateCheck.ok; elapsedMs = 0; details = "apkHash=$($candidateCheck.apkHash); libHash=$($candidateCheck.libHash)" })
+      if (-not $candidateCheck.ok) {
+        return Complete-RuntimeResult -Context $ctx -Ok $false -FailureClass "non-baseline-apk-refused" -RecommendedCommand "Use .\work\client-baseline\KSSMA-Re-client-baseline.apk, or create a new baseline with work\build-client-baseline.py. For native-only experiments use patch-lib with an explicit .so." -Data ([ordered]@{ candidate = $candidateCheck; baseline = $baseline.check })
+      }
+      $resolvedApkPath = $candidatePath
+    }
   } catch {
-    return Complete-RuntimeResult -Context $ctx -Ok $false -FailureClass "source-required" -RecommendedCommand "Pass an explicit -ApkPath pointing to the APK to install; this command no longer guesses a latest signed APK." -Data ([ordered]@{ error = $_.Exception.Message })
+    return Complete-RuntimeResult -Context $ctx -Ok $false -FailureClass "client-baseline-source-failed" -RecommendedCommand "Run python .\work\build-client-baseline.py, then rerun install-apk without -ApkPath." -Data ([ordered]@{ error = $_.Exception.Message })
   }
   $runtime = Invoke-EnsureRuntime
   $ctx.stages += $runtime.stages
@@ -1326,34 +1583,14 @@ function Invoke-InstallApk {
     return Complete-RuntimeResult -Context $ctx -Ok $false -FailureClass $runtime.failureClass -RestartAllowed:$runtime.restartAllowed -RecommendedCommand $runtime.recommendedCommand
   }
   try {
-    Clear-InstallScratch -Context $ctx
-    $dataInfo = Get-DataPartitionInfo -Context $ctx
-    if ($dataInfo) {
-      $apkBytes = (Get-Item -LiteralPath $resolvedApkPath).Length
-      $requiredBytes = $apkBytes + 256MB
-      if ($dataInfo.freeBytes -lt $requiredBytes) {
-        return Complete-RuntimeResult -Context $ctx -Ok $false -FailureClass "insufficient-data-space" -RecommendedCommand "Free /data space or enlarge disk.dataPartition.size before install-apk." -Data ([ordered]@{ data = $dataInfo; apkBytes = $apkBytes; requiredBytes = $requiredBytes })
-      }
+    Add-Stage $ctx "force-stop-before-client-baseline-install" (Invoke-Adb -Arguments @("-s", $script:KssmaRuntimeConfig.PrimarySerial, "shell", "am", "force-stop", $script:KssmaRuntimeConfig.Package) -TimeoutSeconds 10 -AllowFailure)
+    $installResult = Invoke-InstallClientBaselineApk -Context $ctx -ApkPath $resolvedApkPath
+    if ($installResult.ok) {
+      return Complete-RuntimeResult -Context $ctx -Ok $true -Data ([ordered]@{ apk = $resolvedApkPath; status = $installResult.status; install = $installResult.install; verify = $installResult.verify })
     }
-    $install = Invoke-Adb -Arguments @("-s", $script:KssmaRuntimeConfig.PrimarySerial, "install", "-r", "-f", $resolvedApkPath) -TimeoutSeconds 900 -AllowFailure
-    Add-Stage $ctx "adb-install" $install
-    if ($install.ok -and -not $install.timedOut -and $install.stdout -match "Success") {
-      return Complete-RuntimeResult -Context $ctx -Ok $true -Data ([ordered]@{ apk = $resolvedApkPath; install = $install.stdout })
-    }
-
-    $sourceLib = Get-LibrooneySource -SourcePath $resolvedApkPath
-    $verify = Test-InstalledLibMatches -SourceLibPath $sourceLib.Path -Context $ctx
-    if ($verify.ok) {
-      return Complete-RuntimeResult -Context $ctx -Ok $true -Data ([ordered]@{ apk = $resolvedApkPath; install = $install.stdout; note = "adb install did not report clean Success, but installed librooneyj.so matches" })
-    }
-    $failure = if ($verify.unknown) { $verify.failureClass } else { "install-failed" }
-    Complete-RuntimeResult -Context $ctx -Ok $false -FailureClass $failure -RecommendedCommand "Inspect install stages; do not restart emulator or retry full install blindly." -Data ([ordered]@{ apk = $resolvedApkPath; stdout = $install.stdout; stderr = $install.stderr; data = $dataInfo; verify = $verify })
+    Complete-RuntimeResult -Context $ctx -Ok $false -FailureClass $installResult.failureClass -RecommendedCommand "Inspect install stages; do not retry with old APKs." -Data ([ordered]@{ apk = $resolvedApkPath; install = $installResult })
   } catch {
     Complete-RuntimeResult -Context $ctx -Ok $false -FailureClass "install-failed" -RecommendedCommand "Run diagnose and inspect /data/install logs before retrying." -Data ([ordered]@{ error = $_.Exception.Message })
-  } finally {
-    if ($sourceLib -and $sourceLib.Temporary) {
-      Remove-Item -LiteralPath $sourceLib.Path -Force -ErrorAction SilentlyContinue
-    }
   }
 }
 
@@ -1366,14 +1603,23 @@ function Invoke-InstallCheck {
     return Complete-RuntimeResult -Context $ctx -Ok $false -FailureClass $runtime.failureClass -RestartAllowed:$runtime.restartAllowed -RecommendedCommand $runtime.recommendedCommand
   }
   try {
+    $baseline = Resolve-ClientBaselineApk -Context $ctx
     $pmPath = Get-InstalledApkPath -Context $ctx
+    $sourcePath = if ($ApkPath) { Resolve-ApkPath -ApkPath $ApkPath } else { $baseline.apkPath }
+    $candidateCheck = Test-ApkMatchesClientBaseline -ApkPath $sourcePath -Manifest $baseline.manifest
+    Add-Stage $ctx "check-install-check-source" ([ordered]@{ ok = $candidateCheck.ok; elapsedMs = 0; details = "apkHash=$($candidateCheck.apkHash); libHash=$($candidateCheck.libHash)" })
+    if (-not $candidateCheck.ok) {
+      return Complete-RuntimeResult -Context $ctx -Ok $false -FailureClass "non-baseline-apk-refused" -RecommendedCommand "install-check only accepts the unique client baseline APK." -Data ([ordered]@{ packagePath = $pmPath; candidate = $candidateCheck; baseline = $baseline.check })
+    }
     $verify = $null
     if ($ApkPath) {
-      $sourcePath = Resolve-ApkPath -ApkPath $ApkPath
       $sourceLib = Get-LibrooneySource -SourcePath $sourcePath
       $verify = Test-InstalledLibMatches -SourceLibPath $sourceLib.Path -Context $ctx
+    } else {
+      $sourceLib = Get-LibrooneySource -SourcePath $baseline.apkPath
+      $verify = Test-InstalledLibMatches -SourceLibPath $sourceLib.Path -Context $ctx
     }
-    Complete-RuntimeResult -Context $ctx -Ok $true -Data ([ordered]@{ packagePath = $pmPath; libMatchesSource = if ($verify) { $verify.ok } else { $null }; verify = $verify })
+    Complete-RuntimeResult -Context $ctx -Ok $true -Data ([ordered]@{ packagePath = $pmPath; baselineApk = $baseline.apkPath; libMatchesBaseline = $verify.ok; verify = $verify; apkCheck = $candidateCheck })
   } catch {
     $failure = if ($_.Exception.Message -match "pm path timed out") { "install-check-timeout" } elseif ($_.Exception.Message -match "not installed") { "package-missing" } else { "install-check-failed" }
     Complete-RuntimeResult -Context $ctx -Ok $false -FailureClass $failure -RecommendedCommand "Use install-apk if package is missing; otherwise inspect package path." -Data ([ordered]@{ error = $_.Exception.Message })

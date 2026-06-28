@@ -1,14 +1,20 @@
 @echo off
-setlocal
+setlocal EnableExtensions
 cd /d "%~dp0"
-title KSSMA-Re Play
-echo 扩散性百万亚瑟王本地复原版
-echo 1. 请等待脚本自动启动服务器和模拟器。
-echo 2. 看到游戏主菜单后，就可以直接体验已完成内容：主菜单、角色互动、探索区域/楼层/关卡。
-echo 3. 玩完请运行 stop.cmd 关闭本地服务器。
+
+if /I "%~1"=="self-test" (
+  echo play.cmd self-test ok
+  exit /b 0
+)
+
+title KSSMA-Re
+echo KSSMA-Re now uses three simple entries:
 echo.
-powershell -NoProfile -ExecutionPolicy Bypass -File ".\work\kssma-runtime.ps1" play
+echo 1. start-runtime.cmd  - start the ARM19 emulator
+echo 2. start-server.cmd   - start the local server
+echo 3. stop.cmd           - stop the local server
 echo.
-echo 看到模拟器里的游戏主菜单，就表示已经准备好。
-echo 如果没有进入主菜单，请把窗口内容和 work\kssma-flow-play-* 路径发给开发者。
+echo After steps 1 and 2, launch or use the game in the ARM19 emulator.
+echo.
 pause
+exit /b 0
