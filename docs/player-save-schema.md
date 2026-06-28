@@ -44,12 +44,32 @@ It is a JSON-backed database shape, not the final storage engine.
 
 Only exploration walking currently mutates this save:
 
+- Routes that draw the global player HUD now read `your_data` from the same save:
+  `/connect/app/login`, `/connect/app/mainmenu/update`, `/connect/app/mainmenu`,
+  `/connect/app/exploration/area`, `/connect/app/exploration/floor`,
+  `/connect/app/exploration/get_floor`, and successful `/connect/app/exploration/explore`.
+  This keeps level/rank, AP, BC, Gold, max cards, friendship points, country, SUPER gauge,
+  and gacha ticket synchronized across main menu and exploration surfaces.
+- Exploration stage bodies use `profile.nextExp` for `<next_exp>`. The local save also stores
+  accumulated `profile.exp`, but no direct response field for "current total EXP" is wired yet;
+  do not invent one until native/schema evidence proves where the client reads it.
 - `/connect/app/exploration/explore` increments `exploration.movesByFloor[floorKey]`.
 - The same step spends AP from `resources.ap.current` and adds step rewards to
   `profile.exp` and `currencies.gold`.
 - The same mutation also updates `exploration.floors[floorKey]`, the containing
   `exploration.regions[regionId]`, `exploration.currentRegionId`,
   `exploration.currentFloorKey`, and `stats.explorationMoves`.
+- `/connect/app/exploration/area` now lists only regions unlocked by the player save.
+  The area response still carries `prog_area`; no unproven area-lock XML field is emitted.
+- `/connect/app/exploration/floor` now lists only unlocked floors in the requested region.
+  A later pass can restore locked-but-visible rows if runtime evidence proves the client
+  presentation path for `<unlock>0</unlock>`.
+- `/connect/app/exploration/explore` refuses locked floors and returns the local AP-shortage
+  scene when `resources.ap.current` is below the floor cost; those failure paths do not mutate
+  moves, EXP, Gold, or AP.
+- Successful `/connect/app/exploration/explore` responses include updated header `your_data`
+  after applying AP cost and rewards. The body `<gold>` and `<get_exp>` remain the one-step
+  rewards; header `your_data/gold` is the player's total Gold after the step.
 - Flow runs use an artifact-local `player-save.json`; manual play uses ignored
   `server/data/player/local-save.json`.
 

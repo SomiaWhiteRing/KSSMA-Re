@@ -12,9 +12,11 @@ const {
   encryptAes128Ecb,
   encryptAes128EcbBuffer,
   createExplorationAreaXml,
+  createExplorationApFailXml,
   createExplorationExploreXml,
   createExplorationFloorXml,
   createExplorationGetFloorXml,
+  createExplorationLockedXml,
   EXPLORATION_AREA_XML,
   EXPLORATION_EXPLORE_XML,
   EXPLORATION_FLOOR_XML,
@@ -115,8 +117,42 @@ function connectAppBody(values) {
     .join("&");
 }
 
+function assertPlayerHeader(xml, expected) {
+  if (expected.apCurrent !== undefined) {
+    assert.match(xml, new RegExp(`<your_data>[\\s\\S]*<ap>[\\s\\S]*<current>${expected.apCurrent}</current>`));
+  }
+  if (expected.apMax !== undefined) {
+    assert.match(xml, new RegExp(`<your_data>[\\s\\S]*<ap>[\\s\\S]*<max>${expected.apMax}</max>`));
+  }
+  if (expected.bcCurrent !== undefined) {
+    assert.match(xml, new RegExp(`<your_data>[\\s\\S]*<bc>[\\s\\S]*<current>${expected.bcCurrent}</current>`));
+  }
+  if (expected.bcMax !== undefined) {
+    assert.match(xml, new RegExp(`<your_data>[\\s\\S]*<bc>[\\s\\S]*<max>${expected.bcMax}</max>`));
+  }
+  if (expected.gold !== undefined) {
+    assert.match(xml, new RegExp(`<your_data>[\\s\\S]*<gold>${expected.gold}</gold>`));
+  }
+  if (expected.rank !== undefined) {
+    assert.match(xml, new RegExp(`<your_data>[\\s\\S]*<rank>${expected.rank}</rank>`));
+  }
+  if (expected.percentage !== undefined) {
+    assert.match(xml, new RegExp(`<your_data>[\\s\\S]*<percentage>${expected.percentage}</percentage>`));
+  }
+  if (expected.maxCardNum !== undefined) {
+    assert.match(xml, new RegExp(`<your_data>[\\s\\S]*<max_card_num>${expected.maxCardNum}</max_card_num>`));
+  }
+  if (expected.friendshipPoint !== undefined) {
+    assert.match(xml, new RegExp(`<your_data>[\\s\\S]*<friendship_point>${expected.friendshipPoint}</friendship_point>`));
+  }
+  if (expected.nextExp !== undefined) {
+    assert.match(xml, new RegExp(`<next_exp>${expected.nextExp}</next_exp>`));
+  }
+}
+
 async function main() {
   const previousPlayerSavePath = process.env.KSSMA_PLAYER_SAVE_PATH;
+  const previousLoginResponse = process.env.LOGIN_RESPONSE;
   const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "kssma-player-save-"));
   const tempPlayerSavePath = path.join(tempDir, "player-save.json");
 
@@ -150,25 +186,34 @@ async function main() {
   assert.deepEqual(DEFAULT_PLAYER_SAVE.exploration.movesByFloor, {});
   assert.match(EXPLORATION_AREA_XML, /<next_scene>6100<\/next_scene>/);
   assert.match(EXPLORATION_AREA_XML, /<exploration_area>/);
+  assert.match(EXPLORATION_AREA_XML, /<your_data>[\s\S]*<ap>[\s\S]*<current>25<\/current>/);
   assert.match(EXPLORATION_AREA_XML, /<prog_area>0<\/prog_area>/);
-  assert.equal([...EXPLORATION_AREA_XML.matchAll(/<area_info>/g)].length, 6);
+  assert.equal([...EXPLORATION_AREA_XML.matchAll(/<area_info>/g)].length, 1);
   assert.equal(EXPLORATION_REGIONS.length, 6);
   assert.equal(EXPLORATION_FLOORS.length, 70);
   assert.deepEqual(EXPLORATION_REGIONS.map((region) => region.floors.length), [6, 9, 10, 10, 15, 20]);
-  for (const name of ["人魚の断崖", "燐光の湖", "錯乱の平原", "叡智の草原", "猛獣の砂丘", "祝福を授ける山"]) {
-    assert.match(EXPLORATION_AREA_XML, new RegExp(`<name>${name}</name>`));
+  assert.match(EXPLORATION_AREA_XML, /<name>人魚の断崖<\/name>/);
+  for (const name of ["燐光の湖", "錯乱の平原", "叡智の草原", "猛獣の砂丘", "祝福を授ける山"]) {
+    assert.doesNotMatch(EXPLORATION_AREA_XML, new RegExp(`<name>${name}</name>`));
   }
   assert.doesNotMatch(EXPLORATION_AREA_XML, /Local Area/);
   assert.match(EXPLORATION_FLOOR_XML, /<exploration_floor>/);
+  assert.match(EXPLORATION_FLOOR_XML, /<your_data>[\s\S]*<ap>[\s\S]*<current>25<\/current>/);
   assert.match(EXPLORATION_FLOOR_XML, /<id>2<\/id>/);
-  assert.match(EXPLORATION_FLOOR_XML, /<id>7<\/id>/);
+  assert.doesNotMatch(EXPLORATION_FLOOR_XML, /<id>7<\/id>/);
   assert.match(EXPLORATION_FLOOR_XML, /<unlock>1<\/unlock>/);
   assert.match(EXPLORATION_FLOOR_XML, /<boss_down>0<\/boss_down>/);
-  assert.equal([...EXPLORATION_FLOOR_XML.matchAll(/<floor_info>/g)].length, 6);
-  assert.equal([...createExplorationFloorXml(1).matchAll(/<floor_info>/g)].length, 9);
-  assert.match(createExplorationFloorXml(1), /<id>8<\/id>/);
-  assert.match(createExplorationFloorXml(1), /<id>16<\/id>/);
+  assert.equal([...EXPLORATION_FLOOR_XML.matchAll(/<floor_info>/g)].length, 1);
+  assert.equal([...createExplorationFloorXml(1).matchAll(/<floor_info>/g)].length, 0);
+  const region1UnlockedSave = JSON.parse(JSON.stringify(DEFAULT_PLAYER_SAVE));
+  region1UnlockedSave.exploration.regions["1"].unlocked = true;
+  assert.equal([...createExplorationAreaXml(new Map(), region1UnlockedSave).matchAll(/<area_info>/g)].length, 2);
+  assert.match(createExplorationAreaXml(new Map(), region1UnlockedSave), /<name>燐光の湖<\/name>/);
+  assert.equal([...createExplorationFloorXml(1, new Map(), region1UnlockedSave).matchAll(/<floor_info>/g)].length, 1);
+  assert.match(createExplorationFloorXml(1, new Map(), region1UnlockedSave), /<id>8<\/id>/);
   assert.match(createExplorationFloorXml(0, new Map([["0:2", 2]])), /<id>2<\/id>[\s\S]*?<progress>20<\/progress>/);
+  assert.doesNotMatch(createExplorationFloorXml(0, new Map([["0:2", 2]])), /<id>3<\/id>/);
+  assert.match(createExplorationFloorXml(0, new Map([["0:2", 10]])), /<id>3<\/id>[\s\S]*?<unlock>1<\/unlock>/);
   assert.match(createExplorationFloorXml(0, new Map([["1:3", 1]])), /<id>3<\/id>[\s\S]*?<progress>9<\/progress>/);
   assert.match(createExplorationFloorXml(0, new Map([["1:3", 1]])), /<id>3<\/id>[\s\S]*?<cost>2<\/cost>/);
   assert.match(createExplorationAreaXml(new Map([["0:2", 2]])), /<name>人魚の断崖<\/name>[\s\S]*?<prog_area>2<\/prog_area>/);
@@ -223,6 +268,15 @@ async function main() {
   assert.match(createExplorationExploreXml(99), /<next_floor>0<\/next_floor>/);
   assert.match(createExplorationExploreXml(100), /<progress>100<\/progress>/);
   assert.match(createExplorationExploreXml(100), /<next_floor>0<\/next_floor>/);
+  assert.match(
+    createExplorationExploreXml(10, { gold: 18, getExp: 3 }, { resources: { ap: { current: 24 } } }),
+    /<your_data>[\s\S]*<ap>[\s\S]*<current>24<\/current>/
+  );
+  assert.match(
+    createExplorationGetFloorXml(0, 2, 0, { profile: { nextExp: 123 }, resources: { ap: { current: 24 } } }),
+    /<your_data>[\s\S]*<ap>[\s\S]*<current>24<\/current>/
+  );
+  assert.match(createExplorationGetFloorXml(0, 2, 0, { profile: { nextExp: 123 } }), /<next_exp>123<\/next_exp>/);
   assert.match(EXPLORATION_EXPLORE_XML, /<event_type>0<\/event_type>/);
   assert.doesNotMatch(EXPLORATION_EXPLORE_XML, /<get_exp>0<\/get_exp>/);
   assert.match(MAINMENU_UPDATE_XML, /<mainmenu>/);
@@ -287,7 +341,20 @@ async function main() {
   process.env.CHECK_INSPECTION_KEY = CONNECT_APP_KEY;
   process.env.CONNECT_APP_KEY = CONNECT_APP_KEY;
   process.env.KSSMA_PLAYER_SAVE_PATH = tempPlayerSavePath;
+  process.env.LOGIN_RESPONSE = "sample";
   delete process.env.KSSMA_EXPLORATION_MOVES_SEED;
+  const syncedSave = JSON.parse(JSON.stringify(DEFAULT_PLAYER_SAVE));
+  syncedSave.profile.level = 7;
+  syncedSave.profile.percentage = 44;
+  syncedSave.profile.nextExp = 321;
+  syncedSave.resources.ap.current = 19;
+  syncedSave.resources.ap.max = 31;
+  syncedSave.resources.bc.current = 12;
+  syncedSave.resources.bc.max = 33;
+  syncedSave.currencies.gold = 4567;
+  syncedSave.currencies.friendshipPoint = 88;
+  syncedSave.cards.max = 222;
+  fs.writeFileSync(tempPlayerSavePath, JSON.stringify(syncedSave), "utf8");
   const server = createServer();
   await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
   const port = server.address().port;
@@ -337,7 +404,19 @@ async function main() {
     );
     assert.equal(login.statusCode, 200);
     const loginDecoded = decryptAes128EcbBase64(login.buffer.toString("base64"), "rBwj1MIAivVN222b");
-    assert.equal(loginDecoded, CHECK_INSPECTION_OK_XML);
+    assert.match(loginDecoded, /<mainmenu>/);
+    assertPlayerHeader(loginDecoded, {
+      apCurrent: 19,
+      apMax: 31,
+      bcCurrent: 12,
+      bcMax: 33,
+      gold: 4567,
+      rank: 7,
+      percentage: 44,
+      maxCardNum: 222,
+      friendshipPoint: 88,
+    });
+    assert.doesNotMatch(loginDecoded, /<ap>[\s\S]*<current>27<\/current>/);
 
     const mainmenuUpdate = await post(
       port,
@@ -349,7 +428,18 @@ async function main() {
       mainmenuUpdate.buffer.toString("base64"),
       "rBwj1MIAivVN222b"
     );
-    assert.equal(mainmenuUpdateDecoded, MAINMENU_UPDATE_XML);
+    assert.match(mainmenuUpdateDecoded, /<mainmenu>/);
+    assertPlayerHeader(mainmenuUpdateDecoded, {
+      apCurrent: 19,
+      apMax: 31,
+      bcCurrent: 12,
+      bcMax: 33,
+      gold: 4567,
+      rank: 7,
+      percentage: 44,
+      maxCardNum: 222,
+      friendshipPoint: 88,
+    });
 
     const mainmenu = await post(port, "/connect/app/mainmenu?cyt=1", "");
     assert.equal(mainmenu.statusCode, 200);
@@ -357,7 +447,18 @@ async function main() {
       mainmenu.buffer.toString("base64"),
       "rBwj1MIAivVN222b"
     );
-    assert.equal(mainmenuDecoded, MAINMENU_UPDATE_XML);
+    assert.match(mainmenuDecoded, /<mainmenu>/);
+    assertPlayerHeader(mainmenuDecoded, {
+      apCurrent: 19,
+      apMax: 31,
+      bcCurrent: 12,
+      bcMax: 33,
+      gold: 4567,
+      rank: 7,
+      percentage: 44,
+      maxCardNum: 222,
+      friendshipPoint: 88,
+    });
 
     const explorationArea = await post(
       port,
@@ -369,7 +470,18 @@ async function main() {
       explorationArea.buffer.toString("base64"),
       "rBwj1MIAivVN222b"
     );
-    assert.equal(explorationAreaDecoded, EXPLORATION_AREA_XML);
+    assert.match(explorationAreaDecoded, /<exploration_area>/);
+    assertPlayerHeader(explorationAreaDecoded, {
+      apCurrent: 19,
+      apMax: 31,
+      bcCurrent: 12,
+      bcMax: 33,
+      gold: 4567,
+      rank: 7,
+      percentage: 44,
+      maxCardNum: 222,
+      friendshipPoint: 88,
+    });
     assert.match(explorationAreaDecoded, /<area_info>/);
     assert.doesNotMatch(explorationAreaDecoded, /<floor_info_list>/);
     assert.doesNotMatch(explorationAreaDecoded, /<floor_info>/);
@@ -384,7 +496,18 @@ async function main() {
       explorationFloor.buffer.toString("base64"),
       "rBwj1MIAivVN222b"
     );
-    assert.equal(explorationFloorDecoded, EXPLORATION_FLOOR_XML);
+    assert.match(explorationFloorDecoded, /<exploration_floor>/);
+    assertPlayerHeader(explorationFloorDecoded, {
+      apCurrent: 19,
+      apMax: 31,
+      bcCurrent: 12,
+      bcMax: 33,
+      gold: 4567,
+      rank: 7,
+      percentage: 44,
+      maxCardNum: 222,
+      friendshipPoint: 88,
+    });
 
     const explorationGetFloor = await post(
       port,
@@ -396,7 +519,19 @@ async function main() {
       explorationGetFloor.buffer.toString("base64"),
       "rBwj1MIAivVN222b"
     );
-    assert.equal(explorationGetFloorDecoded, EXPLORATION_GET_FLOOR_XML);
+    assert.match(explorationGetFloorDecoded, /<get_floor>/);
+    assertPlayerHeader(explorationGetFloorDecoded, {
+      apCurrent: 19,
+      apMax: 31,
+      bcCurrent: 12,
+      bcMax: 33,
+      gold: 4567,
+      rank: 7,
+      percentage: 44,
+      maxCardNum: 222,
+      friendshipPoint: 88,
+      nextExp: 321,
+    });
 
     const capturedLogs = [];
     const originalWrite = process.stdout.write;
@@ -443,17 +578,17 @@ async function main() {
     assert.match(getFloorResponseLog, /"nextAreaNo":2/);
     assert.match(getFloorResponseLog, /"nextRouteAreaId":1/);
 
-    const explorationGetNextFloor = await post(
+    const lockedNextFloor = await post(
       port,
       "/connect/app/exploration/get_floor?cyt=1",
       "area_id=HJQrxs%2FKaF3hyO81WS2jdA%3D%3D%0A&check=HJQrxs%2FKaF3hyO81WS2jdA%3D%3D%0A&floor_id=3sJ7qONwz5JawDpnsoUDJQ%3D%3D%0A"
     );
-    assert.equal(explorationGetNextFloor.statusCode, 200);
-    const explorationGetNextFloorDecoded = decryptAes128EcbBase64(
-      explorationGetNextFloor.buffer.toString("base64"),
+    assert.equal(lockedNextFloor.statusCode, 200);
+    const lockedNextFloorDecoded = decryptAes128EcbBase64(
+      lockedNextFloor.buffer.toString("base64"),
       "rBwj1MIAivVN222b"
     );
-    assert.equal(explorationGetNextFloorDecoded, createExplorationGetFloorXml(1, 3));
+    assert.equal(lockedNextFloorDecoded, createExplorationLockedXml());
 
     const explorationExplore = await post(
       port,
@@ -465,14 +600,25 @@ async function main() {
       explorationExplore.buffer.toString("base64"),
       "rBwj1MIAivVN222b"
     );
-    assert.equal(explorationExploreDecoded, EXPLORATION_EXPLORE_XML);
     assert.match(explorationExploreDecoded, /<progress>10<\/progress>/);
     assert.match(explorationExploreDecoded, /<gold>18<\/gold>/);
     assert.match(explorationExploreDecoded, /<get_exp>3<\/get_exp>/);
+    assertPlayerHeader(explorationExploreDecoded, {
+      apCurrent: 18,
+      apMax: 31,
+      bcCurrent: 12,
+      bcMax: 33,
+      gold: 4585,
+      rank: 7,
+      percentage: 44,
+      maxCardNum: 222,
+      friendshipPoint: 88,
+      nextExp: 321,
+    });
     const saveAfterExplore = JSON.parse(fs.readFileSync(tempPlayerSavePath, "utf8"));
-    assert.equal(saveAfterExplore.resources.ap.current, 24);
+    assert.equal(saveAfterExplore.resources.ap.current, 18);
     assert.equal(saveAfterExplore.profile.exp, 3);
-    assert.equal(saveAfterExplore.currencies.gold, 18);
+    assert.equal(saveAfterExplore.currencies.gold, 4585);
     assert.equal(saveAfterExplore.exploration.movesByFloor["0:2"], 1);
     assert.equal(saveAfterExplore.exploration.currentRegionId, 0);
     assert.equal(saveAfterExplore.exploration.currentFloorKey, "0:2");
@@ -494,11 +640,25 @@ async function main() {
       explorationExploreAgain.buffer.toString("base64"),
       "rBwj1MIAivVN222b"
     );
-    assert.equal(explorationExploreAgainDecoded, createExplorationExploreXml(20, { gold: 18, getExp: 3 }));
+    assert.match(explorationExploreAgainDecoded, /<progress>20<\/progress>/);
+    assert.match(explorationExploreAgainDecoded, /<gold>18<\/gold>/);
+    assert.match(explorationExploreAgainDecoded, /<get_exp>3<\/get_exp>/);
+    assertPlayerHeader(explorationExploreAgainDecoded, {
+      apCurrent: 17,
+      apMax: 31,
+      bcCurrent: 12,
+      bcMax: 33,
+      gold: 4603,
+      rank: 7,
+      percentage: 44,
+      maxCardNum: 222,
+      friendshipPoint: 88,
+      nextExp: 321,
+    });
     const saveAfterExploreAgain = JSON.parse(fs.readFileSync(tempPlayerSavePath, "utf8"));
-    assert.equal(saveAfterExploreAgain.resources.ap.current, 23);
+    assert.equal(saveAfterExploreAgain.resources.ap.current, 17);
     assert.equal(saveAfterExploreAgain.profile.exp, 6);
-    assert.equal(saveAfterExploreAgain.currencies.gold, 36);
+    assert.equal(saveAfterExploreAgain.currencies.gold, 4603);
     assert.equal(saveAfterExploreAgain.exploration.movesByFloor["0:2"], 2);
     assert.equal(saveAfterExploreAgain.exploration.floors["0:2"].movesDone, 2);
     assert.equal(saveAfterExploreAgain.exploration.floors["0:2"].progress, 20);
@@ -518,7 +678,7 @@ async function main() {
       explorationFloorAfterTwoMovesDecoded,
       /<floor_info>\s*<id>2<\/id>[\s\S]*?<progress>20<\/progress>/
     );
-    assert.match(
+    assert.doesNotMatch(
       explorationFloorAfterTwoMovesDecoded,
       /<floor_info>\s*<id>3<\/id>[\s\S]*?<progress>0<\/progress>/
     );
@@ -560,9 +720,9 @@ async function main() {
     assert.match(floorProgressLog, /"maxProgress":30/);
     assert.match(floorProgressLog, /"maxProgressFloorId":2/);
     const saveAfterProgressLogServer = JSON.parse(fs.readFileSync(tempPlayerSavePath, "utf8"));
-    assert.equal(saveAfterProgressLogServer.resources.ap.current, 22);
+    assert.equal(saveAfterProgressLogServer.resources.ap.current, 16);
     assert.equal(saveAfterProgressLogServer.profile.exp, 9);
-    assert.equal(saveAfterProgressLogServer.currencies.gold, 54);
+    assert.equal(saveAfterProgressLogServer.currencies.gold, 4621);
     assert.equal(saveAfterProgressLogServer.exploration.movesByFloor["0:2"], 3);
     assert.equal(saveAfterProgressLogServer.exploration.floors["0:2"].progress, 30);
     assert.equal(saveAfterProgressLogServer.stats.explorationMoves, 3);
@@ -611,32 +771,104 @@ async function main() {
       process.env.KSSMA_PLAYER_SAVE_PATH = previousMigrationSavePath;
     }
 
-    const secondAreaGetFloor = await post(
+    const lockedSecondAreaGetFloor = await post(
       port,
       "/connect/app/exploration/get_floor?cyt=1",
       "area_id=HJQrxs%2FKaF3hyO81WS2jdA%3D%3D%0A&check=HJQrxs%2FKaF3hyO81WS2jdA%3D%3D%0A&floor_id=3sJ7qONwz5JawDpnsoUDJQ%3D%3D%0A"
     );
-    assert.equal(secondAreaGetFloor.statusCode, 200);
-    const secondAreaGetFloorDecoded = decryptAes128EcbBase64(
-      secondAreaGetFloor.buffer.toString("base64"),
+    assert.equal(lockedSecondAreaGetFloor.statusCode, 200);
+    const lockedSecondAreaGetFloorDecoded = decryptAes128EcbBase64(
+      lockedSecondAreaGetFloor.buffer.toString("base64"),
       "rBwj1MIAivVN222b"
     );
-    assert.match(secondAreaGetFloorDecoded, /<get_floor>\s*<area_id>1<\/area_id>/);
-    assert.match(secondAreaGetFloorDecoded, /<\/next_floor>\s*<floor_info>\s*<id>2<\/id>/);
-    assert.match(secondAreaGetFloorDecoded, /<\/next_floor>[\s\S]*<progress>0<\/progress>/);
-    assert.match(secondAreaGetFloorDecoded, /<\/next_floor>[\s\S]*<cost>2<\/cost>/);
+    assert.equal(lockedSecondAreaGetFloorDecoded, createExplorationLockedXml());
 
-    const secondAreaExplore = await post(
+    const lockedSecondAreaExplore = await post(
       port,
       "/connect/app/exploration/explore?cyt=1",
       "area_id=HJQrxs%2FKaF3hyO81WS2jdA%3D%3D%0A&auto_build=HJQrxs%2FKaF3hyO81WS2jdA%3D%3D%0A&floor_id=3sJ7qONwz5JawDpnsoUDJQ%3D%3D%0A"
     );
-    assert.equal(secondAreaExplore.statusCode, 200);
-    const secondAreaExploreDecoded = decryptAes128EcbBase64(
-      secondAreaExplore.buffer.toString("base64"),
+    assert.equal(lockedSecondAreaExplore.statusCode, 200);
+    const lockedSecondAreaExploreDecoded = decryptAes128EcbBase64(
+      lockedSecondAreaExplore.buffer.toString("base64"),
       "rBwj1MIAivVN222b"
     );
-    assert.equal(secondAreaExploreDecoded, createExplorationExploreXml(9, { gold: 35, getExp: 6 }));
+    assert.equal(lockedSecondAreaExploreDecoded, createExplorationLockedXml());
+    const saveAfterLockedSecondArea = JSON.parse(fs.readFileSync(tempPlayerSavePath, "utf8"));
+    assert.equal(saveAfterLockedSecondArea.exploration.movesByFloor["1:3"], undefined);
+    assert.equal(saveAfterLockedSecondArea.resources.ap.current, 16);
+
+    const previousUnlockSeed = process.env.KSSMA_EXPLORATION_MOVES_SEED;
+    const unlockSavePath = path.join(tempDir, "unlock-player-save.json");
+    process.env.KSSMA_PLAYER_SAVE_PATH = unlockSavePath;
+    process.env.KSSMA_EXPLORATION_MOVES_SEED = '{"0:2":9}';
+    const unlockServer = createServer();
+    await new Promise((resolve) => unlockServer.listen(0, "127.0.0.1", resolve));
+    const unlockPort = unlockServer.address().port;
+    try {
+      const unlockExplore = await post(
+        unlockPort,
+        "/connect/app/exploration/explore?cyt=1",
+        connectAppBody({ area_id: 0, auto_build: 1, floor_id: 1 })
+      );
+      assert.equal(unlockExplore.statusCode, 200);
+      const unlockExploreDecoded = decryptAes128EcbBase64(unlockExplore.buffer.toString("base64"), CONNECT_APP_KEY);
+      assert.match(unlockExploreDecoded, /<progress>100<\/progress>/);
+      assert.match(unlockExploreDecoded, /<gold>18<\/gold>/);
+      assert.match(unlockExploreDecoded, /<get_exp>3<\/get_exp>/);
+      assert.match(unlockExploreDecoded, /<your_data>[\s\S]*<ap>[\s\S]*<current>24<\/current>/);
+      const unlockFloor = await post(
+        unlockPort,
+        "/connect/app/exploration/floor?cyt=1",
+        connectAppBody({ area_id: 0 })
+      );
+      assert.equal(unlockFloor.statusCode, 200);
+      const unlockFloorDecoded = decryptAes128EcbBase64(unlockFloor.buffer.toString("base64"), CONNECT_APP_KEY);
+      assert.match(unlockFloorDecoded, /<floor_info>\s*<id>2<\/id>[\s\S]*?<progress>100<\/progress>/);
+      assert.match(unlockFloorDecoded, /<floor_info>\s*<id>3<\/id>[\s\S]*?<progress>0<\/progress>/);
+      const unlockSave = JSON.parse(fs.readFileSync(unlockSavePath, "utf8"));
+      assert.equal(unlockSave.resources.ap.current, 24);
+      assert.equal(unlockSave.exploration.floors["0:2"].cleared, true);
+      assert.equal(unlockSave.exploration.floors["1:3"].unlocked, true);
+    } finally {
+      await new Promise((resolve, reject) => unlockServer.close((err) => (err ? reject(err) : resolve())));
+      if (previousUnlockSeed === undefined) {
+        delete process.env.KSSMA_EXPLORATION_MOVES_SEED;
+      } else {
+        process.env.KSSMA_EXPLORATION_MOVES_SEED = previousUnlockSeed;
+      }
+      process.env.KSSMA_PLAYER_SAVE_PATH = tempPlayerSavePath;
+    }
+
+    const previousApSeed = process.env.KSSMA_EXPLORATION_MOVES_SEED;
+    const lowApSavePath = path.join(tempDir, "low-ap-player-save.json");
+    fs.writeFileSync(lowApSavePath, JSON.stringify({ resources: { ap: { current: 0 } } }), "utf8");
+    process.env.KSSMA_PLAYER_SAVE_PATH = lowApSavePath;
+    delete process.env.KSSMA_EXPLORATION_MOVES_SEED;
+    const lowApServer = createServer();
+    await new Promise((resolve) => lowApServer.listen(0, "127.0.0.1", resolve));
+    const lowApPort = lowApServer.address().port;
+    try {
+      const lowApExplore = await post(
+        lowApPort,
+        "/connect/app/exploration/explore?cyt=1",
+        connectAppBody({ area_id: 0, auto_build: 1, floor_id: 1 })
+      );
+      assert.equal(lowApExplore.statusCode, 200);
+      const lowApExploreDecoded = decryptAes128EcbBase64(lowApExplore.buffer.toString("base64"), CONNECT_APP_KEY);
+      assert.equal(lowApExploreDecoded, createExplorationApFailXml());
+      const lowApSave = JSON.parse(fs.readFileSync(lowApSavePath, "utf8"));
+      assert.equal(lowApSave.resources.ap.current, 0);
+      assert.equal(lowApSave.exploration, undefined);
+    } finally {
+      await new Promise((resolve, reject) => lowApServer.close((err) => (err ? reject(err) : resolve())));
+      if (previousApSeed === undefined) {
+        delete process.env.KSSMA_EXPLORATION_MOVES_SEED;
+      } else {
+        process.env.KSSMA_EXPLORATION_MOVES_SEED = previousApSeed;
+      }
+      process.env.KSSMA_PLAYER_SAVE_PATH = tempPlayerSavePath;
+    }
 
     const previousSeed = process.env.KSSMA_EXPLORATION_MOVES_SEED;
     const seededSavePath = path.join(tempDir, "seeded-player-save.json");
@@ -672,7 +904,10 @@ async function main() {
         seededExplore.buffer.toString("base64"),
         CONNECT_APP_KEY
       );
-      assert.equal(seededExploreDecoded, createExplorationExploreXml(100, { gold: 55, getExp: 9 }));
+      assert.match(seededExploreDecoded, /<progress>100<\/progress>/);
+      assert.match(seededExploreDecoded, /<gold>55<\/gold>/);
+      assert.match(seededExploreDecoded, /<get_exp>9<\/get_exp>/);
+      assert.match(seededExploreDecoded, /<your_data>[\s\S]*<ap>[\s\S]*<current>22<\/current>/);
 
       const seededNextFloor = await post(
         seededPort,
@@ -710,6 +945,11 @@ async function main() {
       delete process.env.KSSMA_PLAYER_SAVE_PATH;
     } else {
       process.env.KSSMA_PLAYER_SAVE_PATH = previousPlayerSavePath;
+    }
+    if (previousLoginResponse === undefined) {
+      delete process.env.LOGIN_RESPONSE;
+    } else {
+      process.env.LOGIN_RESPONSE = previousLoginResponse;
     }
     fs.rmSync(tempDir, { recursive: true, force: true });
   }

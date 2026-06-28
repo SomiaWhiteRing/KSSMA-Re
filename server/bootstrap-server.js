@@ -442,11 +442,12 @@ function getExplorationFloorProgressSummary(region, movesByFloor = new Map()) {
 
 function renderFloorInfoXml(floor, progress, indent = "      ", options = {}) {
   const floorInfoId = options.displayAreaNo ? floor.areaNo : floor.floorId;
+  const unlocked = options.unlocked === false ? 0 : 1;
   return [
     `${indent}<floor_info>`,
     `${indent}  <id>${floorInfoId}</id>`,
     `${indent}  <type>0</type>`,
-    `${indent}  <unlock>1</unlock>`,
+    `${indent}  <unlock>${unlocked}</unlock>`,
     `${indent}  <progress>${progress}</progress>`,
     `${indent}  <cost>${floor.cost}</cost>`,
     `${indent}  <boss_id>0</boss_id>`,
@@ -466,8 +467,60 @@ function getRegionProgress(region, movesByFloor = new Map()) {
   return Math.floor((doneMoves * 100) / requiredMoves);
 }
 
-function createExplorationAreaXml(movesByFloor = new Map()) {
-  const areaRows = EXPLORATION_REGIONS.flatMap((region) => [
+function getFloorMoves(movesByFloor, floor) {
+  return movesByFloor instanceof Map ? movesByFloor.get(getExplorationFloorStateKey(floor)) || 0 : 0;
+}
+
+function hasExplorationFloorProgress(floor, movesByFloor = new Map(), playerSave = createDefaultPlayerSave()) {
+  const key = getExplorationFloorStateKey(floor);
+  const floorSave = playerSave.exploration?.floors?.[key] || {};
+  return getFloorMoves(movesByFloor, floor) > 0 || parseInteger(floorSave.movesDone, 0) > 0 || parseInteger(floorSave.progress, 0) > 0;
+}
+
+function isExplorationFloorComplete(floor, movesByFloor = new Map(), playerSave = createDefaultPlayerSave()) {
+  const key = getExplorationFloorStateKey(floor);
+  const floorSave = playerSave.exploration?.floors?.[key] || {};
+  return !!floorSave.cleared || getExplorationProgress(floor, getFloorMoves(movesByFloor, floor)) >= 100;
+}
+
+function isExplorationRegionUnlocked(region, movesByFloor = new Map(), playerSave = createDefaultPlayerSave()) {
+  const regionSave = playerSave.exploration?.regions?.[String(region.regionId)] || {};
+  if (region.regionId === 0 || regionSave.unlocked) {
+    return true;
+  }
+  if (region.floors.some((floor) => hasExplorationFloorProgress(floor, movesByFloor, playerSave))) {
+    return true;
+  }
+  const previousRegion = EXPLORATION_REGIONS[EXPLORATION_REGIONS.findIndex((candidate) => candidate.regionId === region.regionId) - 1];
+  if (!previousRegion) {
+    return false;
+  }
+  const previousSave = playerSave.exploration?.regions?.[String(previousRegion.regionId)] || {};
+  return !!previousSave.cleared && !!previousSave.guardianDefeated;
+}
+
+function getUnlockedExplorationRegions(movesByFloor = new Map(), playerSave = createDefaultPlayerSave()) {
+  return EXPLORATION_REGIONS.filter((region) => isExplorationRegionUnlocked(region, movesByFloor, playerSave));
+}
+
+function isExplorationFloorUnlocked(floor, movesByFloor = new Map(), playerSave = createDefaultPlayerSave()) {
+  const region = getExplorationRegion(floor.regionId);
+  if (!isExplorationRegionUnlocked(region, movesByFloor, playerSave)) {
+    return false;
+  }
+  const floorSave = playerSave.exploration?.floors?.[getExplorationFloorStateKey(floor)] || {};
+  if (floor.floorIndex === 0 || floorSave.unlocked || hasExplorationFloorProgress(floor, movesByFloor, playerSave)) {
+    return true;
+  }
+  const previousFloor = region.floors[floor.floorIndex - 1];
+  return !!previousFloor && isExplorationFloorComplete(previousFloor, movesByFloor, playerSave);
+}
+
+function createExplorationAreaXml(movesByFloor = new Map(), playerSave = createDefaultPlayerSave()) {
+  // ponytail: only list unlocked areas until the client's locked-area presentation field is recovered.
+  const unlockedRegions = getUnlockedExplorationRegions(movesByFloor, playerSave);
+  const yourDataRows = renderYourDataXml(playerSave);
+  const areaRows = unlockedRegions.flatMap((region) => [
     "        <area_info>",
     `          <id>${region.regionId}</id>`,
     `          <name>${escapeXmlText(region.name)}</name>`,
@@ -485,6 +538,7 @@ function createExplorationAreaXml(movesByFloor = new Map()) {
     "  <header>",
     "    <error><code>0</code></error>",
     "    <session_id>local-exploration</session_id>",
+    ...yourDataRows,
     "    <next_scene>6100</next_scene>",
     "  </header>",
     "  <body>",
@@ -500,21 +554,28 @@ function createExplorationAreaXml(movesByFloor = new Map()) {
   ].join("");
 }
 
-function createExplorationFloorXml(areaId = 0, movesByFloor = new Map()) {
+function createExplorationFloorXml(areaId = 0, movesByFloor = new Map(), playerSave = createDefaultPlayerSave()) {
   const region = getExplorationRegion(areaId);
-  const floorRows = region.floors.flatMap((floor) => {
-    const floorKey = getExplorationFloorStateKey(floor);
-    const movesDone = movesByFloor instanceof Map ? movesByFloor.get(floorKey) || 0 : 0;
-    return renderFloorInfoXml(floor, getExplorationProgress(floor, movesDone), "        ");
+  const regionUnlocked = isExplorationRegionUnlocked(region, movesByFloor, playerSave);
+  const yourDataRows = renderYourDataXml(playerSave);
+  // ponytail: hide locked rows for now; restore visible <unlock>0 rows once their tap/gray-out behavior is proven.
+  const visibleFloors = region.floors.filter((floor) => {
+    return regionUnlocked && isExplorationFloorUnlocked(floor, movesByFloor, playerSave);
+  });
+  const floorRows = visibleFloors.flatMap((floor) => {
+    const movesDone = getFloorMoves(movesByFloor, floor);
+    return renderFloorInfoXml(floor, getExplorationProgress(floor, movesDone), "        ", {
+      unlocked: true,
+    });
   });
 
-  // ponytail: v1 unlocks all normal rows from the cached wiki table; add lock gating when progression is save-backed.
   return [
     '<?xml version="1.0" encoding="UTF-8"?>',
     "<response>",
     "  <header>",
     "    <error><code>0</code></error>",
     "    <session_id>local-exploration</session_id>",
+    ...yourDataRows,
     "    <next_scene>6100</next_scene>",
     "  </header>",
     "  <body>",
@@ -544,10 +605,84 @@ function renderNextFloorXml(floor) {
   ];
 }
 
-function createExplorationGetFloorXml(areaId = 0, floorId = 2, movesDone = 0) {
+function renderGaugeXml(tagName, gauge = {}, intervalFallback, indent = "      ") {
+  const now = Math.floor(Date.now() / 1000);
+  const current = Math.max(parseInteger(gauge.current, 0), 0);
+  const max = Math.max(parseInteger(gauge.max, current), 0);
+  const interval = Math.max(parseInteger(gauge.regenSeconds, intervalFallback), 0);
+  const lastUpdate = parseInteger(gauge.lastUpdateTime, now);
+  const currentTime = parseInteger(gauge.currentTime, now);
+  return [
+    `${indent}<${tagName}>`,
+    `${indent}  <current>${current}</current>`,
+    `${indent}  <max>${max}</max>`,
+    `${indent}  <interval_time>${interval}</interval_time>`,
+    `${indent}  <last_update_time>${lastUpdate}</last_update_time>`,
+    `${indent}  <current_time>${currentTime}</current_time>`,
+    `${indent}</${tagName}>`,
+  ];
+}
+
+function renderYourDataXml(playerSave, indent = "    ") {
+  if (!playerSave) {
+    return [];
+  }
+  const save = mergeJsonObject(createDefaultPlayerSave(), playerSave);
+  const profile = save.profile || {};
+  const resources = save.resources || {};
+  const currencies = save.currencies || {};
+  const cards = save.cards || {};
+  const progression = save.progression || {};
+  const abilityPoints = progression.abilityPoints || {};
+  const items = save.items || {};
+  const factionCountryId = {
+    sword: 1,
+    technique: 2,
+    magic: 3,
+  };
+  return [
+    `${indent}<your_data>`,
+    `${indent}  <name>${escapeXmlText(profile.name || "Arthur")}</name>`,
+    `${indent}  <leader_serial_id>${Math.max(parseInteger(profile.leaderSerialId, 0), 0)}</leader_serial_id>`,
+    `${indent}  <town_level>${Math.max(parseInteger(profile.townLevel, 1), 1)}</town_level>`,
+    `${indent}  <percentage>${Math.max(parseInteger(profile.percentage, 0), 0)}</percentage>`,
+    `${indent}  <gold>${Math.max(parseInteger(currencies.gold, 0), 0)}</gold>`,
+    `${indent}  <cp>${Math.max(parseInteger(currencies.mc, 0), 0)}</cp>`,
+    `${indent}  <rank>${Math.max(parseInteger(profile.level, 1), 1)}</rank>`,
+    ...renderGaugeXml("ap", resources.ap, 180, `${indent}  `),
+    ...renderGaugeXml("bc", resources.bc, 60, `${indent}  `),
+    `${indent}  <max_card_num>${Math.max(parseInteger(cards.max, 0), 0)}</max_card_num>`,
+    `${indent}  <free_ap_bc_point>${Math.max(parseInteger(abilityPoints.unspent, 0), 0)}</free_ap_bc_point>`,
+    `${indent}  <friendship_point>${Math.max(parseInteger(currencies.friendshipPoint, 0), 0)}</friendship_point>`,
+    `${indent}  <country_id>${Math.max(parseInteger(profile.countryId, factionCountryId[profile.faction] || 1), 1)}</country_id>`,
+    `${indent}  <ex_gauge>${Math.max(parseInteger(resources.super?.current, 0), 0)}</ex_gauge>`,
+    `${indent}  <gacha_ticket>${Math.max(parseInteger(items.gachaTicket, 0), 0)}</gacha_ticket>`,
+    `${indent}  <deck_rank>${Math.max(parseInteger(cards.deckRank, 0), 0)}</deck_rank>`,
+    `${indent}</your_data>`,
+  ];
+}
+
+function replaceHeaderYourData(xml, playerSave) {
+  const yourDataXml = renderYourDataXml(playerSave, "").join("");
+  if (!yourDataXml) {
+    return xml;
+  }
+  if (/<your_data>[\s\S]*?<\/your_data>/.test(xml)) {
+    return xml.replace(/<your_data>[\s\S]*?<\/your_data>/, yourDataXml);
+  }
+  return xml.replace("</header>", `${yourDataXml}</header>`);
+}
+
+function getProfileNextExp(playerSave) {
+  return Math.max(parseInteger(playerSave?.profile?.nextExp, 0), 0);
+}
+
+function createExplorationGetFloorXml(areaId = 0, floorId = 2, movesDone = 0, playerSave = null) {
   const currentFloor = getExplorationFloorForGetFloorRequest(areaId, floorId);
   const nextFloor = getNextExplorationFloor(currentFloor);
   const progress = getExplorationProgress(currentFloor, movesDone);
+  const yourDataRows = renderYourDataXml(playerSave);
+  const nextExp = getProfileNextExp(playerSave);
 
   return [
   '<?xml version="1.0" encoding="UTF-8"?>',
@@ -555,6 +690,7 @@ function createExplorationGetFloorXml(areaId = 0, floorId = 2, movesDone = 0) {
   "  <header>",
   "    <error><code>0</code></error>",
   "    <session_id>local-exploration</session_id>",
+  ...yourDataRows,
   "    <next_scene>6200</next_scene>",
   "  </header>",
   "  <body>",
@@ -563,7 +699,7 @@ function createExplorationGetFloorXml(areaId = 0, floorId = 2, movesDone = 0) {
   `      <bg>${currentFloor.regionBg}</bg>`,
   `      <bgm>${currentFloor.regionBgm}</bgm>`,
   `      <area_name>${escapeXmlText(currentFloor.regionName)}</area_name>`,
-  "      <next_exp>0</next_exp>",
+  `      <next_exp>${nextExp}</next_exp>`,
   ...renderNextFloorXml(nextFloor),
   ...renderFloorInfoXml(currentFloor, progress, "      ", { displayAreaNo: true }),
   "    </get_floor>",
@@ -572,10 +708,12 @@ function createExplorationGetFloorXml(areaId = 0, floorId = 2, movesDone = 0) {
 ].join("");
 }
 const EXPLORATION_GET_FLOOR_XML = createExplorationGetFloorXml();
-function createExplorationExploreXml(progress = 10, rewards = getExplorationStepRewards(EXPLORATION_FLOORS[0])) {
+function createExplorationExploreXml(progress = 10, rewards = getExplorationStepRewards(EXPLORATION_FLOORS[0]), playerSave = null) {
   const safeProgress = Math.min(Math.max(parseInteger(progress, 10), 0), 100);
   const gold = Math.max(parseInteger(rewards.gold, 0), 0);
   const getExp = Math.max(parseInteger(rewards.getExp, 0), 0);
+  const yourDataRows = renderYourDataXml(playerSave);
+  const nextExp = getProfileNextExp(playerSave);
 
   return [
     '<?xml version="1.0" encoding="UTF-8"?>',
@@ -583,6 +721,7 @@ function createExplorationExploreXml(progress = 10, rewards = getExplorationStep
     "  <header>",
     "    <error><code>0</code></error>",
     "    <session_id>local-exploration</session_id>",
+    ...yourDataRows,
     "  </header>",
     "  <body>",
     "    <explore>",
@@ -590,7 +729,7 @@ function createExplorationExploreXml(progress = 10, rewards = getExplorationStep
     "      <event_type>0</event_type>",
     `      <gold>${gold}</gold>`,
     `      <get_exp>${getExp}</get_exp>`,
-    "      <next_exp>0</next_exp>",
+    `      <next_exp>${nextExp}</next_exp>`,
     "      <next_floor>0</next_floor>",
     "      <friendship_point>0</friendship_point>",
     "      <recover>0</recover>",
@@ -603,6 +742,35 @@ function createExplorationExploreXml(progress = 10, rewards = getExplorationStep
   ].join("");
 }
 const EXPLORATION_EXPLORE_XML = createExplorationExploreXml();
+
+function createExplorationApFailXml() {
+  // ponytail: scene 81100 is proven by bundled rule_scene; item-use/buy branches are a later route frontier.
+  return [
+    '<?xml version="1.0" encoding="UTF-8"?>',
+    "<response>",
+    "  <header>",
+    "    <error><code>0</code></error>",
+    "    <session_id>local-exploration</session_id>",
+    "    <next_scene>81100</next_scene>",
+    "  </header>",
+    "  <body></body>",
+    "</response>",
+  ].join("");
+}
+
+function createExplorationLockedXml() {
+  return [
+    '<?xml version="1.0" encoding="UTF-8"?>',
+    "<response>",
+    "  <header>",
+    "    <error><code>1</code><message>exploration locked</message></error>",
+    "    <session_id>local-exploration</session_id>",
+    "  </header>",
+    "  <body></body>",
+    "</response>",
+  ].join("");
+}
+
 const MAINMENU_BGFILE = requireDataString(GAME_MAINMENU_DATA.background?.current, "game.mainmenu.background.current");
 const MAINMENU_PREVIOUS_BGFILE = GAME_MAINMENU_DATA.background?.previous || MAINMENU_BGFILE;
 const MAINMENU_INFORMATION = GAME_MAINMENU_DATA.information || {};
@@ -796,7 +964,7 @@ function applyExplorationSeed(moves) {
     if (!Number.isFinite(movesDone)) {
       throw new Error(`Invalid exploration seed move count for ${key}: ${value}`);
     }
-    moves.set(key, clampMoveCount(movesDone, floor));
+    moves.set(key, Math.max(moves.get(key) || 0, clampMoveCount(movesDone, floor)));
   }
   return moves;
 }
@@ -816,7 +984,6 @@ function updateExplorationSaveAfterMove(playerSave, floor, moves) {
   const floorSave = playerSave.exploration.floors[floorKey] || {};
   const rewards = getExplorationStepRewards(floor);
 
-  // ponytail: no-AP error shape is not recovered yet, so persist the spend without blocking the accepted flow.
   playerSave.resources.ap.current = Math.max(parseInteger(playerSave.resources.ap.current, 0) - floor.cost, 0);
   playerSave.profile.exp = Math.max(parseInteger(playerSave.profile.exp, 0) + rewards.getExp, 0);
   playerSave.currencies.gold = Math.max(parseInteger(playerSave.currencies.gold, 0) + rewards.gold, 0);
@@ -876,6 +1043,45 @@ function updateExplorationSaveAfterMove(playerSave, floor, moves) {
   }
 }
 
+function unlockExplorationProgressFromMoves(playerSave, moves) {
+  ensureExplorationSaveShape(playerSave);
+  for (const region of EXPLORATION_REGIONS) {
+    const regionKey = String(region.regionId);
+    const regionSave = playerSave.exploration.regions[regionKey] || {};
+    const regionUnlocked = isExplorationRegionUnlocked(region, moves, playerSave);
+    if (regionUnlocked || regionSave.unlocked !== undefined) {
+      playerSave.exploration.regions[regionKey] = {
+        ...regionSave,
+        unlocked: regionUnlocked,
+        cleared: !!regionSave.cleared || region.floors.every((floor) => isExplorationFloorComplete(floor, moves, playerSave)),
+        progress: getRegionProgress(region, moves),
+        guardianDefeated: !!regionSave.guardianDefeated,
+      };
+    }
+    for (const floor of region.floors) {
+      const floorKey = getExplorationFloorStateKey(floor);
+      const movesDone = getFloorMoves(moves, floor);
+      const floorSave = playerSave.exploration.floors[floorKey] || {};
+      if (!movesDone && floorSave.unlocked === undefined) {
+        continue;
+      }
+      const progress = getExplorationProgress(floor, movesDone);
+      playerSave.exploration.floors[floorKey] = {
+        ...floorSave,
+        regionId: floor.regionId,
+        floorId: floor.floorId,
+        routeAreaId: floor.routeAreaId,
+        areaNo: floor.areaNo,
+        unlocked: isExplorationFloorUnlocked(floor, moves, playerSave),
+        cleared: !!floorSave.cleared || progress >= 100,
+        movesDone,
+        requiredMoves: floor.requiredMoves,
+        progress,
+      };
+    }
+  }
+}
+
 function getLogSafePath(filePath) {
   const relative = path.relative(__dirname, filePath);
   if (relative && !relative.startsWith("..") && !path.isAbsolute(relative)) {
@@ -887,6 +1093,7 @@ function getLogSafePath(filePath) {
 function loadExplorationMovesForRequest(savePath) {
   const playerSave = readPlayerSave(savePath);
   const moves = applyExplorationSeed(createExplorationMovesFromSave(playerSave));
+  unlockExplorationProgressFromMoves(playerSave, moves);
   return { playerSave, moves };
 }
 
@@ -1009,14 +1216,16 @@ function createServer() {
 
       if (req.method === "POST" && url.pathname === "/connect/app/login") {
         // ponytail: keep the login sample that gets furthest into native bootstrap; add the real payload only when the next blocker proves we need it.
-        const loginXml = getLoginOkXml();
+        const playerSave = readPlayerSave(playerSavePath);
+        const baseLoginXml = getLoginOkXml();
+        const loginXml = replaceHeaderYourData(baseLoginXml, playerSave);
         const encrypted = encryptAes128Ecb(loginXml, connectAppKey);
         logRequest("connect_app_response", {
           path: url.pathname,
           mode: "aes-128-ecb",
           key: connectAppKey,
           bytes: encrypted.length,
-          source: getLoginXmlSource(loginXml),
+          source: getLoginXmlSource(baseLoginXml),
         });
         sendBinary(res, 200, encrypted);
         return;
@@ -1024,7 +1233,9 @@ function createServer() {
 
       if (req.method === "POST" && url.pathname === "/connect/app/mainmenu/update") {
         // ponytail: one known-good mainbg is enough to un-black the town background; real rotation can wait for event data.
-        const encrypted = encryptAes128Ecb(MAINMENU_UPDATE_XML, connectAppKey);
+        const playerSave = readPlayerSave(playerSavePath);
+        const xml = replaceHeaderYourData(MAINMENU_UPDATE_XML, playerSave);
+        const encrypted = encryptAes128Ecb(xml, connectAppKey);
         logRequest("connect_app_response", {
           path: url.pathname,
           mode: "aes-128-ecb",
@@ -1038,7 +1249,9 @@ function createServer() {
 
       if (req.method === "POST" && url.pathname === "/connect/app/mainmenu") {
         // ponytail: the exploration return path only needs the same mainmenu payload as update; split behavior later if evidence demands it.
-        const encrypted = encryptAes128Ecb(MAINMENU_UPDATE_XML, connectAppKey);
+        const playerSave = readPlayerSave(playerSavePath);
+        const xml = replaceHeaderYourData(MAINMENU_UPDATE_XML, playerSave);
+        const encrypted = encryptAes128Ecb(xml, connectAppKey);
         logRequest("connect_app_response", {
           path: url.pathname,
           mode: "aes-128-ecb",
@@ -1051,34 +1264,45 @@ function createServer() {
       }
 
       if (req.method === "POST" && url.pathname === "/connect/app/exploration/area") {
-        const { moves } = loadExplorationMovesForRequest(playerSavePath);
-        const xml = createExplorationAreaXml(moves);
+        const { playerSave, moves } = loadExplorationMovesForRequest(playerSavePath);
+        const unlockedRegions = getUnlockedExplorationRegions(moves, playerSave);
+        const xml = createExplorationAreaXml(moves, playerSave);
         const encrypted = encryptAes128Ecb(xml, connectAppKey);
         logRequest("connect_app_response", {
           path: url.pathname,
           mode: "aes-128-ecb",
           key: connectAppKey,
           bytes: encrypted.length,
-          source: "wiki exploration area list",
-          areaCount: EXPLORATION_REGIONS.length,
+          source: "save-gated exploration area list",
+          areaCount: unlockedRegions.length,
+          unlockedRegionIds: unlockedRegions.map((region) => region.regionId),
+          regionProgress: Object.fromEntries(unlockedRegions.map((region) => [region.regionId, getRegionProgress(region, moves)])),
         });
         sendBinary(res, 200, encrypted);
         return;
       }
 
       if (req.method === "POST" && url.pathname === "/connect/app/exploration/floor") {
-        const { moves } = loadExplorationMovesForRequest(playerSavePath);
+        const { playerSave, moves } = loadExplorationMovesForRequest(playerSavePath);
         const region = getExplorationRegion(params.decrypted.area_id);
         const progressSummary = getExplorationFloorProgressSummary(region, moves);
-        const xml = createExplorationFloorXml(params.decrypted.area_id, moves);
+        const regionUnlocked = isExplorationRegionUnlocked(region, moves, playerSave);
+        const unlockedFloorIds = region.floors
+          .filter((floor) => isExplorationFloorUnlocked(floor, moves, playerSave))
+          .map((floor) => floor.floorId);
+        const xml = regionUnlocked
+          ? createExplorationFloorXml(params.decrypted.area_id, moves, playerSave)
+          : createExplorationLockedXml();
         const encrypted = encryptAes128Ecb(xml, connectAppKey);
         logRequest("connect_app_response", {
           path: url.pathname,
           mode: "aes-128-ecb",
           key: connectAppKey,
           bytes: encrypted.length,
-          source: "wiki exploration floor list",
+          source: regionUnlocked ? "save-gated exploration floor list" : "locked exploration floor list",
           regionId: region.regionId,
+          unlocked: regionUnlocked,
+          unlockedFloorIds,
           floorCount: region.floors.length,
           maxProgress: progressSummary.maxProgress,
           maxProgressFloorId: progressSummary.maxProgressFloorId,
@@ -1090,24 +1314,28 @@ function createServer() {
 
       if (req.method === "POST" && url.pathname === "/connect/app/exploration/get_floor") {
         // ponytail: one no-branch floor entry is enough to test exploration_main; real event routing comes after the next route proves it.
-        const { moves } = loadExplorationMovesForRequest(playerSavePath);
+        const { playerSave, moves } = loadExplorationMovesForRequest(playerSavePath);
         const floorKey = getExplorationFloorKey(params);
         const floor = getExplorationFloorForGetFloorRequest(params.decrypted.area_id, params.decrypted.floor_id);
+        const floorUnlocked = isExplorationFloorUnlocked(floor, moves, playerSave);
         const nextFloor = getNextExplorationFloor(floor);
         const movesDone = moves.get(floorKey) || 0;
         const progress = getExplorationProgress(floor, movesDone);
-        const xml = createExplorationGetFloorXml(params.decrypted.area_id, params.decrypted.floor_id, movesDone);
+        const xml = floorUnlocked
+          ? createExplorationGetFloorXml(params.decrypted.area_id, params.decrypted.floor_id, movesDone, playerSave)
+          : createExplorationLockedXml();
         const encrypted = encryptAes128Ecb(xml, connectAppKey);
         logRequest("connect_app_response", {
           path: url.pathname,
           mode: "aes-128-ecb",
           key: connectAppKey,
           bytes: encrypted.length,
-          source: "minimal exploration get_floor",
+          source: floorUnlocked ? "minimal exploration get_floor" : "locked exploration get_floor",
           floorKey,
           regionId: floor.regionId,
           floorId: floor.floorId,
           areaNo: floor.areaNo,
+          unlocked: floorUnlocked,
           cost: floor.cost,
           requiredMoves: floor.requiredMoves,
           bg: floor.regionBg,
@@ -1131,13 +1359,55 @@ function createServer() {
         const { playerSave, moves } = loadExplorationMovesForRequest(playerSavePath);
         const floor = getExplorationFloorForStageAction(params.decrypted.area_id, params.decrypted.floor_id);
         const floorKey = getExplorationFloorStateKey(floor);
+        const currentAp = parseInteger(playerSave.resources?.ap?.current, 0);
+        if (!isExplorationFloorUnlocked(floor, moves, playerSave)) {
+          const encrypted = encryptAes128Ecb(createExplorationLockedXml(), connectAppKey);
+          logRequest("connect_app_response", {
+            path: url.pathname,
+            mode: "aes-128-ecb",
+            key: connectAppKey,
+            bytes: encrypted.length,
+            source: "locked exploration explore",
+            floorKey,
+            regionId: floor.regionId,
+            floorId: floor.floorId,
+            areaNo: floor.areaNo,
+            cost: floor.cost,
+            currentAp,
+            saved: false,
+            savePath: getLogSafePath(playerSavePath),
+          });
+          sendBinary(res, 200, encrypted);
+          return;
+        }
+        if (currentAp < floor.cost) {
+          const encrypted = encryptAes128Ecb(createExplorationApFailXml(), connectAppKey);
+          logRequest("connect_app_response", {
+            path: url.pathname,
+            mode: "aes-128-ecb",
+            key: connectAppKey,
+            bytes: encrypted.length,
+            source: "exploration ap fail",
+            floorKey,
+            regionId: floor.regionId,
+            floorId: floor.floorId,
+            areaNo: floor.areaNo,
+            cost: floor.cost,
+            currentAp,
+            nextScene: 81100,
+            saved: false,
+            savePath: getLogSafePath(playerSavePath),
+          });
+          sendBinary(res, 200, encrypted);
+          return;
+        }
         const movesDone = clampMoveCount((moves.get(floorKey) || 0) + 1, floor);
         moves.set(floorKey, movesDone);
         updateExplorationSaveAfterMove(playerSave, floor, moves);
         saveExplorationMoves(playerSave, playerSavePath, moves);
         const progress = getExplorationProgress(floor, movesDone);
         const rewards = getExplorationStepRewards(floor);
-        const encrypted = encryptAes128Ecb(createExplorationExploreXml(progress, rewards), connectAppKey);
+        const encrypted = encryptAes128Ecb(createExplorationExploreXml(progress, rewards, playerSave), connectAppKey);
         logRequest("connect_app_response", {
           path: url.pathname,
           mode: "aes-128-ecb",
@@ -1149,6 +1419,8 @@ function createServer() {
           floorId: floor.floorId,
           areaNo: floor.areaNo,
           cost: floor.cost,
+          currentAp,
+          remainingAp: parseInteger(playerSave.resources?.ap?.current, 0),
           requiredMoves: floor.requiredMoves,
           movesDone,
           progress,
@@ -1222,9 +1494,11 @@ module.exports = {
   encryptAes128Ecb,
   encryptAes128EcbBuffer,
   createExplorationAreaXml,
+  createExplorationApFailXml,
   createExplorationExploreXml,
   createExplorationFloorXml,
   createExplorationGetFloorXml,
+  createExplorationLockedXml,
   getLoginOkXml,
   getLoginXmlSource,
   parseConnectAppBody,

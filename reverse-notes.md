@@ -82,16 +82,18 @@ main menu -> area list -> floor list -> floor/exploration main
 Current accepted flow evidence:
 
 - `flow -Scenario exploration-smoke` is the canonical smoke path for this hierarchy.
-- Main menu exploration button emits `/connect/app/exploration/area` and the server returns six zh-Fandom area headings:
-  `人魚の断崖`, `燐光の湖`, `錯乱の平原`, `叡智の草原`, `猛獣の砂丘`, `祝福を授ける山`.
+- Main menu exploration button emits `/connect/app/exploration/area`. A fresh player save returns only the first
+  unlocked area, `人魚の断崖`; later areas remain in `server/data/game/exploration.json` but are gated by player save.
 - Selecting area 0 emits `/connect/app/exploration/floor` with decrypted `area_id=0`; selecting its current row emits
-  `/connect/app/exploration/get_floor` with `area_id=0`, `floor_id=7`, `check=1`, response `regionId=0`, `bg=adv_bg14`,
-  and enters `exploration_main`.
+  `/connect/app/exploration/get_floor` with `area_id=0`, `floor_id=2`, `check=1`, response `regionId=0`, `areaNo=1`,
+  `bg=adv_bg14`, and enters `exploration_main`.
 - Returning from the stage re-requests `/connect/app/exploration/area`.
-- Selecting area 1 requires the accepted two-step gesture: select the row, then tap the current/top item. It emits
-  `/connect/app/exploration/floor` with `area_id=1`, then `/connect/app/exploration/get_floor` with `area_id=1`,
-  `floor_id=16`, `check=1`, response `regionId=1`, `bg=adv_bg11`, and enters the second-region stage.
-- Accepted artifact: `work/kssma-flow-exploration-smoke-dev21-area1-two-step-smoke`.
+- Fresh progression now opens floors in order. `/exploration/floor` lists only unlocked floors for the requested
+  area; `/exploration/explore` spends AP, persists floor progress, and unlocks the next floor when progress reaches
+  100%. Locked floor/stage requests return an encrypted locked response and do not mutate the save.
+- AP shortage uses the bundled `ap_fail_in` scene id `81100` and does not mutate AP, progress, EXP, or Gold.
+- Historical six-area artifacts remain useful for background/value checks, but they predate save-gated unlocking and
+  are no longer the default new-player smoke path.
 
 Accepted native patches/builders:
 
@@ -265,6 +267,52 @@ Archives:
   adds EXP/Gold, updates per-floor and per-region progress, marks floor unlock/clear metadata, and increments
   `stats.explorationMoves`. `node .\server\test-bootstrap-server.js` and
   `flow -Scenario self-check -Tag player-save-schema-selfcheck` passed.
+- Exploration unlock/AP correction: current server self-check passed after making player save the source of truth for
+  exploration availability. Fresh `/exploration/area` returns one area (`人魚の断崖`), fresh `/exploration/floor`
+  returns only the first unlocked floor, a locked next-floor request returns `createExplorationLockedXml()`, a seeded
+  9/10 first floor reaches `progress=100` and unlocks floor id `3`, and AP=0 returns `createExplorationApFailXml()`
+  with `next_scene=81100` without mutating the save. Flow seeds are now minimum progress seeds, not per-request
+  overwrites, so seeded tests cannot roll back higher saved progress. Runtime flow expectations were updated to the
+  new-player path (`floor_id=2`, `areaNo=1`, first walk `progress=10`, AP `25 -> 24`).
+- Runtime proof for the corrected new-player path:
+  `work/kssma-flow-exploration-smoke-exploration-save-gating-smoke-2` passed with route sequence
+  `/exploration/area areaCount=1 -> /exploration/floor area_id=0 unlockedFloorIds=[2] ->
+  /exploration/get_floor area_id=0 floor_id=2 areaNo=1 -> /exploration/area -> /exploration/floor area_id=0`.
+  `work/kssma-flow-exploration-walk-smoke-exploration-save-gating-walk` passed with two forward requests
+  `/exploration/explore area_id=0 floor_id=1`; server logged `remainingAp=24`, `progress=10`, then
+  `remainingAp=23`, `progress=20`, and artifact `player-save.json` persisted `resources.ap.current=23`,
+  `profile.exp=6`, `currencies.gold=36`, `exploration.movesByFloor["0:2"]=2`, and floor progress `20`.
+  A prior smoke attempt `work/kssma-flow-exploration-smoke-exploration-save-gating-smoke` failed only after the
+  accepted return `/exploration/area` because ADB went offline during a nonessential screenshot; smoke was trimmed to
+  avoid that screenshot before the passing run.
+- AP visible refresh fix: manual testing showed "AP did not decrease" even though server logs and
+  `server/data/player/local-save.json` proved five walks had spent AP from `25` to `20`. The missing piece was that
+  `/exploration/explore` changed the save but did not return updated header `your_data`, so the stage resource bar
+  stayed on the login sample values (`27/27`). `createExplorationExploreXml(...)` now accepts the updated player save
+  and emits header `your_data` using the local save AP/BC/Gold/card/friendship fields. Server self-check passed and
+  runtime artifact `work/kssma-flow-exploration-walk-smoke-ap-your-data-refresh` proved two walks returned
+  `/exploration/explore` with `bytes=1440`, `remainingAp=24` then `23`, persisted `player-save.json`
+  `resources.ap.current=23`, and screenshots `area0-after-forward-1.png` / `area0-after-forward-2.png` show the
+  native resource bar updating to `24/25` and `23/25`. The flow process later had to be manually stopped during
+  summary collection because ADB primary `127.0.0.1:5583` was offline; `repair-adb` recovered through healthy legacy
+  `emulator-5582`, and this was not a gameplay/protocol failure.
+- Player HUD synchronization fix: login/mainmenu/exploration list/stage routes now all derive header `your_data` from
+  the same player save instead of mixing the old `local_battle_player.xml` sample with live exploration state.
+  Server self-check seeds a deliberately different save (`level=7`, `AP=19/31`, `BC=12/33`, `Gold=4567`,
+  `friendshipPoint=88`, `maxCardNum=222`, `nextExp=321`) and asserts those values appear in `/connect/app/login`,
+  `/mainmenu/update`, `/mainmenu`, `/exploration/area`, `/exploration/floor`, and `/exploration/get_floor`. It then
+  asserts two explore steps return updated global totals in `your_data` (`AP 18/31`, `Gold 4585`, then `AP 17/31`,
+  `Gold 4603`) while the explore body still reports per-step rewards (`gold=18`, `get_exp=3`). `profile.exp` is
+  persisted in the save, but only `rank`, `percentage`, and body `next_exp` are currently wired to proven client XML
+  fields; no unproven "current total EXP" response field was added.
+- Exploration edge-case analysis card added:
+  `work/exploration-edgecases-ap-levelup-card-20260628.md`. AP shortage is evidence-backed by
+  `rule_scene.xml` scene `81100` (`ap_fail_in`) and `layout_ap_failin.xml`; current
+  `createExplorationApFailXml()` is the right minimal branch and server self-check already proves AP=0 does not mutate
+  progress/resources. Level-up is not implementation-ready: `_ExploreTagParser` confirms fields `lvup`, `is_limit`,
+  `get_exp`, and `next_exp`, and `layout_exploration_main.xml` has `lvup_event -> exp_lvCheck` plus `lv_max_anm`, but
+  the `lvup` value/nested shape and EXP threshold table are still open. Do not copy battle-only
+  `before_level/after_level` from `local_battle_result.xml` into `/exploration/explore` without native proof.
 
 ## Archive Index
 
