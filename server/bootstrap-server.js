@@ -48,14 +48,16 @@ const SAMPLE_SAVE_DIRS = [
     "save"
   ),
 ];
-const MASTERDATA_ROUTE_FILES = {
-  "/connect/app/masterdata/card/update": "database/master_card",
-  "/connect/app/masterdata/card_category/update": "database/master_cardcategory",
-  "/connect/app/masterdata/boss/update": "database/master_boss",
-  "/connect/app/masterdata/item/update": "database/master_item",
-  "/connect/app/masterdata/scol/update": "database/master_scol",
-  "/connect/app/masterdata/combo/update": "database/master_combo",
-};
+const DATA_ROOT = path.join(__dirname, "data");
+const GAME_DATA_DIR = path.join(DATA_ROOT, "game");
+const PLAYER_DATA_DIR = path.join(DATA_ROOT, "player");
+const SERVER_DATA_DIR = path.join(DATA_ROOT, "server");
+const EXPLORATION_DATA_PATH = path.join(GAME_DATA_DIR, "exploration.json");
+const MAINMENU_DATA_PATH = path.join(GAME_DATA_DIR, "mainmenu.json");
+const DEFAULT_SAVE_DATA_PATH = path.join(PLAYER_DATA_DIR, "default-save.json");
+const LOCAL_SAVE_DATA_PATH = path.join(PLAYER_DATA_DIR, "local-save.json");
+const WORLDS_DATA_PATH = path.join(SERVER_DATA_DIR, "worlds.json");
+const MASTERDATA_ROUTES_DATA_PATH = path.join(SERVER_DATA_DIR, "masterdata-routes.json");
 
 function sendJson(res, statusCode, value) {
   const body = JSON.stringify(value);
@@ -182,6 +184,68 @@ function parseMaybeJson(input) {
   }
 }
 
+function readJsonFile(filePath) {
+  try {
+    return JSON.parse(fs.readFileSync(filePath, "utf8"));
+  } catch {
+    return null;
+  }
+}
+
+function readRequiredJsonFile(filePath) {
+  const value = readJsonFile(filePath);
+  if (!value) {
+    throw new Error(`Required JSON data file is missing or invalid: ${filePath}`);
+  }
+  return value;
+}
+
+function cloneJson(value) {
+  return JSON.parse(JSON.stringify(value));
+}
+
+function isPlainObject(value) {
+  return !!value && typeof value === "object" && !Array.isArray(value);
+}
+
+function mergeJsonObject(base, override) {
+  if (Array.isArray(base)) {
+    return Array.isArray(override) ? cloneJson(override) : cloneJson(base);
+  }
+  if (!isPlainObject(base)) {
+    return override === undefined ? base : override;
+  }
+  const result = cloneJson(base);
+  if (!isPlainObject(override)) {
+    return result;
+  }
+  for (const [key, value] of Object.entries(override)) {
+    result[key] = key in result ? mergeJsonObject(result[key], value) : cloneJson(value);
+  }
+  return result;
+}
+
+function writeJsonFileAtomic(filePath, value) {
+  fs.mkdirSync(path.dirname(filePath), { recursive: true });
+  const tmpPath = `${filePath}.tmp`;
+  fs.writeFileSync(tmpPath, `${JSON.stringify(value, null, 2)}\n`, "utf8");
+  fs.renameSync(tmpPath, filePath);
+}
+
+function escapeXmlText(value) {
+  return String(value ?? "")
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;");
+}
+
+function requireDataString(value, fieldName) {
+  if (typeof value !== "string" || !value) {
+    throw new Error(`Required data field is missing: ${fieldName}`);
+  }
+  return value;
+}
+
 function logRequest(tag, value) {
   const line = typeof value === "string" ? value : JSON.stringify(value);
   process.stdout.write(`[${new Date().toISOString()}] ${tag} ${line}\n`);
@@ -200,18 +264,14 @@ function getRequestDetails(req, url, body) {
   };
 }
 
-const worldList = [
-  {
-    name: "Local Dev World",
-    member_count: 1,
-    world_status: 1,
-    url_root: WORLD_URL,
-    url_top: TOP_URL,
-    world_id: 1,
-    url_pr: BILLING_URL,
-    billing_flag: 0,
-  },
-];
+const SERVER_WORLD_DATA = readRequiredJsonFile(WORLDS_DATA_PATH);
+const MASTERDATA_ROUTE_FILES = readRequiredJsonFile(MASTERDATA_ROUTES_DATA_PATH);
+const worldList = (SERVER_WORLD_DATA.worlds || []).map((world) => ({
+  ...world,
+  url_root: world.url_root || WORLD_URL,
+  url_top: world.url_top || TOP_URL,
+  url_pr: world.url_pr || BILLING_URL,
+}));
 
 const CHECK_INSPECTION_OK_XML = [
   "<response>",
@@ -223,124 +283,47 @@ const CHECK_INSPECTION_OK_XML = [
   "</response>",
 ].join("\n");
 const POST_DEVICE_TOKEN_OK_XML = CHECK_INSPECTION_OK_XML;
-const EXPLORATION_REGION_BACKGROUNDS = [
-  "adv_bg14",
-  "adv_bg11",
-  "adv_bg12",
-  "adv_bg15",
-  "adv_bg37",
-  "adv_bg42",
-];
-const EXPLORATION_REGION_POSITIONS = [
-  { x: 150, y: 510 },
-  { x: 310, y: 420 },
-  { x: 480, y: 355 },
-  { x: 635, y: 285 },
-  { x: 780, y: 420 },
-  { x: 885, y: 220 },
-];
-const EXPLORATION_FOCUS_DATA_PATH = path.join(
-  __dirname,
-  "..",
-  "work",
-  "external-data",
-  "normalized",
-  "exploration-focus.json"
+const GAME_EXPLORATION_DATA = readRequiredJsonFile(EXPLORATION_DATA_PATH);
+const GAME_MAINMENU_DATA = readRequiredJsonFile(MAINMENU_DATA_PATH);
+const DEFAULT_PLAYER_SAVE = readRequiredJsonFile(DEFAULT_SAVE_DATA_PATH);
+const DEFAULT_EXPLORATION_BGM = requireDataString(
+  GAME_EXPLORATION_DATA.defaultBgm,
+  "game.exploration.defaultBgm"
 );
-const EXPLORATION_FC2_DATA_PATH = path.join(
-  __dirname,
-  "..",
-  "work",
-  "external-data",
-  "normalized",
-  "fc2-exploration-regions.json"
-);
-
-function readJsonFile(filePath) {
-  try {
-    return JSON.parse(fs.readFileSync(filePath, "utf8"));
-  } catch {
-    return null;
-  }
-}
-
-function getFc2AreaByTitleAndNo(fc2Data, title, areaNo) {
-  const region = fc2Data?.regions?.find((candidate) => candidate.title === title);
-  return region?.areas?.find((area) => area.area === areaNo) || null;
-}
-
-function inferRequiredMoves(regionIndex, areaNo, fc2Area) {
-  if (Number.isFinite(fc2Area?.required_moves)) {
-    return fc2Area.required_moves;
-  }
-  // ponytail: later wiki rows have unknown clear counts; replace with master/client values when recovered.
-  return 10 + regionIndex * 5 + areaNo;
-}
-
-function createFallbackExplorationRegions() {
-  const rows = [
-    { areaNo: 1, cost: 1, requiredMoves: 10, goldMin: 16, goldMax: 20 },
-    { areaNo: 2, cost: 2, requiredMoves: 11, goldMin: 30, goldMax: 40 },
-    { areaNo: 3, cost: 2, requiredMoves: 12, goldMin: 30, goldMax: 40 },
-    { areaNo: 4, cost: 2, requiredMoves: 15, goldMin: 30, goldMax: 40 },
-    { areaNo: 5, cost: 3, requiredMoves: 16, goldMin: 50, goldMax: 60 },
-    { areaNo: 6, cost: 3, requiredMoves: 20, goldMin: 50, goldMax: 60 },
-  ];
-  return [
-    {
-      regionId: 0,
-      name: "人魚の断崖",
-      bg: EXPLORATION_REGION_BACKGROUNDS[0],
-      position: EXPLORATION_REGION_POSITIONS[0],
-      floors: rows.map((row, index) => ({
-        ...row,
-        regionId: 0,
-        regionName: "人魚の断崖",
-        regionBg: EXPLORATION_REGION_BACKGROUNDS[0],
-        routeAreaId: index,
-        floorId: index + 2,
-        floorIndex: index,
-        goldMin: row.goldMin,
-        goldMax: row.goldMax,
-      })),
-    },
-  ];
-}
 
 function loadExplorationRegions() {
-  const focusData = readJsonFile(EXPLORATION_FOCUS_DATA_PATH);
-  const fc2Data = readJsonFile(EXPLORATION_FC2_DATA_PATH);
-  const regions = focusData?.structured_regions?.slice(0, 6);
-  if (!regions?.length) {
-    return createFallbackExplorationRegions();
-  }
+  const regions = GAME_EXPLORATION_DATA.regions || [];
+  const goldByCost = GAME_EXPLORATION_DATA.goldByCost || {};
 
   let nextRouteAreaId = 0;
   let nextFloorId = 2;
   return regions.map((region, regionIndex) => {
-    const regionId = region.region_index - 1;
-    const bg = EXPLORATION_REGION_BACKGROUNDS[regionIndex] || EXPLORATION_REGION_BACKGROUNDS[0];
-    const position = EXPLORATION_REGION_POSITIONS[regionIndex] || { x: 0, y: 0 };
+    const regionId = Number.isFinite(region.regionId) ? region.regionId : regionIndex;
+    const bg = requireDataString(region.bg, `game.exploration.regions[${regionIndex}].bg`);
+    const position = region.position || { x: 0, y: 0 };
+    const regionBgm = region.bgm || DEFAULT_EXPLORATION_BGM;
     return {
       regionId,
-      name: region.name,
+      name: requireDataString(region.name, `game.exploration.regions[${regionIndex}].name`),
       bg,
+      bgm: regionBgm,
       position,
       floors: region.floors.map((area, floorIndex) => {
-        const cost = parseInteger(area.ap_cost, 1);
-        const fc2Area = getFc2AreaByTitleAndNo(fc2Data, region.name, area.floor);
+        const cost = parseInteger(area.cost, 1);
+        const goldRange = goldByCost[String(cost)] || [cost * 16, cost * 20];
         const floor = {
           regionId,
           regionName: region.name,
           regionBg: bg,
+          regionBgm,
           routeAreaId: nextRouteAreaId,
           floorId: nextFloorId,
           floorIndex,
-          areaNo: area.floor,
+          areaNo: parseInteger(area.areaNo, floorIndex + 1),
           cost,
-          requiredMoves: inferRequiredMoves(regionIndex, area.floor, fc2Area),
-          goldMin: Number.isFinite(fc2Area?.gold_min_per_move) ? fc2Area.gold_min_per_move : cost * 16,
-          goldMax: Number.isFinite(fc2Area?.gold_max_per_move) ? fc2Area.gold_max_per_move : cost * 20,
+          requiredMoves: parseInteger(area.requiredMoves, 10 + regionIndex * 5 + floorIndex + 1),
+          goldMin: parseInteger(area.goldMin, goldRange[0]),
+          goldMax: parseInteger(area.goldMax, goldRange[1]),
         };
         nextRouteAreaId += 1;
         nextFloorId += 1;
@@ -365,20 +348,48 @@ function getExplorationRegion(areaId = 0) {
   return EXPLORATION_REGIONS.find((region) => region.regionId === requestedAreaId) || EXPLORATION_REGIONS[0];
 }
 
-function getExplorationFloor(areaId = 0, floorId = 2) {
+function getExplorationFloorByFloorId(floorId = 2) {
   const requestedFloorId = parseInteger(floorId, 2);
-  const byFloorId = EXPLORATION_FLOORS.find((floor) => floor.floorId === requestedFloorId);
+  return EXPLORATION_FLOORS.find((floor) => floor.floorId === requestedFloorId) || null;
+}
+
+function getExplorationFloorByRouteAreaId(areaId = 0) {
+  const requestedRouteAreaId = parseInteger(areaId, 0);
+  return EXPLORATION_FLOORS.find((floor) => floor.routeAreaId === requestedRouteAreaId) || null;
+}
+
+function getExplorationFloor(areaId = 0, floorId = 2) {
+  const byFloorId = getExplorationFloorByFloorId(floorId);
   if (byFloorId) {
     return byFloorId;
   }
-
-  const requestedRouteAreaId = parseInteger(areaId, 0);
-  const byRouteAreaId = EXPLORATION_FLOORS.find((floor) => floor.routeAreaId === requestedRouteAreaId);
+  const byRouteAreaId = getExplorationFloorByRouteAreaId(areaId);
   if (byRouteAreaId) {
     return byRouteAreaId;
   }
-
   // ponytail: unknown IDs fall back to the first local row; replace with masterdata mapping when recovered.
+  return getExplorationRegion(areaId).floors[0] || EXPLORATION_FLOORS[0];
+}
+
+function getExplorationFloorForGetFloorRequest(areaId = 0, floorId = 2) {
+  const byRouteAreaId = getExplorationFloorByRouteAreaId(areaId);
+  const requestedFloorId = parseInteger(floorId, 2);
+  if (byRouteAreaId && byRouteAreaId.areaNo === requestedFloorId) {
+    return byRouteAreaId;
+  }
+  return getExplorationFloor(areaId, floorId);
+}
+
+function getExplorationFloorForStageAction(areaId = 0, floorId = 2) {
+  const byRouteAreaId = getExplorationFloorByRouteAreaId(areaId);
+  if (byRouteAreaId) {
+    return byRouteAreaId;
+  }
+  const byFloorId = getExplorationFloorByFloorId(floorId);
+  if (byFloorId) {
+    return byFloorId;
+  }
+  // ponytail: stage actions should normally carry route area_id; keep floor_id fallback for old captures.
   return getExplorationRegion(areaId).floors[0] || EXPLORATION_FLOORS[0];
 }
 
@@ -412,10 +423,28 @@ function getExplorationStepRewards(floor) {
   };
 }
 
-function renderFloorInfoXml(floor, progress, indent = "      ") {
+function getExplorationFloorProgressSummary(region, movesByFloor = new Map()) {
+  let maxProgress = 0;
+  let maxProgressFloorId = 0;
+  let maxProgressAreaNo = 0;
+  for (const floor of region.floors) {
+    const floorKey = getExplorationFloorStateKey(floor);
+    const movesDone = movesByFloor instanceof Map ? movesByFloor.get(floorKey) || 0 : 0;
+    const progress = getExplorationProgress(floor, movesDone);
+    if (progress >= maxProgress) {
+      maxProgress = progress;
+      maxProgressFloorId = floor.floorId;
+      maxProgressAreaNo = floor.areaNo;
+    }
+  }
+  return { maxProgress, maxProgressFloorId, maxProgressAreaNo };
+}
+
+function renderFloorInfoXml(floor, progress, indent = "      ", options = {}) {
+  const floorInfoId = options.displayAreaNo ? floor.areaNo : floor.floorId;
   return [
     `${indent}<floor_info>`,
-    `${indent}  <id>${floor.floorId}</id>`,
+    `${indent}  <id>${floorInfoId}</id>`,
     `${indent}  <type>0</type>`,
     `${indent}  <unlock>1</unlock>`,
     `${indent}  <progress>${progress}</progress>`,
@@ -441,7 +470,7 @@ function createExplorationAreaXml(movesByFloor = new Map()) {
   const areaRows = EXPLORATION_REGIONS.flatMap((region) => [
     "        <area_info>",
     `          <id>${region.regionId}</id>`,
-    `          <name>${region.name}</name>`,
+    `          <name>${escapeXmlText(region.name)}</name>`,
     `          <x>${region.position.x}</x>`,
     `          <y>${region.position.y}</y>`,
     "          <area_type>1</area_type>",
@@ -510,13 +539,13 @@ function renderNextFloorXml(floor) {
   return [
     "      <next_floor>",
     `        <area_id>${floor.routeAreaId}</area_id>`,
-    ...renderFloorInfoXml(floor, 0, "        "),
+    ...renderFloorInfoXml(floor, 0, "        ", { displayAreaNo: true }),
     "      </next_floor>",
   ];
 }
 
 function createExplorationGetFloorXml(areaId = 0, floorId = 2, movesDone = 0) {
-  const currentFloor = getExplorationFloor(areaId, floorId);
+  const currentFloor = getExplorationFloorForGetFloorRequest(areaId, floorId);
   const nextFloor = getNextExplorationFloor(currentFloor);
   const progress = getExplorationProgress(currentFloor, movesDone);
 
@@ -532,11 +561,11 @@ function createExplorationGetFloorXml(areaId = 0, floorId = 2, movesDone = 0) {
   "    <get_floor>",
   `      <area_id>${currentFloor.routeAreaId}</area_id>`,
   `      <bg>${currentFloor.regionBg}</bg>`,
-  "      <bgm>sarch1</bgm>",
-  `      <area_name>${currentFloor.regionName}</area_name>`,
+  `      <bgm>${currentFloor.regionBgm}</bgm>`,
+  `      <area_name>${escapeXmlText(currentFloor.regionName)}</area_name>`,
   "      <next_exp>0</next_exp>",
   ...renderNextFloorXml(nextFloor),
-  ...renderFloorInfoXml(currentFloor, progress),
+  ...renderFloorInfoXml(currentFloor, progress, "      ", { displayAreaNo: true }),
   "    </get_floor>",
   "  </body>",
   "</response>",
@@ -554,7 +583,6 @@ function createExplorationExploreXml(progress = 10, rewards = getExplorationStep
     "  <header>",
     "    <error><code>0</code></error>",
     "    <session_id>local-exploration</session_id>",
-    "    <next_scene>6200</next_scene>",
     "  </header>",
     "  <body>",
     "    <explore>",
@@ -575,19 +603,21 @@ function createExplorationExploreXml(progress = 10, rewards = getExplorationStep
   ].join("");
 }
 const EXPLORATION_EXPLORE_XML = createExplorationExploreXml();
-// ponytail: getCurrentMainBg only appends the day/night suffix; the saved base name already includes mainbg_.
-const MAINMENU_BGFILE = "mainbg_an";
+const MAINMENU_BGFILE = requireDataString(GAME_MAINMENU_DATA.background?.current, "game.mainmenu.background.current");
+const MAINMENU_PREVIOUS_BGFILE = GAME_MAINMENU_DATA.background?.previous || MAINMENU_BGFILE;
+const MAINMENU_INFORMATION = GAME_MAINMENU_DATA.information || {};
+const MAINMENU_MESSAGE = MAINMENU_INFORMATION.message || {};
 const MAINMENU_FIELDS = [
   "    <mainmenu>",
   `      <current_bgfile>${MAINMENU_BGFILE}</current_bgfile>`,
-  `      <previous_bgfile>${MAINMENU_BGFILE}</previous_bgfile>`,
+  `      <previous_bgfile>${MAINMENU_PREVIOUS_BGFILE}</previous_bgfile>`,
   "      <infomation>",
-  "        <fairy_pose>2</fairy_pose>",
-  "        <fairy_face>5</fairy_face>",
+  `        <fairy_pose>${parseInteger(MAINMENU_INFORMATION.fairyPose, 2)}</fairy_pose>`,
+  `        <fairy_face>${parseInteger(MAINMENU_INFORMATION.fairyFace, 5)}</fairy_face>`,
   "        <message>",
-  "          <text>Welcome back.</text>",
-  "          <color>0xFFFFFF</color>",
-  "          <size>20</size>",
+  `          <text>${escapeXmlText(requireDataString(MAINMENU_MESSAGE.text, "game.mainmenu.information.message.text"))}</text>`,
+  `          <color>${MAINMENU_MESSAGE.color || "0xFFFFFF"}</color>`,
+  `          <size>${parseInteger(MAINMENU_MESSAGE.size, 20)}</size>`,
   "        </message>",
   "      </infomation>",
   "    </mainmenu>",
@@ -705,12 +735,174 @@ function getLoginXmlSource(loginXml) {
 }
 
 function getExplorationFloorKey(params) {
-  return getExplorationFloorKeyFromIds(params.decrypted.area_id || "0", params.decrypted.floor_id || "2");
+  const floor = getExplorationFloorForGetFloorRequest(
+    params.decrypted.area_id || "0",
+    params.decrypted.floor_id || "2"
+  );
+  return getExplorationFloorStateKey(floor);
+}
+
+function getPlayerSavePath() {
+  return (process.env.KSSMA_PLAYER_SAVE_PATH || LOCAL_SAVE_DATA_PATH).trim();
+}
+
+function createDefaultPlayerSave() {
+  return cloneJson(DEFAULT_PLAYER_SAVE);
+}
+
+function readPlayerSave(savePath = getPlayerSavePath()) {
+  const saved = readJsonFile(savePath);
+  if (!saved) {
+    return createDefaultPlayerSave();
+  }
+  return mergeJsonObject(createDefaultPlayerSave(), saved);
+}
+
+function createExplorationMovesFromSave(playerSave) {
+  return new Map(
+    Object.entries(playerSave.exploration?.movesByFloor || {})
+      .map(([key, value]) => [key, parseInteger(value, 0)])
+  );
+}
+
+function ensureExplorationSaveShape(playerSave) {
+  playerSave.profile = playerSave.profile || {};
+  playerSave.resources = playerSave.resources || {};
+  playerSave.resources.ap = playerSave.resources.ap || {};
+  playerSave.currencies = playerSave.currencies || {};
+  playerSave.exploration = playerSave.exploration || {};
+  playerSave.exploration.movesByFloor = playerSave.exploration.movesByFloor || {};
+  playerSave.exploration.regions = playerSave.exploration.regions || {};
+  playerSave.exploration.floors = playerSave.exploration.floors || {};
+  playerSave.stats = playerSave.stats || {};
+}
+
+function applyExplorationSeed(moves) {
+  const seed = (process.env.KSSMA_EXPLORATION_MOVES_SEED || "").trim();
+  if (!seed) {
+    return moves;
+  }
+  const parsedSeed = parseMaybeJson(seed);
+  if (!parsedSeed || Array.isArray(parsedSeed) || typeof parsedSeed !== "object") {
+    throw new Error("KSSMA_EXPLORATION_MOVES_SEED must be a JSON object");
+  }
+  const floorsByKey = new Map(EXPLORATION_FLOORS.map((floor) => [getExplorationFloorStateKey(floor), floor]));
+  for (const [key, value] of Object.entries(parsedSeed)) {
+    const floor = floorsByKey.get(key);
+    if (!floor) {
+      throw new Error(`Unknown exploration seed floor key: ${key}`);
+    }
+    const movesDone = Math.trunc(Number(value));
+    if (!Number.isFinite(movesDone)) {
+      throw new Error(`Invalid exploration seed move count for ${key}: ${value}`);
+    }
+    moves.set(key, clampMoveCount(movesDone, floor));
+  }
+  return moves;
+}
+
+function saveExplorationMoves(playerSave, savePath, moves) {
+  ensureExplorationSaveShape(playerSave);
+  playerSave.exploration.movesByFloor = Object.fromEntries(moves);
+  writeJsonFileAtomic(savePath, playerSave);
+}
+
+function updateExplorationSaveAfterMove(playerSave, floor, moves) {
+  ensureExplorationSaveShape(playerSave);
+  const floorKey = getExplorationFloorStateKey(floor);
+  const region = EXPLORATION_REGIONS.find((candidate) => candidate.regionId === floor.regionId);
+  const movesDone = moves.get(floorKey) || 0;
+  const progress = getExplorationProgress(floor, movesDone);
+  const floorSave = playerSave.exploration.floors[floorKey] || {};
+  const rewards = getExplorationStepRewards(floor);
+
+  // ponytail: no-AP error shape is not recovered yet, so persist the spend without blocking the accepted flow.
+  playerSave.resources.ap.current = Math.max(parseInteger(playerSave.resources.ap.current, 0) - floor.cost, 0);
+  playerSave.profile.exp = Math.max(parseInteger(playerSave.profile.exp, 0) + rewards.getExp, 0);
+  playerSave.currencies.gold = Math.max(parseInteger(playerSave.currencies.gold, 0) + rewards.gold, 0);
+
+  playerSave.exploration.currentRegionId = floor.regionId;
+  playerSave.exploration.currentFloorKey = floorKey;
+  playerSave.exploration.floors[floorKey] = {
+    ...floorSave,
+    regionId: floor.regionId,
+    floorId: floor.floorId,
+    routeAreaId: floor.routeAreaId,
+    areaNo: floor.areaNo,
+    unlocked: true,
+    cleared: progress >= 100,
+    movesDone,
+    requiredMoves: floor.requiredMoves,
+    progress,
+    lastExploredAt: new Date().toISOString(),
+  };
+
+  if (region) {
+    const regionProgress = getRegionProgress(region, moves);
+    const regionSave = playerSave.exploration.regions[String(region.regionId)] || {};
+    playerSave.exploration.regions[String(region.regionId)] = {
+      ...regionSave,
+      unlocked: true,
+      cleared: region.floors.every((candidate) => {
+        const key = getExplorationFloorStateKey(candidate);
+        return getExplorationProgress(candidate, moves.get(key) || 0) >= 100;
+      }),
+      progress: regionProgress,
+      guardianDefeated: !!regionSave.guardianDefeated,
+    };
+  }
+
+  const nextFloor = getNextExplorationFloor(floor);
+  if (nextFloor && progress >= 100) {
+    const nextKey = getExplorationFloorStateKey(nextFloor);
+    const nextFloorSave = playerSave.exploration.floors[nextKey] || {};
+    playerSave.exploration.floors[nextKey] = {
+      ...nextFloorSave,
+      regionId: nextFloor.regionId,
+      floorId: nextFloor.floorId,
+      routeAreaId: nextFloor.routeAreaId,
+      areaNo: nextFloor.areaNo,
+      unlocked: true,
+      cleared: !!nextFloorSave.cleared,
+      movesDone: parseInteger(nextFloorSave.movesDone, 0),
+      requiredMoves: nextFloor.requiredMoves,
+      progress: parseInteger(nextFloorSave.progress, 0),
+    };
+  }
+
+  playerSave.stats.explorationMoves = parseInteger(playerSave.stats.explorationMoves, 0) + 1;
+  if (progress >= 100 && !floorSave.cleared) {
+    playerSave.stats.explorationClears = parseInteger(playerSave.stats.explorationClears, 0) + 1;
+  }
+}
+
+function getLogSafePath(filePath) {
+  const relative = path.relative(__dirname, filePath);
+  if (relative && !relative.startsWith("..") && !path.isAbsolute(relative)) {
+    return relative.replace(/\\/g, "/");
+  }
+  return path.basename(filePath);
+}
+
+function loadExplorationMovesForRequest(savePath) {
+  const playerSave = readPlayerSave(savePath);
+  const moves = applyExplorationSeed(createExplorationMovesFromSave(playerSave));
+  return { playerSave, moves };
 }
 
 function createServer() {
-  // ponytail: in-memory per-process progress is enough for one reconstruction run; replace with a save-backed model when persistence matters.
-  const explorationMovesByFloor = new Map();
+  const playerSavePath = getPlayerSavePath();
+  if ((process.env.KSSMA_EXPLORATION_MOVES_SEED || "").trim()) {
+    const seededMoves = applyExplorationSeed(createExplorationMovesFromSave(readPlayerSave(playerSavePath)));
+    logRequest("exploration_seed", {
+      source: "KSSMA_EXPLORATION_MOVES_SEED",
+      movesByFloor: Object.fromEntries(seededMoves),
+    });
+  }
+  logRequest("player_save", {
+    path: getLogSafePath(playerSavePath),
+    source: fs.existsSync(playerSavePath) ? "file" : "default",
+  });
   const server = http.createServer(async (req, res) => {
     const url = new URL(req.url, `http://${req.headers.host || "127.0.0.1"}`);
 
@@ -859,8 +1051,8 @@ function createServer() {
       }
 
       if (req.method === "POST" && url.pathname === "/connect/app/exploration/area") {
-        // ponytail: process-local area progress is enough for one reconstruction run; persist after hierarchy is stable.
-        const xml = createExplorationAreaXml(explorationMovesByFloor);
+        const { moves } = loadExplorationMovesForRequest(playerSavePath);
+        const xml = createExplorationAreaXml(moves);
         const encrypted = encryptAes128Ecb(xml, connectAppKey);
         logRequest("connect_app_response", {
           path: url.pathname,
@@ -875,8 +1067,10 @@ function createServer() {
       }
 
       if (req.method === "POST" && url.pathname === "/connect/app/exploration/floor") {
-        // ponytail: floor-list progress is process-local; save-backed persistence comes after return/list progress is accepted.
-        const xml = createExplorationFloorXml(params.decrypted.area_id, explorationMovesByFloor);
+        const { moves } = loadExplorationMovesForRequest(playerSavePath);
+        const region = getExplorationRegion(params.decrypted.area_id);
+        const progressSummary = getExplorationFloorProgressSummary(region, moves);
+        const xml = createExplorationFloorXml(params.decrypted.area_id, moves);
         const encrypted = encryptAes128Ecb(xml, connectAppKey);
         logRequest("connect_app_response", {
           path: url.pathname,
@@ -884,8 +1078,11 @@ function createServer() {
           key: connectAppKey,
           bytes: encrypted.length,
           source: "wiki exploration floor list",
-          regionId: parseInteger(params.decrypted.area_id, 0),
-          floorCount: getExplorationRegion(params.decrypted.area_id).floors.length,
+          regionId: region.regionId,
+          floorCount: region.floors.length,
+          maxProgress: progressSummary.maxProgress,
+          maxProgressFloorId: progressSummary.maxProgressFloorId,
+          maxProgressAreaNo: progressSummary.maxProgressAreaNo,
         });
         sendBinary(res, 200, encrypted);
         return;
@@ -893,9 +1090,12 @@ function createServer() {
 
       if (req.method === "POST" && url.pathname === "/connect/app/exploration/get_floor") {
         // ponytail: one no-branch floor entry is enough to test exploration_main; real event routing comes after the next route proves it.
+        const { moves } = loadExplorationMovesForRequest(playerSavePath);
         const floorKey = getExplorationFloorKey(params);
-        const floor = getExplorationFloor(params.decrypted.area_id, params.decrypted.floor_id);
-        const movesDone = explorationMovesByFloor.get(floorKey) || 0;
+        const floor = getExplorationFloorForGetFloorRequest(params.decrypted.area_id, params.decrypted.floor_id);
+        const nextFloor = getNextExplorationFloor(floor);
+        const movesDone = moves.get(floorKey) || 0;
+        const progress = getExplorationProgress(floor, movesDone);
         const xml = createExplorationGetFloorXml(params.decrypted.area_id, params.decrypted.floor_id, movesDone);
         const encrypted = encryptAes128Ecb(xml, connectAppKey);
         logRequest("connect_app_response", {
@@ -907,8 +1107,20 @@ function createServer() {
           floorKey,
           regionId: floor.regionId,
           floorId: floor.floorId,
+          areaNo: floor.areaNo,
+          cost: floor.cost,
+          requiredMoves: floor.requiredMoves,
           bg: floor.regionBg,
+          bgm: floor.regionBgm,
+          gold: getExplorationStepRewards(floor).gold,
+          getExp: getExplorationStepRewards(floor).getExp,
           movesDone,
+          progress,
+          hasNextFloor: !!nextFloor,
+          nextFloorKey: nextFloor ? getExplorationFloorStateKey(nextFloor) : "",
+          nextFloorId: nextFloor ? nextFloor.floorId : 0,
+          nextAreaNo: nextFloor ? nextFloor.areaNo : 0,
+          nextRouteAreaId: nextFloor ? nextFloor.routeAreaId : 0,
         });
         sendBinary(res, 200, encrypted);
         return;
@@ -916,10 +1128,13 @@ function createServer() {
 
       if (req.method === "POST" && url.pathname === "/connect/app/exploration/explore") {
         // ponytail: keep this as the no-branch walking candidate; battle/fairy/reward routes stay separate frontiers.
-        const floor = getExplorationFloor(params.decrypted.area_id, params.decrypted.floor_id);
-        const floorKey = getExplorationFloorKey(params);
-        const movesDone = clampMoveCount((explorationMovesByFloor.get(floorKey) || 0) + 1, floor);
-        explorationMovesByFloor.set(floorKey, movesDone);
+        const { playerSave, moves } = loadExplorationMovesForRequest(playerSavePath);
+        const floor = getExplorationFloorForStageAction(params.decrypted.area_id, params.decrypted.floor_id);
+        const floorKey = getExplorationFloorStateKey(floor);
+        const movesDone = clampMoveCount((moves.get(floorKey) || 0) + 1, floor);
+        moves.set(floorKey, movesDone);
+        updateExplorationSaveAfterMove(playerSave, floor, moves);
+        saveExplorationMoves(playerSave, playerSavePath, moves);
         const progress = getExplorationProgress(floor, movesDone);
         const rewards = getExplorationStepRewards(floor);
         const encrypted = encryptAes128Ecb(createExplorationExploreXml(progress, rewards), connectAppKey);
@@ -930,10 +1145,17 @@ function createServer() {
           bytes: encrypted.length,
           source: "minimal exploration explore",
           floorKey,
+          regionId: floor.regionId,
+          floorId: floor.floorId,
+          areaNo: floor.areaNo,
+          cost: floor.cost,
+          requiredMoves: floor.requiredMoves,
           movesDone,
           progress,
           gold: rewards.gold,
           getExp: rewards.getExp,
+          saved: true,
+          savePath: getLogSafePath(playerSavePath),
         });
         sendBinary(res, 200, encrypted);
         return;
@@ -1014,6 +1236,10 @@ module.exports = {
   EXPLORATION_EXPLORE_XML,
   EXPLORATION_REGIONS,
   EXPLORATION_FLOORS,
+  GAME_EXPLORATION_DATA,
+  GAME_MAINMENU_DATA,
+  DEFAULT_PLAYER_SAVE,
+  SERVER_WORLD_DATA,
   MAINMENU_UPDATE_XML,
   LOGIN_TUTORIAL_XML,
   LOGIN_OK_XML,

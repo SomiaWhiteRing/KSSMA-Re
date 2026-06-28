@@ -196,6 +196,75 @@ Archives:
 - The active tooling frontier is adding new `flow` scenarios for new systems instead of copying login/server/ADB setup into separate scripts.
 - Detailed pre-flow-first exploration depth, media, ADB, native-baseline, and smoke-run notes were moved to:
   `docs/reverse-archive/exploration-frontiers-before-flow-first-20260628.md`.
+- Data-layer split: `server/bootstrap-server.js` now reads temporary JSON data from three separate roots:
+  `server/data/game/` for game content, `server/data/player/` for local player defaults, and
+  `server/data/server/` for local server compatibility/config. Main menu welcome text/background,
+  exploration regions/floors/BGM/backgrounds, default exploration progress, world list, and masterdata route
+  mapping were moved out of hardcoded server constants. `node .\server\test-bootstrap-server.js` passed.
+- Exploration walk smoke accepted: `flow -Scenario exploration-walk-smoke` passed with artifact
+  `work/kssma-flow-exploration-walk-smoke-20260628-184805`. This supersedes
+  `work/kssma-flow-exploration-walk-smoke-walk-smoke-dev3`, where the floor list highlighted `区域 6` but
+  the entered stage title showed `地区7`. Current fix keeps floor-list XML on the client's internal
+  `floorId=7`, but renders `get_floor` current/next `floor_info.id` as visible `areaNo=6`; screenshot
+  `screenshots/area0-main.png` shows `人魚の断崖 地区6`. Route sequence now proves
+  `area -> floor area_id=0 -> get_floor area_id=0 floor_id=7 -> explore area_id=5 floor_id=6` twice,
+  while server maps stage actions back to `floorKey=5:7`. Server response evidence: first walk
+  `progress=5`, second walk `progress=10`, both with `gold=55`, `getExp=9`; the returned floor-list
+  response reported `maxProgress=10`, `maxProgressFloorId=7`, `maxProgressAreaNo=6`. Current frontier
+  moves to floor completion / next-floor behavior.
+- Random exploration area review: static random sample picked `錯乱の平原 / 区域7`
+  (`routeAreaId=21`, `floorId=23`, `areaNo=7`, `bg=adv_bg12`) and `createExplorationGetFloorXml(...)`
+  rendered the current visible `floor_info.id` as `7`. Runtime non-default review passed with artifact
+  `work/kssma-flow-exploration-smoke-random-review-area1`: route sequence reached `燐光の湖`,
+  `/exploration/get_floor area_id=1 floor_id=16`, response logged `floorId=16`, `areaNo=9`,
+  `bg=adv_bg11`, and `screenshots/area1-main.png` shows `燐光の湖 地区9`. No client/native change.
+- Exploration floor-clear / next-area accepted: added `flow -Scenario exploration-floor-clear-smoke`,
+  with flow-only seed `KSSMA_EXPLORATION_MOVES_SEED={"4:6":15}` so `人魚の断崖 区域5`
+  starts at `15/16` moves. Accepted artifact:
+  `work/kssma-flow-exploration-floor-clear-smoke-floor-clear-smoke-3`. Route sequence proved
+  `/exploration/floor area_id=0 -> /exploration/get_floor area_id=0 floor_id=6` with response
+  `floorKey=4:6`, `areaNo=5`, `progress=93`, `hasNextFloor=true`, then
+  `/exploration/explore area_id=4 floor_id=5` returned `progress=100`, then tapping the clear-state
+  top button emitted `/exploration/get_floor area_id=5 floor_id=6` and entered `floorKey=5:7`,
+  `areaNo=6`, `progress=0`. Screenshots `area0-area5-clear-early.png` and
+  `area0-area5-clear-after-animation.png` show the original clear-state UI with
+  `进入下一个区域`; `area0-area6-main-after-next-floor.png` shows `人魚の断崖 地区6`.
+  No `Fatal signal`, `SIGSEGV`, `JResourceLoader`, `loadTexture`, or `getSDPackFile` evidence was found.
+  Flow calibration note: selecting area 5 in the floor list requires first tapping the second visible row,
+  then after the list recenters, tapping the top highlighted row to enter.
+- Exploration forward visual update fix: `/connect/app/exploration/explore` no longer includes
+  `<next_scene>6200</next_scene>`; only `/exploration/get_floor` keeps that stage-entry header. Hypothesis was
+  that forward responses were being treated like re-entering `exploration_main`, causing the progress bar and
+  right-side buttons to replay. Server self-check now asserts `EXPLORATION_EXPLORE_XML` has no `next_scene`.
+  Runtime proof:
+  `work/kssma-flow-exploration-forward-visual-smoke-no-next-scene-visual` seeded `floorKey=5:7` to 10/20 moves;
+  screenshot `before-forward-progress-50.png` showed 50%, `/exploration/explore` returned `movesDone=11`,
+  `progress=55`, screenshot `after-forward-0200ms.png` already showed 55% with reward overlay rather than a 0%
+  reload, and `after-forward-0800ms.png` / `after-forward-1800ms.png` showed stable 55% controls. Regression
+  artifacts `work/kssma-flow-exploration-walk-smoke-no-next-scene-explore` and
+  `work/kssma-flow-exploration-floor-clear-smoke-no-next-scene-floorclear` both passed, proving normal walking
+  and floor-clear/next-area still work.
+- Exploration progress is player data: `/connect/app/exploration/explore` now persists
+  `exploration.movesByFloor` to a player save JSON. `server/data/player/default-save.json` remains only the
+  initial template; manual play writes ignored `server/data/player/local-save.json`; flow runs set
+  `KSSMA_PLAYER_SAVE_PATH` to the artifact-local `player-save.json` so acceptance tests stay reproducible and do not
+  mutate the human play save. Server self-check asserts that two explore posts write `0:2 = 1` then `0:2 = 2`.
+  Runtime proof: `work/kssma-flow-exploration-walk-smoke-player-save-walk-5` passed. The real client entered
+  `floorKey=5:7`; first `/exploration/explore` saved `movesDone=1`, `progress=5`, second saved `movesDone=2`,
+  `progress=10`; artifact `player-save.json` contains `"5:7": 2`, and the returned floor-list response reported
+  `maxProgress=10`. Server logs now emit only ASCII-safe save path labels such as `player-save.json`, preventing
+  flow request parsing from being broken by non-ASCII Windows user paths.
+- Player save schema expanded: `server/data/player/default-save.json` is now schema version 2 with top-level
+  sections for `account`, `profile`, `resources` (AP/BC/SUPER), `progression`, `currencies`, `items`, `cards`,
+  `friends`, `gacha`, `exploration`, `battle`, `stories`, `tutorial`, `notifications`, `server`, and `stats`.
+  Evidence is summarized in `docs/player-save-schema.md`: local `local_battle_player.xml` proves current player
+  fields such as AP/BC/max_card/gold/friendship/gacha ticket; the local zh-Fandom knowledge extraction proves
+  AP 180s regen, BC 60s regen, card cap 350, friend cap 30, friendship gacha cost 200, level cap 350, and
+  AP/BC ability point rules; exploration data comes from the accepted FC2/zh-Fandom cards. Save loading now deep-merges
+  old partial saves into the new template. `/exploration/explore` mutates player data beyond progress: it spends AP,
+  adds EXP/Gold, updates per-floor and per-region progress, marks floor unlock/clear metadata, and increments
+  `stats.explorationMoves`. `node .\server\test-bootstrap-server.js` and
+  `flow -Scenario self-check -Tag player-save-schema-selfcheck` passed.
 
 ## Archive Index
 

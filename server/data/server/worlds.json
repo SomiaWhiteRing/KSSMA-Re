@@ -1,0 +1,11 @@
+{
+  "worlds": [
+    {
+      "name": "Local Dev World",
+      "member_count": 1,
+      "world_status": 1,
+      "world_id": 1,
+      "billing_flag": 0
+    }
+  ]
+}

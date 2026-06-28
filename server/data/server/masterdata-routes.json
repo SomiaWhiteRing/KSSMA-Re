@@ -1,0 +1,8 @@
+{
+  "/connect/app/masterdata/card/update": "database/master_card",
+  "/connect/app/masterdata/card_category/update": "database/master_cardcategory",
+  "/connect/app/masterdata/boss/update": "database/master_boss",
+  "/connect/app/masterdata/item/update": "database/master_item",
+  "/connect/app/masterdata/scol/update": "database/master_scol",
+  "/connect/app/masterdata/combo/update": "database/master_combo"
+}

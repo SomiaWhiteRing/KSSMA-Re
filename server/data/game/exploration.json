@@ -1,0 +1,131 @@
+{
+  "defaultBgm": "sarch1",
+  "goldByCost": {
+    "1": [16, 20],
+    "2": [30, 40],
+    "3": [50, 60],
+    "4": [65, 80],
+    "5": [80, 100],
+    "6": [96, 120]
+  },
+  "regions": [
+    {
+      "regionId": 0,
+      "name": "人魚の断崖",
+      "bg": "adv_bg14",
+      "position": { "x": 150, "y": 510 },
+      "floors": [
+        { "areaNo": 1, "cost": 1, "requiredMoves": 10 },
+        { "areaNo": 2, "cost": 2, "requiredMoves": 11 },
+        { "areaNo": 3, "cost": 2, "requiredMoves": 12 },
+        { "areaNo": 4, "cost": 2, "requiredMoves": 15 },
+        { "areaNo": 5, "cost": 3, "requiredMoves": 16 },
+        { "areaNo": 6, "cost": 3, "requiredMoves": 20 }
+      ]
+    },
+    {
+      "regionId": 1,
+      "name": "燐光の湖",
+      "bg": "adv_bg11",
+      "position": { "x": 310, "y": 420 },
+      "floors": [
+        { "areaNo": 1, "cost": 2, "requiredMoves": 11 },
+        { "areaNo": 2, "cost": 2, "requiredMoves": 12 },
+        { "areaNo": 3, "cost": 2, "requiredMoves": 13 },
+        { "areaNo": 4, "cost": 2, "requiredMoves": 14 },
+        { "areaNo": 5, "cost": 3, "requiredMoves": 15 },
+        { "areaNo": 6, "cost": 3, "requiredMoves": 16 },
+        { "areaNo": 7, "cost": 3, "requiredMoves": 17 },
+        { "areaNo": 8, "cost": 3, "requiredMoves": 18 },
+        { "areaNo": 9, "cost": 4, "requiredMoves": 25 }
+      ]
+    },
+    {
+      "regionId": 2,
+      "name": "錯乱の平原",
+      "bg": "adv_bg12",
+      "position": { "x": 480, "y": 355 },
+      "floors": [
+        { "areaNo": 1, "cost": 2, "requiredMoves": 21 },
+        { "areaNo": 2, "cost": 2, "requiredMoves": 22 },
+        { "areaNo": 3, "cost": 2, "requiredMoves": 23 },
+        { "areaNo": 4, "cost": 3, "requiredMoves": 24 },
+        { "areaNo": 5, "cost": 3, "requiredMoves": 25 },
+        { "areaNo": 6, "cost": 3, "requiredMoves": 26 },
+        { "areaNo": 7, "cost": 3, "requiredMoves": 27 },
+        { "areaNo": 8, "cost": 4, "requiredMoves": 28 },
+        { "areaNo": 9, "cost": 4, "requiredMoves": 29 },
+        { "areaNo": 10, "cost": 4, "requiredMoves": 30 }
+      ]
+    },
+    {
+      "regionId": 3,
+      "name": "叡智の草原",
+      "bg": "adv_bg15",
+      "position": { "x": 635, "y": 285 },
+      "floors": [
+        { "areaNo": 1, "cost": 3, "requiredMoves": 26 },
+        { "areaNo": 2, "cost": 3, "requiredMoves": 27 },
+        { "areaNo": 3, "cost": 3, "requiredMoves": 28 },
+        { "areaNo": 4, "cost": 3, "requiredMoves": 29 },
+        { "areaNo": 5, "cost": 4, "requiredMoves": 30 },
+        { "areaNo": 6, "cost": 4, "requiredMoves": 30 },
+        { "areaNo": 7, "cost": 4, "requiredMoves": 32 },
+        { "areaNo": 8, "cost": 4, "requiredMoves": 32 },
+        { "areaNo": 9, "cost": 4, "requiredMoves": 32 },
+        { "areaNo": 10, "cost": 5, "requiredMoves": 40 }
+      ]
+    },
+    {
+      "regionId": 4,
+      "name": "猛獣の砂丘",
+      "bg": "adv_bg37",
+      "position": { "x": 780, "y": 420 },
+      "floors": [
+        { "areaNo": 1, "cost": 3, "requiredMoves": 31 },
+        { "areaNo": 2, "cost": 3, "requiredMoves": 32 },
+        { "areaNo": 3, "cost": 3, "requiredMoves": 33 },
+        { "areaNo": 4, "cost": 4, "requiredMoves": 34 },
+        { "areaNo": 5, "cost": 4, "requiredMoves": 35 },
+        { "areaNo": 6, "cost": 4, "requiredMoves": 36 },
+        { "areaNo": 7, "cost": 4, "requiredMoves": 37 },
+        { "areaNo": 8, "cost": 4, "requiredMoves": 38 },
+        { "areaNo": 9, "cost": 4, "requiredMoves": 39 },
+        { "areaNo": 10, "cost": 5, "requiredMoves": 40 },
+        { "areaNo": 11, "cost": 5, "requiredMoves": 41 },
+        { "areaNo": 12, "cost": 5, "requiredMoves": 42 },
+        { "areaNo": 13, "cost": 5, "requiredMoves": 43 },
+        { "areaNo": 14, "cost": 5, "requiredMoves": 44 },
+        { "areaNo": 15, "cost": 5, "requiredMoves": 45 }
+      ]
+    },
+    {
+      "regionId": 5,
+      "name": "祝福を授ける山",
+      "bg": "adv_bg42",
+      "position": { "x": 885, "y": 220 },
+      "floors": [
+        { "areaNo": 1, "cost": 4, "requiredMoves": 50 },
+        { "areaNo": 2, "cost": 4, "requiredMoves": 51 },
+        { "areaNo": 3, "cost": 4, "requiredMoves": 52 },
+        { "areaNo": 4, "cost": 4, "requiredMoves": 53 },
+        { "areaNo": 5, "cost": 4, "requiredMoves": 54 },
+        { "areaNo": 6, "cost": 4, "requiredMoves": 55 },
+        { "areaNo": 7, "cost": 4, "requiredMoves": 56 },
+        { "areaNo": 8, "cost": 4, "requiredMoves": 57 },
+        { "areaNo": 9, "cost": 4, "requiredMoves": 58 },
+        { "areaNo": 10, "cost": 5, "requiredMoves": 59 },
+        { "areaNo": 11, "cost": 5, "requiredMoves": 60 },
+        { "areaNo": 12, "cost": 5, "requiredMoves": 61 },
+        { "areaNo": 13, "cost": 5, "requiredMoves": 62 },
+        { "areaNo": 14, "cost": 5, "requiredMoves": 63 },
+        { "areaNo": 15, "cost": 5, "requiredMoves": 64 },
+        { "areaNo": 16, "cost": 5, "requiredMoves": 65 },
+        { "areaNo": 17, "cost": 5, "requiredMoves": 66 },
+        { "areaNo": 18, "cost": 6, "requiredMoves": 67 },
+        { "areaNo": 19, "cost": 6, "requiredMoves": 68 },
+        { "areaNo": 20, "cost": 6, "requiredMoves": 79 }
+      ]
+    }
+  ]
+}

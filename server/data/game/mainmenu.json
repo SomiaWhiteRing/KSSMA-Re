@@ -1,0 +1,15 @@
+{
+  "background": {
+    "current": "mainbg_an",
+    "previous": "mainbg_an"
+  },
+  "information": {
+    "fairyPose": 2,
+    "fairyFace": 5,
+    "message": {
+      "text": "Welcome back.",
+      "color": "0xFFFFFF",
+      "size": 20
+    }
+  }
+}

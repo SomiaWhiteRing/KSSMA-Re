@@ -1,0 +1,203 @@
+{
+  "schemaVersion": 2,
+  "account": {
+    "worldId": 1,
+    "userId": "local-player",
+    "loginId": "13800138000",
+    "createdAt": null,
+    "lastLoginAt": null
+  },
+  "profile": {
+    "name": "Arthur",
+    "faction": "sword",
+    "greeting": "よろしくお願いします",
+    "level": 1,
+    "maxLevel": 350,
+    "exp": 0,
+    "nextExp": 0,
+    "townLevel": 1
+  },
+  "resources": {
+    "ap": {
+      "current": 25,
+      "max": 25,
+      "baseMax": 25,
+      "regenSeconds": 180,
+      "lastRegenAt": null
+    },
+    "bc": {
+      "current": 25,
+      "max": 25,
+      "baseMax": 25,
+      "regenSeconds": 60,
+      "lastRegenAt": null
+    },
+    "super": {
+      "current": 0,
+      "max": 100
+    }
+  },
+  "progression": {
+    "abilityPoints": {
+      "unspent": 0,
+      "apAllocated": 0,
+      "bcAllocated": 0,
+      "fromLevels": 0,
+      "fromFriends": 0
+    },
+    "levelUpRules": {
+      "pointsUntilLevel50": 3,
+      "pointsAfterLevel50": 2
+    }
+  },
+  "currencies": {
+    "gold": 0,
+    "mc": 0,
+    "friendshipPoint": 0,
+    "gachaBonusPoint": 0
+  },
+  "items": {
+    "apPotion": 0,
+    "bcPotion": 0,
+    "apBcPotion": 0,
+    "gachaTicket": 0,
+    "fakeCard": 0,
+    "resetBook": 0
+  },
+  "cards": {
+    "count": 0,
+    "max": 350,
+    "storageCount": 0,
+    "storageMax": 0,
+    "instances": [],
+    "protectedInstanceIds": [],
+    "albumsSeen": [],
+    "decks": [
+      {
+        "id": "main",
+        "name": "Main",
+        "cardInstanceIds": [],
+        "autoBuild": true
+      }
+    ],
+    "activeDeckId": "main"
+  },
+  "friends": {
+    "count": 0,
+    "max": 30,
+    "dailyDeletesRemaining": 1,
+    "lastDeleteResetAt": null,
+    "list": [],
+    "requestsIn": [],
+    "requestsOut": [],
+    "likes": []
+  },
+  "gacha": {
+    "friendshipCost": 200,
+    "paidCostMc": 300,
+    "firstPaidCostMc": 100,
+    "elevenPullCostMc": 3000,
+    "paidBonusNeeded": 5,
+    "history": []
+  },
+  "exploration": {
+    "currentRegionId": 0,
+    "currentFloorKey": "",
+    "movesByFloor": {},
+    "regions": {
+      "0": {
+        "unlocked": true,
+        "cleared": false,
+        "progress": 0,
+        "guardianDefeated": false
+      },
+      "1": {
+        "unlocked": false,
+        "cleared": false,
+        "progress": 0,
+        "guardianDefeated": false
+      },
+      "2": {
+        "unlocked": false,
+        "cleared": false,
+        "progress": 0,
+        "guardianDefeated": false
+      },
+      "3": {
+        "unlocked": false,
+        "cleared": false,
+        "progress": 0,
+        "guardianDefeated": false
+      },
+      "4": {
+        "unlocked": false,
+        "cleared": false,
+        "progress": 0,
+        "guardianDefeated": false
+      },
+      "5": {
+        "unlocked": false,
+        "cleared": false,
+        "progress": 0,
+        "guardianDefeated": false
+      }
+    },
+    "floors": {},
+    "guardians": {},
+    "foundItems": {},
+    "factorPieces": {},
+    "encounters": []
+  },
+  "battle": {
+    "wins": 0,
+    "losses": 0,
+    "factorBattle": {
+      "wins": 0,
+      "losses": 0,
+      "protectedPieces": []
+    },
+    "fairy": {
+      "discovered": {},
+      "history": []
+    }
+  },
+  "stories": {
+    "main": {
+      "currentChapter": 1,
+      "cleared": []
+    },
+    "side": {
+      "unlocked": [],
+      "cleared": []
+    }
+  },
+  "tutorial": {
+    "completed": false,
+    "flags": {}
+  },
+  "notifications": {
+    "enabled": true,
+    "deviceTokens": []
+  },
+  "server": {
+    "sessionId": "",
+    "revisions": {
+      "card": 0,
+      "boss": 0,
+      "item": 0,
+      "cardCategory": 0,
+      "gacha": 0,
+      "privilege": 0,
+      "dungeon": 0,
+      "resource": 0
+    }
+  },
+  "stats": {
+    "explorationMoves": 0,
+    "explorationClears": 0,
+    "cardsDrawn": 0,
+    "cardsSold": 0,
+    "cardsCompounded": 0,
+    "friendsMet": 0
+  }
+}

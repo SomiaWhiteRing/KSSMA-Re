@@ -20,6 +20,7 @@ function New-FlowContext {
     summaryJson = Join-Path $artifactDir "summary.json"
     serverOut = Join-Path $artifactDir "server.out.log"
     serverErr = Join-Path $artifactDir "server.err.log"
+    playerSave = Join-Path $artifactDir "player-save.json"
     logcat = Join-Path $artifactDir "logcat.txt"
     activity = Join-Path $artifactDir "activity.txt"
     loginDriver = Join-Path $artifactDir "login-driver.txt"
@@ -616,21 +617,39 @@ function Stop-FlowServerProcesses {
 }
 
 function Start-FlowServer {
-  param($Context)
+  param(
+    $Context,
+    [hashtable]$ExtraEnvironment = @{}
+  )
 
   Stop-FlowServerProcesses -Context $Context
   $env:CHECK_INSPECTION_KEY = "rBwj1MIAivVN222b"
   $env:CONNECT_APP_KEY = "rBwj1MIAivVN222b"
   $env:LOGIN_RESPONSE = "sample"
   $env:PORTS = "50005,10001"
-  $process = Start-Process -FilePath "node" -ArgumentList @(".\server\bootstrap-server.js") -WorkingDirectory $script:RepoRoot -PassThru -WindowStyle Hidden -RedirectStandardOutput $Context.serverOut -RedirectStandardError $Context.serverErr
+  $oldEnvironment = @{}
+  $environmentKeys = @("KSSMA_PLAYER_SAVE_PATH") + @($ExtraEnvironment.Keys)
+  foreach ($key in $environmentKeys) {
+    $oldEnvironment[$key] = [Environment]::GetEnvironmentVariable($key, "Process")
+  }
+  [Environment]::SetEnvironmentVariable("KSSMA_PLAYER_SAVE_PATH", $Context.playerSave, "Process")
+  foreach ($key in $ExtraEnvironment.Keys) {
+    [Environment]::SetEnvironmentVariable($key, [string]$ExtraEnvironment[$key], "Process")
+  }
+  try {
+    $process = Start-Process -FilePath "node" -ArgumentList @(".\server\bootstrap-server.js") -WorkingDirectory $script:RepoRoot -PassThru -WindowStyle Hidden -RedirectStandardOutput $Context.serverOut -RedirectStandardError $Context.serverErr
+  } finally {
+    foreach ($key in $environmentKeys) {
+      [Environment]::SetEnvironmentVariable($key, $oldEnvironment[$key], "Process")
+    }
+  }
   $Context.serverProcess = $process
   Set-Content -LiteralPath (Join-Path $PSScriptRoot "kssma-server.pid") -Value ([string]$process.Id) -Encoding ASCII
   Start-Sleep -Seconds 2
   if ($process.HasExited) {
     Stop-FlowWithFailure -Context $Context -FailureClass "server-start-failed" -Step "start-server" -Message "bootstrap server exited early; see $($Context.serverErr)"
   }
-  Add-FlowEvent -Context $Context -Type "server-started" -Data ([ordered]@{ pid = $process.Id; stdout = $Context.serverOut; stderr = $Context.serverErr })
+  Add-FlowEvent -Context $Context -Type "server-started" -Data ([ordered]@{ pid = $process.Id; stdout = $Context.serverOut; stderr = $Context.serverErr; playerSave = $Context.playerSave; extraEnvironment = $environmentKeys })
 }
 
 function Stop-FlowServer {
@@ -654,10 +673,16 @@ function Invoke-FlowRuntimeGate {
     if (-not $repair.ok) {
       Stop-FlowWithFailure -Context $Context -FailureClass "runtime-not-ready" -Step "repair-adb" -Message "fast-health and repair-adb failed: $($repair.failureClass)"
     }
-    $fast = Invoke-FastHealth
-    Add-FlowEvent -Context $Context -Type "runtime-fast-health-after-repair" -Data ([ordered]@{ ok = $fast.ok; failureClass = $fast.failureClass; data = $fast.data })
-    if (-not $fast.ok) {
-      Stop-FlowWithFailure -Context $Context -FailureClass "runtime-not-ready" -Step "fast-health-after-repair" -Message "runtime still unhealthy after repair-adb: $($fast.failureClass)"
+    if ($repair.data.transport.selectedSerial) {
+      $script:KssmaRuntimeConfig.PrimarySerial = $repair.data.transport.selectedSerial
+      $Context.serial = $script:KssmaRuntimeConfig.PrimarySerial
+      Add-FlowEvent -Context $Context -Type "runtime-selected-serial" -Data ([ordered]@{ serial = $Context.serial; source = "repair-adb" })
+    } else {
+      $fast = Invoke-FastHealth
+      Add-FlowEvent -Context $Context -Type "runtime-fast-health-after-repair" -Data ([ordered]@{ ok = $fast.ok; failureClass = $fast.failureClass; data = $fast.data })
+      if (-not $fast.ok) {
+        Stop-FlowWithFailure -Context $Context -FailureClass "runtime-not-ready" -Step "fast-health-after-repair" -Message "runtime still unhealthy after repair-adb: $($fast.failureClass)"
+      }
     }
   }
 
@@ -964,16 +989,43 @@ function Invoke-FlowTapThenWaitProbe {
   return Wait-FlowServerEvent -Context $Context -Step $Name -Tag "connect_app_probe" -Path $Path -Params $Params -TimeoutSeconds $TimeoutSeconds -NoEventFailureClass "tap-no-effect"
 }
 
-function Invoke-FlowExplorationSmoke {
-  param($Context)
+function Invoke-FlowFastTapThenWaitProbe {
+  param(
+    $Context,
+    [string]$Name,
+    [int]$X,
+    [int]$Y,
+    [string]$Path,
+    [hashtable]$Params = @{},
+    [int]$TimeoutSeconds = 25
+  )
 
-  $coords = @{
+  Assert-FlowClientAlive -Context $Context -Step "$Name-before-tap"
+  Add-FlowEvent -Context $Context -Type "tap" -Data ([ordered]@{ name = $Name; x = $X; y = $Y; fast = $true })
+  $stage = Invoke-Adb -Arguments @("-s", $Context.serial, "shell", "input", "tap", "$X", "$Y") -TimeoutSeconds 10 -AllowFailure
+  if (-not $stage.ok) {
+    Stop-FlowWithFailure -Context $Context -FailureClass "runtime-not-ready" -Step $Name -Message "ADB fast tap failed: $($stage.failureClass) $($stage.stderr) $($stage.stdout)"
+  }
+  return Wait-FlowServerEvent -Context $Context -Step $Name -Tag "connect_app_probe" -Path $Path -Params $Params -TimeoutSeconds $TimeoutSeconds -NoEventFailureClass "tap-no-effect"
+}
+
+function Get-FlowExplorationCoords {
+  @{
     mainmenuExplore = @{ x = 1090; y = 250 }
     areaRow0 = @{ x = 760; y = 260 }
     areaRow1Select = @{ x = 650; y = 395 }
     floorTopRow = @{ x = 760; y = 260 }
+    floorSecondRow = @{ x = 760; y = 395 }
+    explorationForward = @{ x = 1090; y = 95 }
+    explorationNextFloor = @{ x = 1090; y = 95 }
     explorationReturn = @{ x = 1090; y = 585 }
   }
+}
+
+function Enter-FlowExplorationArea0FloorList {
+  param($Context)
+
+  $coords = Get-FlowExplorationCoords
 
   try {
     Invoke-FlowTapThenWaitProbe -Context $Context -Name "open-exploration" -X $coords.mainmenuExplore.x -Y $coords.mainmenuExplore.y -Path "/connect/app/exploration/area" -TimeoutSeconds 25 | Out-Null
@@ -995,11 +1047,25 @@ function Invoke-FlowExplorationSmoke {
   Wait-FlowServerEvent -Context $Context -Step "tap-area-0-response" -Tag "connect_app_response" -Path "/connect/app/exploration/floor" -Fields @{ regionId = 0 } -TimeoutSeconds 10 | Out-Null
   Start-Sleep -Seconds 3
   Capture-FlowScreenshot -Context $Context -Name "area0-floor-list" | Out-Null
+  return $coords
+}
+
+function Enter-FlowExplorationArea0Main {
+  param($Context)
+
+  $coords = Enter-FlowExplorationArea0FloorList -Context $Context
 
   Invoke-FlowTapThenWaitProbe -Context $Context -Name "tap-area-0-floor" -X $coords.floorTopRow.x -Y $coords.floorTopRow.y -Path "/connect/app/exploration/get_floor" -Params @{ area_id = "0" } -TimeoutSeconds 25 | Out-Null
-  Wait-FlowServerEvent -Context $Context -Step "tap-area-0-floor-response" -Tag "connect_app_response" -Path "/connect/app/exploration/get_floor" -Fields @{ regionId = 0; bg = "adv_bg14" } -TimeoutSeconds 10 | Out-Null
+  Wait-FlowServerEvent -Context $Context -Step "tap-area-0-floor-response" -Tag "connect_app_response" -Path "/connect/app/exploration/get_floor" -Fields @{ regionId = 0; floorId = 7; areaNo = 6; bg = "adv_bg14" } -TimeoutSeconds 10 | Out-Null
   Start-Sleep -Seconds 5
   Capture-FlowScreenshot -Context $Context -Name "area0-main" | Out-Null
+  return $coords
+}
+
+function Invoke-FlowExplorationSmoke {
+  param($Context)
+
+  $coords = Enter-FlowExplorationArea0Main -Context $Context
 
   Invoke-FlowTapThenWaitProbe -Context $Context -Name "return-to-area-list" -X $coords.explorationReturn.x -Y $coords.explorationReturn.y -Path "/connect/app/exploration/area" -TimeoutSeconds 25 | Out-Null
   Wait-FlowServerEvent -Context $Context -Step "return-to-area-list-response" -Tag "connect_app_response" -Path "/connect/app/exploration/area" -Fields @{ areaCount = 6 } -TimeoutSeconds 10 | Out-Null
@@ -1017,9 +1083,88 @@ function Invoke-FlowExplorationSmoke {
   Capture-FlowScreenshot -Context $Context -Name "area1-floor-list" | Out-Null
 
   Invoke-FlowTapThenWaitProbe -Context $Context -Name "tap-area-1-floor" -X $coords.floorTopRow.x -Y $coords.floorTopRow.y -Path "/connect/app/exploration/get_floor" -Params @{ area_id = "1" } -TimeoutSeconds 25 | Out-Null
-  Wait-FlowServerEvent -Context $Context -Step "tap-area-1-floor-response" -Tag "connect_app_response" -Path "/connect/app/exploration/get_floor" -Fields @{ regionId = 1; bg = "adv_bg11" } -TimeoutSeconds 10 | Out-Null
+  Wait-FlowServerEvent -Context $Context -Step "tap-area-1-floor-response" -Tag "connect_app_response" -Path "/connect/app/exploration/get_floor" -Fields @{ regionId = 1; areaNo = 9; bg = "adv_bg11" } -TimeoutSeconds 10 | Out-Null
   Start-Sleep -Seconds 5
   Capture-FlowScreenshot -Context $Context -Name "area1-main" | Out-Null
+}
+
+function Invoke-FlowExplorationWalkSmoke {
+  param($Context)
+
+  $coords = Enter-FlowExplorationArea0Main -Context $Context
+
+  Invoke-FlowTapThenWaitProbe -Context $Context -Name "area0-forward-1" -X $coords.explorationForward.x -Y $coords.explorationForward.y -Path "/connect/app/exploration/explore" -Params @{ area_id = "5"; floor_id = "6" } -TimeoutSeconds 25 | Out-Null
+  Wait-FlowServerEvent -Context $Context -Step "area0-forward-1-response" -Tag "connect_app_response" -Path "/connect/app/exploration/explore" -Fields @{ regionId = 0; floorId = 7; areaNo = 6; movesDone = 1; progress = 5; gold = 55; getExp = 9 } -TimeoutSeconds 10 | Out-Null
+  Start-Sleep -Seconds 3
+  Capture-FlowScreenshot -Context $Context -Name "area0-after-forward-1" | Out-Null
+
+  Invoke-FlowTapThenWaitProbe -Context $Context -Name "area0-forward-2" -X $coords.explorationForward.x -Y $coords.explorationForward.y -Path "/connect/app/exploration/explore" -Params @{ area_id = "5"; floor_id = "6" } -TimeoutSeconds 25 | Out-Null
+  Wait-FlowServerEvent -Context $Context -Step "area0-forward-2-response" -Tag "connect_app_response" -Path "/connect/app/exploration/explore" -Fields @{ regionId = 0; floorId = 7; areaNo = 6; movesDone = 2; progress = 10; gold = 55; getExp = 9 } -TimeoutSeconds 10 | Out-Null
+  Start-Sleep -Seconds 3
+  Capture-FlowScreenshot -Context $Context -Name "area0-after-forward-2" | Out-Null
+
+  Invoke-FlowTapThenWaitProbe -Context $Context -Name "walk-return-to-area-list" -X $coords.explorationReturn.x -Y $coords.explorationReturn.y -Path "/connect/app/exploration/area" -TimeoutSeconds 25 | Out-Null
+  Wait-FlowServerEvent -Context $Context -Step "walk-return-area-response" -Tag "connect_app_response" -Path "/connect/app/exploration/area" -Fields @{ areaCount = 6 } -TimeoutSeconds 10 | Out-Null
+  Wait-FlowServerQuiet -Context $Context -Step "walk-return-area-settle" -QuietSeconds 4 -TimeoutSeconds 20
+  Start-Sleep -Seconds 3
+  Capture-FlowScreenshot -Context $Context -Name "walk-area-list-after-return" | Out-Null
+
+  Invoke-FlowTapThenWaitProbe -Context $Context -Name "walk-tap-area-0-again" -X $coords.areaRow0.x -Y $coords.areaRow0.y -Path "/connect/app/exploration/floor" -Params @{ area_id = "0" } -TimeoutSeconds 25 | Out-Null
+  Wait-FlowServerEvent -Context $Context -Step "walk-area-0-floor-progress-response" -Tag "connect_app_response" -Path "/connect/app/exploration/floor" -Fields @{ regionId = 0; maxProgress = 10; maxProgressFloorId = 7 } -TimeoutSeconds 10 | Out-Null
+  Start-Sleep -Seconds 3
+  Capture-FlowScreenshot -Context $Context -Name "walk-area0-floor-list-progress" | Out-Null
+}
+
+function Invoke-FlowExplorationForwardVisualSmoke {
+  param($Context)
+
+  $coords = Enter-FlowExplorationArea0Main -Context $Context
+  Capture-FlowScreenshot -Context $Context -Name "before-forward-progress-50" | Out-Null
+
+  Invoke-FlowFastTapThenWaitProbe -Context $Context -Name "visual-forward" -X $coords.explorationForward.x -Y $coords.explorationForward.y -Path "/connect/app/exploration/explore" -Params @{ area_id = "5"; floor_id = "6" } -TimeoutSeconds 25 | Out-Null
+  Wait-FlowServerEvent -Context $Context -Step "visual-forward-response" -Tag "connect_app_response" -Path "/connect/app/exploration/explore" -Fields @{ regionId = 0; floorId = 7; areaNo = 6; movesDone = 11; progress = 55; gold = 55; getExp = 9 } -TimeoutSeconds 10 | Out-Null
+
+  Start-Sleep -Milliseconds 200
+  Capture-FlowScreenshot -Context $Context -Name "after-forward-0200ms" | Out-Null
+  Start-Sleep -Milliseconds 600
+  Capture-FlowScreenshot -Context $Context -Name "after-forward-0800ms" | Out-Null
+  Start-Sleep -Milliseconds 1000
+  Capture-FlowScreenshot -Context $Context -Name "after-forward-1800ms" | Out-Null
+  Start-Sleep -Milliseconds 1200
+  Capture-FlowScreenshot -Context $Context -Name "after-forward-3000ms" | Out-Null
+}
+
+function Invoke-FlowExplorationFloorClearSmoke {
+  param($Context)
+
+  $coords = Enter-FlowExplorationArea0FloorList -Context $Context
+
+  Invoke-FlowTap -Context $Context -Name "select-area-0-floor-area5" -X $coords.floorSecondRow.x -Y $coords.floorSecondRow.y
+  Start-Sleep -Seconds 2
+  Capture-FlowScreenshot -Context $Context -Name "area0-floor-list-area5-selected" | Out-Null
+
+  Invoke-FlowTapThenWaitProbe -Context $Context -Name "tap-area-0-floor-area5" -X $coords.floorTopRow.x -Y $coords.floorTopRow.y -Path "/connect/app/exploration/get_floor" -Params @{ area_id = "0"; floor_id = "6" } -TimeoutSeconds 25 | Out-Null
+  Wait-FlowServerEvent -Context $Context -Step "tap-area-0-floor-area5-response" -Tag "connect_app_response" -Path "/connect/app/exploration/get_floor" -Fields @{ regionId = 0; floorId = 6; areaNo = 5; bg = "adv_bg14"; movesDone = 15; progress = 93; hasNextFloor = $true; nextFloorId = 7; nextAreaNo = 6; nextRouteAreaId = 5 } -TimeoutSeconds 10 | Out-Null
+  Start-Sleep -Seconds 5
+  Capture-FlowScreenshot -Context $Context -Name "area0-area5-main-before-clear" | Out-Null
+
+  Invoke-FlowTapThenWaitProbe -Context $Context -Name "area0-area5-final-forward" -X $coords.explorationForward.x -Y $coords.explorationForward.y -Path "/connect/app/exploration/explore" -Params @{ area_id = "4"; floor_id = "5" } -TimeoutSeconds 25 | Out-Null
+  Wait-FlowServerEvent -Context $Context -Step "area0-area5-final-forward-response" -Tag "connect_app_response" -Path "/connect/app/exploration/explore" -Fields @{ regionId = 0; floorId = 6; areaNo = 5; movesDone = 16; progress = 100; gold = 55; getExp = 9 } -TimeoutSeconds 10 | Out-Null
+  Start-Sleep -Seconds 2
+  Capture-FlowScreenshot -Context $Context -Name "area0-area5-clear-early" | Out-Null
+  Start-Sleep -Seconds 6
+  Capture-FlowScreenshot -Context $Context -Name "area0-area5-clear-after-animation" | Out-Null
+
+  $nextProbe = Invoke-FlowTapThenWaitProbe -Context $Context -Name "tap-next-floor-after-clear" -X $coords.explorationNextFloor.x -Y $coords.explorationNextFloor.y -Path "" -TimeoutSeconds 25
+  if ($nextProbe.path -eq "/connect/app/exploration/explore") {
+    Stop-FlowWithFailure -Context $Context -FailureClass "floor-clear-ui-not-triggered" -Step "tap-next-floor-after-clear" -Message "Tapping the expected next-floor button emitted /exploration/explore, so the client still appears to be on the normal forward UI."
+  }
+  if ($nextProbe.path -ne "/connect/app/exploration/get_floor") {
+    Stop-FlowWithFailure -Context $Context -FailureClass "unknown-next-floor-route" -Step "tap-next-floor-after-clear" -Message "Tapping the expected next-floor button emitted $($nextProbe.path); preserve requests.jsonl before implementing a handler."
+  }
+  Wait-FlowServerEvent -Context $Context -Step "tap-next-floor-after-clear-response" -Tag "connect_app_response" -Path "/connect/app/exploration/get_floor" -Fields @{ regionId = 0; floorId = 7; areaNo = 6; bg = "adv_bg14"; movesDone = 0; progress = 0; hasNextFloor = $false } -TimeoutSeconds 10 | Out-Null
+  Start-Sleep -Seconds 5
+  Capture-FlowScreenshot -Context $Context -Name "area0-area6-main-after-next-floor" | Out-Null
 }
 
 function Collect-FlowArtifacts {
@@ -1091,6 +1236,7 @@ function Complete-FlowResult {
     summaryJson = $Context.summaryJson
     serverOut = $Context.serverOut
     serverErr = $Context.serverErr
+    playerSave = $Context.playerSave
     logcat = $Context.logcat
     activity = $Context.activity
     screenshots = $Context.screenshotsDir
@@ -1118,6 +1264,7 @@ function Complete-FlowResult {
     "failure_message=$FailureMessage",
     "artifact_dir=$($Context.artifactDir)",
     "requests=$($Context.requestsJsonl)",
+    "player_save=$($Context.playerSave)",
     "logcat=$($Context.logcat)",
     "activity=$($Context.activity)",
     "screenshots=$($Context.screenshotsDir)",
@@ -1166,14 +1313,30 @@ function Invoke-FlowSelfCheck {
   try {
     @(
       '[2026-01-01T00:00:00.000Z] connect_app_probe {"path":"/connect/app/exploration/floor","decryptedParams":{"area_id":"0"}}',
-      '[2026-01-01T00:00:00.100Z] connect_app_response {"path":"/connect/app/exploration/floor","regionId":0}',
+      '[2026-01-01T00:00:00.100Z] connect_app_response {"path":"/connect/app/exploration/floor","regionId":0,"maxProgress":10,"maxProgressFloorId":7}',
       '[2026-01-01T00:00:01.000Z] connect_app_probe {"path":"/connect/app/exploration/get_floor","decryptedParams":{"area_id":"0","floor_id":"7","check":"1"}}',
-      '[2026-01-01T00:00:01.100Z] connect_app_response {"path":"/connect/app/exploration/get_floor","regionId":0,"floorId":7,"bg":"adv_bg14"}'
+      '[2026-01-01T00:00:01.100Z] connect_app_response {"path":"/connect/app/exploration/get_floor","regionId":0,"floorId":7,"areaNo":6,"bg":"adv_bg14"}',
+      '[2026-01-01T00:00:02.000Z] connect_app_probe {"path":"/connect/app/exploration/explore","decryptedParams":{"area_id":"5","floor_id":"6","auto_build":"1"}}',
+      '[2026-01-01T00:00:02.100Z] connect_app_response {"path":"/connect/app/exploration/explore","regionId":0,"floorId":7,"areaNo":6,"movesDone":2,"progress":10,"gold":55,"getExp":9}',
+      '[2026-01-01T00:00:03.000Z] connect_app_probe {"path":"/connect/app/exploration/get_floor","decryptedParams":{"area_id":"0","floor_id":"6","check":"1"}}',
+      '[2026-01-01T00:00:03.100Z] connect_app_response {"path":"/connect/app/exploration/get_floor","regionId":0,"floorId":6,"areaNo":5,"movesDone":15,"progress":93,"hasNextFloor":true,"nextFloorId":7,"nextAreaNo":6,"nextRouteAreaId":5,"bg":"adv_bg14"}',
+      '[2026-01-01T00:00:04.000Z] connect_app_probe {"path":"/connect/app/exploration/explore","decryptedParams":{"area_id":"4","floor_id":"5","auto_build":"1"}}',
+      '[2026-01-01T00:00:04.100Z] connect_app_response {"path":"/connect/app/exploration/explore","regionId":0,"floorId":6,"areaNo":5,"movesDone":16,"progress":100,"gold":55,"getExp":9}',
+      '[2026-01-01T00:00:05.000Z] connect_app_probe {"path":"/connect/app/exploration/get_floor","decryptedParams":{"area_id":"5","floor_id":"6","check":"1"}}',
+      '[2026-01-01T00:00:05.100Z] connect_app_response {"path":"/connect/app/exploration/get_floor","regionId":0,"floorId":7,"areaNo":6,"movesDone":0,"progress":0,"hasNextFloor":false,"bg":"adv_bg14"}'
     ) | Set-Content -LiteralPath $ctx.serverOut -Encoding UTF8
     Wait-FlowServerEvent -Context $ctx -Step "self-floor" -Tag "connect_app_probe" -Path "/connect/app/exploration/floor" -Params @{ area_id = "0" } -TimeoutSeconds 2 | Out-Null
-    Wait-FlowServerEvent -Context $ctx -Step "self-floor-response" -Tag "connect_app_response" -Path "/connect/app/exploration/floor" -Fields @{ regionId = 0 } -TimeoutSeconds 2 | Out-Null
+    Wait-FlowServerEvent -Context $ctx -Step "self-floor-response" -Tag "connect_app_response" -Path "/connect/app/exploration/floor" -Fields @{ regionId = 0; maxProgress = 10; maxProgressFloorId = 7 } -TimeoutSeconds 2 | Out-Null
     Wait-FlowServerEvent -Context $ctx -Step "self-get-floor" -Tag "connect_app_probe" -Path "/connect/app/exploration/get_floor" -Params @{ area_id = "0"; check = "1" } -TimeoutSeconds 2 | Out-Null
-    Wait-FlowServerEvent -Context $ctx -Step "self-get-floor-response" -Tag "connect_app_response" -Path "/connect/app/exploration/get_floor" -Fields @{ bg = "adv_bg14"; floorId = 7 } -TimeoutSeconds 2 | Out-Null
+    Wait-FlowServerEvent -Context $ctx -Step "self-get-floor-response" -Tag "connect_app_response" -Path "/connect/app/exploration/get_floor" -Fields @{ bg = "adv_bg14"; floorId = 7; areaNo = 6 } -TimeoutSeconds 2 | Out-Null
+    Wait-FlowServerEvent -Context $ctx -Step "self-explore" -Tag "connect_app_probe" -Path "/connect/app/exploration/explore" -Params @{ area_id = "5"; floor_id = "6" } -TimeoutSeconds 2 | Out-Null
+    Wait-FlowServerEvent -Context $ctx -Step "self-explore-response" -Tag "connect_app_response" -Path "/connect/app/exploration/explore" -Fields @{ floorId = 7; areaNo = 6; progress = 10; gold = 55; getExp = 9 } -TimeoutSeconds 2 | Out-Null
+    Wait-FlowServerEvent -Context $ctx -Step "self-clear-get-floor" -Tag "connect_app_probe" -Path "/connect/app/exploration/get_floor" -Params @{ area_id = "0"; floor_id = "6" } -TimeoutSeconds 2 | Out-Null
+    Wait-FlowServerEvent -Context $ctx -Step "self-clear-get-floor-response" -Tag "connect_app_response" -Path "/connect/app/exploration/get_floor" -Fields @{ floorId = 6; areaNo = 5; movesDone = 15; progress = 93; hasNextFloor = $true; nextFloorId = 7; nextAreaNo = 6 } -TimeoutSeconds 2 | Out-Null
+    Wait-FlowServerEvent -Context $ctx -Step "self-clear-explore" -Tag "connect_app_probe" -Path "/connect/app/exploration/explore" -Params @{ area_id = "4"; floor_id = "5" } -TimeoutSeconds 2 | Out-Null
+    Wait-FlowServerEvent -Context $ctx -Step "self-clear-explore-response" -Tag "connect_app_response" -Path "/connect/app/exploration/explore" -Fields @{ floorId = 6; areaNo = 5; progress = 100 } -TimeoutSeconds 2 | Out-Null
+    Wait-FlowServerEvent -Context $ctx -Step "self-next-floor-get-floor" -Tag "connect_app_probe" -Path "/connect/app/exploration/get_floor" -Params @{ area_id = "5"; floor_id = "6" } -TimeoutSeconds 2 | Out-Null
+    Wait-FlowServerEvent -Context $ctx -Step "self-next-floor-get-floor-response" -Tag "connect_app_response" -Path "/connect/app/exploration/get_floor" -Fields @{ floorId = 7; areaNo = 6; progress = 0; hasNextFloor = $false } -TimeoutSeconds 2 | Out-Null
     $plainUi = [xml]"<?xml version='1.0'?><hierarchy><node class='android.view.View' /></hierarchy>"
     $webUi = [xml]"<?xml version='1.0'?><hierarchy><node class='android.webkit.WebView' /></hierarchy>"
     if (Test-FlowUiHasWebView -Ui $plainUi) {
@@ -1258,6 +1421,27 @@ function Get-FlowScenarioCatalog {
       startsRuntime = $true
       ownsServer = $true
       description = "Login to main menu, run the accepted exploration area/floor/stage smoke path, and collect structured artifacts."
+    },
+    [ordered]@{
+      name = "exploration-walk-smoke"
+      default = $false
+      startsRuntime = $true
+      ownsServer = $true
+      description = "Login to main menu, enter the first exploration stage, advance twice, and verify progress/rewards plus floor-list progress."
+    },
+    [ordered]@{
+      name = "exploration-forward-visual-smoke"
+      default = $false
+      startsRuntime = $true
+      ownsServer = $true
+      description = "Login to main menu, enter the first exploration stage with seeded progress, advance once, and capture early post-forward frames."
+    },
+    [ordered]@{
+      name = "exploration-floor-clear-smoke"
+      default = $false
+      startsRuntime = $true
+      ownsServer = $true
+      description = "Login to main menu, enter region 0 area 5 with a flow-only near-clear seed, verify floor-clear, then enter area 6."
     },
     [ordered]@{
       name = "self-check"
@@ -1345,7 +1529,8 @@ function Invoke-Flow {
   if ($Scenario -eq "self-check") {
     return Invoke-FlowSelfCheck -Scenario $Scenario -Tag $Tag
   }
-  if ($Scenario -ne "exploration-smoke") {
+  $supportedRuntimeScenarios = @("exploration-smoke", "exploration-walk-smoke", "exploration-forward-visual-smoke", "exploration-floor-clear-smoke")
+  if ($Scenario -notin $supportedRuntimeScenarios) {
     $ctx = New-FlowContext -Scenario $Scenario -Tag $Tag
     $supported = (@(Get-FlowScenarioCatalog).name -join ", ")
     return Complete-FlowResult -Context $ctx -Ok $false -FailureClass "unsupported-scenario" -FailureStep "scenario" -FailureMessage "Unsupported flow scenario: $Scenario. Supported scenarios: $supported"
@@ -1354,10 +1539,22 @@ function Invoke-Flow {
   $ctx = New-FlowContext -Scenario $Scenario -Tag $Tag
   try {
     Add-FlowEvent -Context $ctx -Type "flow-start" -Data ([ordered]@{ scenario = $Scenario })
-    Start-FlowServer -Context $ctx
+    $serverEnvironment = @{}
+    if ($Scenario -eq "exploration-floor-clear-smoke") {
+      $serverEnvironment["KSSMA_EXPLORATION_MOVES_SEED"] = '{"4:6":15}'
+    }
+    if ($Scenario -eq "exploration-forward-visual-smoke") {
+      $serverEnvironment["KSSMA_EXPLORATION_MOVES_SEED"] = '{"5:7":10}'
+    }
+    Start-FlowServer -Context $ctx -ExtraEnvironment $serverEnvironment
     Invoke-FlowRuntimeGate -Context $ctx
     Invoke-FlowLaunchAndLogin -Context $ctx
-    Invoke-FlowExplorationSmoke -Context $ctx
+    switch ($Scenario) {
+      "exploration-smoke" { Invoke-FlowExplorationSmoke -Context $ctx }
+      "exploration-walk-smoke" { Invoke-FlowExplorationWalkSmoke -Context $ctx }
+      "exploration-forward-visual-smoke" { Invoke-FlowExplorationForwardVisualSmoke -Context $ctx }
+      "exploration-floor-clear-smoke" { Invoke-FlowExplorationFloorClearSmoke -Context $ctx }
+    }
     Add-FlowEvent -Context $ctx -Type "flow-pass" -Data ([ordered]@{ scenario = $Scenario })
     return Complete-FlowResult -Context $ctx -Ok $true
   } catch {

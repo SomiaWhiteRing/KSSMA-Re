@@ -1455,6 +1455,20 @@ function Invoke-EnsureClientBaseline {
           apkCheck = $baseline.check
         })
     }
+    $patchResult = Invoke-PatchLib -ApkPath $baseline.apkPath
+    if ($patchResult.ok) {
+      return Complete-RuntimeResult -Context $ctx -Ok $true -Data ([ordered]@{
+          status = "patched-client-baseline-lib"
+          apk = $baseline.apkPath
+          manifest = $script:ClientBaselineManifestPath
+          before = $verify
+          patch = $patchResult.data
+          apkCheck = $baseline.check
+        })
+    }
+    if ($patchResult.failureClass -ne "package-missing") {
+      return Complete-RuntimeResult -Context $ctx -Ok $false -FailureClass $patchResult.failureClass -RecommendedCommand "Inspect patch-lib stages; do not install old APKs or retry full APK install unless the package is missing." -Data ([ordered]@{ apk = $baseline.apkPath; before = $verify; patch = $patchResult })
+    }
     Add-Stage $ctx "force-stop-before-client-baseline-install" (Invoke-Adb -Arguments @("-s", $script:KssmaRuntimeConfig.PrimarySerial, "shell", "am", "force-stop", $script:KssmaRuntimeConfig.Package) -TimeoutSeconds 10 -AllowFailure)
     $installResult = Invoke-InstallClientBaselineApk -Context $ctx -ApkPath $baseline.apkPath
     if (-not $installResult.ok) {
