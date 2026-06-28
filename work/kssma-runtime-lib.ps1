@@ -33,6 +33,8 @@ $script:ResourceZipPath = Join-Path $script:RepoRoot "base\com.square_enix.milli
 $script:DeviceSaveDir = "/storage/sdcard/Android/data/$($script:KssmaRuntimeConfig.Package)/files/save"
 $script:MediaSaveDir = "/mnt/media_rw/sdcard/Android/data/$($script:KssmaRuntimeConfig.Package)/files/save"
 $script:InternalSaveDir = "/data/local/tmp/kssma-save"
+$script:ExplorationAcceptedLibPath = Join-Path $PSScriptRoot "librooneyj-exploration-area-return-rerequest.so"
+$script:ExplorationAcceptedLibSha256 = "8D214198BFC69CC9D523BB645B0DA1FF75ABFA109A271E850F4B463FA96DD80D"
 
 function New-RuntimeContext {
   param([string]$Command)
@@ -1009,6 +1011,53 @@ function Invoke-EnsureBaseline {
     (Get-StateValue $state "audioOk") -and
     (Get-StateValue $state "packageOk")
   if ($Only.Count -eq 0 -and (Test-StateFresh $state) -and $baselineCacheOk) {
+    $hosts = Get-HostsOk -Serial $script:KssmaRuntimeConfig.PrimarySerial
+    Add-Stage $ctx "check-hosts-cache-guard" $hosts.stage
+    if (-not $hosts.ok) {
+      $ctx.warnings += "Fresh baseline cache claimed hostsOk, but device hosts no longer matched; repairing hosts only."
+      $data = [ordered]@{ hosts = Ensure-Hosts -Context $ctx }
+      Update-RuntimeState ([ordered]@{
+        serial = $script:KssmaRuntimeConfig.PrimarySerial
+        baselineOk = $data.hosts.ok
+        bootUptimeSeconds = $boot.uptimeSeconds
+        hostsOk = $data.hosts.ok
+      })
+      if ($data.hosts.ok) {
+        return Complete-RuntimeResult -Context $ctx -Ok $true -Data $data
+      }
+      return Complete-RuntimeResult -Context $ctx -Ok $false -FailureClass "baseline-mismatch" -RestartAllowed $false -RecommendedCommand "Fix hosts repair shown in stages, or run diagnose." -Data $data
+    }
+    $mount = Get-MountOk -Serial $script:KssmaRuntimeConfig.PrimarySerial
+    Add-Stage $ctx "check-mount-cache-guard" $mount.stage
+    if (-not $mount.ok) {
+      $ctx.warnings += "Fresh baseline cache claimed mountOk, but device save mount/stash no longer matched; repairing mount only."
+      if (-not $mount.stashOk) {
+        $ctx.warnings += "Internal save stash is missing; restoring full sample save before remount."
+        $preload = Invoke-PreloadResources -Mode full
+        $ctx.stages += $preload.stages
+        Update-RuntimeState ([ordered]@{
+          serial = $script:KssmaRuntimeConfig.PrimarySerial
+          baselineOk = $preload.ok
+          bootUptimeSeconds = $boot.uptimeSeconds
+          mountOk = $preload.ok
+        })
+        if ($preload.ok) {
+          return Complete-RuntimeResult -Context $ctx -Ok $true -Data ([ordered]@{ preload = $preload.data })
+        }
+        return Complete-RuntimeResult -Context $ctx -Ok $false -FailureClass "baseline-mismatch" -RestartAllowed $false -RecommendedCommand "Full resource stash restore failed; inspect preload stages before gameplay validation." -Data ([ordered]@{ preload = $preload.data; preloadFailureClass = $preload.failureClass })
+      }
+      $data = [ordered]@{ mount = Ensure-Mount -Context $ctx }
+      Update-RuntimeState ([ordered]@{
+        serial = $script:KssmaRuntimeConfig.PrimarySerial
+        baselineOk = $data.mount.ok
+        bootUptimeSeconds = $boot.uptimeSeconds
+        mountOk = $data.mount.ok
+      })
+      if ($data.mount.ok) {
+        return Complete-RuntimeResult -Context $ctx -Ok $true -Data $data
+      }
+      return Complete-RuntimeResult -Context $ctx -Ok $false -FailureClass "baseline-mismatch" -RestartAllowed $false -RecommendedCommand "Fix mount repair shown in stages, or run diagnose." -Data $data
+    }
     Add-Stage $ctx "baseline-cache" ([ordered]@{ ok = $true; elapsedMs = 0; cached = $true; details = "fresh baseline cache" })
     return Complete-RuntimeResult -Context $ctx -Ok $true -Data ([ordered]@{ cache = "fresh"; state = $state })
   }
@@ -1052,13 +1101,7 @@ function Resolve-ApkPath {
   if ($ApkPath) {
     return (Resolve-Path -LiteralPath $ApkPath).Path
   }
-  $latest = Get-ChildItem -LiteralPath $PSScriptRoot -Filter "*signed.apk" -File |
-    Sort-Object LastWriteTime -Descending |
-    Select-Object -First 1
-  if (-not $latest) {
-    throw "No signed APK found under $PSScriptRoot"
-  }
-  return $latest.FullName
+  throw "-ApkPath is required. Refusing to guess a latest signed APK because that can overwrite the accepted librooneyj.so baseline."
 }
 
 function Get-InstalledApkPath {
@@ -1131,18 +1174,89 @@ function Test-InstalledLibMatches {
   }
 }
 
-function Invoke-PatchLib {
-  param([string]$ApkPath)
-  $ctx = New-RuntimeContext "patch-lib"
+function Assert-ExpectedLibHash {
+  param(
+    [string]$SourceLibPath,
+    [string]$ExpectedSha256,
+    [string]$Name
+  )
+  if (-not $ExpectedSha256) {
+    return
+  }
+  $actual = (Get-FileHash -Algorithm SHA256 -LiteralPath $SourceLibPath).Hash
+  if ($actual -ne $ExpectedSha256) {
+    throw "$Name hash mismatch: got $actual, expected $ExpectedSha256"
+  }
+}
+
+function Invoke-EnsureExplorationBaseline {
+  $ctx = New-RuntimeContext "ensure-exploration-baseline"
   $runtime = Invoke-EnsureRuntime
   $ctx.stages += $runtime.stages
   if (-not $runtime.ok) {
     return Complete-RuntimeResult -Context $ctx -Ok $false -FailureClass $runtime.failureClass -RestartAllowed:$runtime.restartAllowed -RecommendedCommand $runtime.recommendedCommand
   }
   try {
+    if (-not (Test-Path -LiteralPath $script:ExplorationAcceptedLibPath)) {
+      throw "Missing accepted exploration native baseline: $($script:ExplorationAcceptedLibPath)"
+    }
+    Assert-ExpectedLibHash -SourceLibPath $script:ExplorationAcceptedLibPath -ExpectedSha256 $script:ExplorationAcceptedLibSha256 -Name "accepted exploration native baseline"
+    $verify = Test-InstalledLibMatches -SourceLibPath $script:ExplorationAcceptedLibPath -Context $ctx
+    if ($verify.ok) {
+      return Complete-RuntimeResult -Context $ctx -Ok $true -Data ([ordered]@{
+          source = $script:ExplorationAcceptedLibPath
+          status = "already-matched"
+          verify = $verify
+        })
+    }
+    Add-Stage $ctx "force-stop-before-exploration-patch" (Invoke-Adb -Arguments @("-s", $script:KssmaRuntimeConfig.PrimarySerial, "shell", "am", "force-stop", $script:KssmaRuntimeConfig.Package) -TimeoutSeconds 10 -AllowFailure)
+    $remoteLibPath = Get-InstalledLibPath -Context $ctx
+    Add-Stage $ctx "push-accepted-exploration-librooneyj" (Invoke-Adb -Arguments @("-s", $script:KssmaRuntimeConfig.PrimarySerial, "push", $script:ExplorationAcceptedLibPath, $remoteLibPath) -TimeoutSeconds 120 -AllowFailure)
+    Add-Stage $ctx "chmod-librooneyj" (Invoke-Adb -Arguments @("-s", $script:KssmaRuntimeConfig.PrimarySerial, "shell", "chmod", "644", $remoteLibPath) -TimeoutSeconds 10 -AllowFailure)
+    Add-Stage $ctx "chown-librooneyj" (Invoke-Adb -Arguments @("-s", $script:KssmaRuntimeConfig.PrimarySerial, "shell", "chown", "system:system", $remoteLibPath) -TimeoutSeconds 10 -AllowFailure)
+    $postVerify = Test-InstalledLibMatches -SourceLibPath $script:ExplorationAcceptedLibPath -Context $ctx
+    if (-not $postVerify.ok) {
+      return Complete-RuntimeResult -Context $ctx -Ok $false -FailureClass $postVerify.failureClass -RecommendedCommand "Do not continue gameplay validation; installed librooneyj.so still does not match the accepted exploration baseline." -Data ([ordered]@{
+          source = $script:ExplorationAcceptedLibPath
+          expectedHash = $script:ExplorationAcceptedLibSha256
+          before = $verify
+          after = $postVerify
+        })
+    }
+    Complete-RuntimeResult -Context $ctx -Ok $true -Data ([ordered]@{
+        source = $script:ExplorationAcceptedLibPath
+        status = "patched-accepted-exploration-librooneyj"
+        before = $verify
+        verify = $postVerify
+      })
+  } catch {
+    Complete-RuntimeResult -Context $ctx -Ok $false -FailureClass "ensure-exploration-baseline-failed" -RecommendedCommand "Inspect data.error; do not run generic patch-lib or install-apk without an explicit -ApkPath." -Data ([ordered]@{ error = $_.Exception.Message })
+  }
+}
+
+function Invoke-PatchLib {
+  param([string]$ApkPath)
+  $ctx = New-RuntimeContext "patch-lib"
+  try {
     $sourcePath = Resolve-ApkPath -ApkPath $ApkPath
     $sourceLib = Get-LibrooneySource -SourcePath $sourcePath
+  } catch {
+    return Complete-RuntimeResult -Context $ctx -Ok $false -FailureClass "source-required" -RecommendedCommand "Pass an explicit -ApkPath pointing to the intended APK or .so; this command no longer guesses a latest signed APK." -Data ([ordered]@{ error = $_.Exception.Message })
+  }
+  $runtime = Invoke-EnsureRuntime
+  $ctx.stages += $runtime.stages
+  if (-not $runtime.ok) {
+    if ($sourceLib -and $sourceLib.Temporary) {
+      Remove-Item -LiteralPath $sourceLib.Path -Force -ErrorAction SilentlyContinue
+    }
+    return Complete-RuntimeResult -Context $ctx -Ok $false -FailureClass $runtime.failureClass -RestartAllowed:$runtime.restartAllowed -RecommendedCommand $runtime.recommendedCommand
+  }
+  try {
     $remoteLibPath = Get-InstalledLibPath -Context $ctx
+    $preVerify = Test-InstalledLibMatches -SourceLibPath $sourceLib.Path -Context $ctx
+    if ($preVerify.ok) {
+      return Complete-RuntimeResult -Context $ctx -Ok $true -Data ([ordered]@{ source = $sourcePath; remoteLib = $remoteLibPath; status = "already-matched"; verify = $preVerify })
+    }
     Add-Stage $ctx "force-stop-before-patch" (Invoke-Adb -Arguments @("-s", $script:KssmaRuntimeConfig.PrimarySerial, "shell", "am", "force-stop", $script:KssmaRuntimeConfig.Package) -TimeoutSeconds 10 -AllowFailure)
     Add-Stage $ctx "push-librooneyj" (Invoke-Adb -Arguments @("-s", $script:KssmaRuntimeConfig.PrimarySerial, "push", $sourceLib.Path, $remoteLibPath) -TimeoutSeconds 120 -AllowFailure)
     Add-Stage $ctx "chmod-librooneyj" (Invoke-Adb -Arguments @("-s", $script:KssmaRuntimeConfig.PrimarySerial, "shell", "chmod", "644", $remoteLibPath) -TimeoutSeconds 10 -AllowFailure)
@@ -1151,7 +1265,7 @@ function Invoke-PatchLib {
     if (-not $verify.ok) {
       return Complete-RuntimeResult -Context $ctx -Ok $false -FailureClass $verify.failureClass -RecommendedCommand "Do not reinstall blindly; run diagnose or rerun patch-lib after ADB settles." -Data ([ordered]@{ source = $sourcePath; remoteLib = $remoteLibPath; verify = $verify })
     }
-    Complete-RuntimeResult -Context $ctx -Ok $true -Data ([ordered]@{ source = $sourcePath; remoteLib = $remoteLibPath; status = "patched-librooneyj"; verify = $verify })
+    Complete-RuntimeResult -Context $ctx -Ok $true -Data ([ordered]@{ source = $sourcePath; remoteLib = $remoteLibPath; status = "patched-librooneyj"; before = $preVerify; verify = $verify })
   } catch {
     $failure = if ($_.Exception.Message -match "pm path timed out") { "patch-verify-timeout" } elseif ($_.Exception.Message -match "not installed") { "package-missing" } else { "patch-lib-failed" }
     Complete-RuntimeResult -Context $ctx -Ok $false -FailureClass $failure -RecommendedCommand "If package is missing, use install-apk; otherwise run diagnose instead of retrying full install blindly." -Data ([ordered]@{ error = $_.Exception.Message })
@@ -1201,13 +1315,17 @@ function Get-DataPartitionInfo {
 function Invoke-InstallApk {
   param([string]$ApkPath)
   $ctx = New-RuntimeContext "install-apk"
+  try {
+    $resolvedApkPath = Resolve-ApkPath -ApkPath $ApkPath
+  } catch {
+    return Complete-RuntimeResult -Context $ctx -Ok $false -FailureClass "source-required" -RecommendedCommand "Pass an explicit -ApkPath pointing to the APK to install; this command no longer guesses a latest signed APK." -Data ([ordered]@{ error = $_.Exception.Message })
+  }
   $runtime = Invoke-EnsureRuntime
   $ctx.stages += $runtime.stages
   if (-not $runtime.ok) {
     return Complete-RuntimeResult -Context $ctx -Ok $false -FailureClass $runtime.failureClass -RestartAllowed:$runtime.restartAllowed -RecommendedCommand $runtime.recommendedCommand
   }
   try {
-    $resolvedApkPath = Resolve-ApkPath -ApkPath $ApkPath
     Clear-InstallScratch -Context $ctx
     $dataInfo = Get-DataPartitionInfo -Context $ctx
     if ($dataInfo) {
@@ -1427,6 +1545,7 @@ function Invoke-RunRuntime {
   )
   $ctx = New-RuntimeContext "run"
   if ($DriveLogin) {
+    $ctx.warnings += "run -DriveLogin is legacy debug plumbing; use `flow -Scenario <name>` for gameplay acceptance so login, server ownership, route waits, screenshots, and summaries stay in one artifact."
     $skillCheck = Join-Path $env:USERPROFILE ".codex\skills\kssma-re-runtime\scripts\kssma_runtime_check.ps1"
     if (-not (Test-Path -LiteralPath $skillCheck)) {
       return Complete-RuntimeResult -Context $ctx -Ok $false -FailureClass "drive-login-harness-missing" -RecommendedCommand "Use the kssma-re-runtime skill or restore scripts\kssma_runtime_check.ps1."

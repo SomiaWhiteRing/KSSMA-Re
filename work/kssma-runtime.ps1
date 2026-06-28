@@ -6,6 +6,9 @@ param(
     "repair-adb",
     "ensure-runtime",
     "ensure-baseline",
+    "ensure-exploration-baseline",
+    "flow",
+    "play",
     "status",
     "launch",
     "run",
@@ -33,11 +36,13 @@ param(
   [switch]$DriveLogin,
   [string[]]$Observe = @(),
   [int]$WaitSeconds = 35,
-  [string]$Tag = ""
+  [string]$Tag = "",
+  [string]$Scenario = "exploration-smoke"
 )
 
 $ErrorActionPreference = "Stop"
 . (Join-Path $PSScriptRoot "kssma-runtime-lib.ps1")
+. (Join-Path $PSScriptRoot "kssma-runtime-flow.ps1")
 
 function Normalize-ObserveList {
   param([string[]]$Values, [string[]]$Default)
@@ -55,6 +60,9 @@ try {
     "repair-adb" { Invoke-RepairAdb }
     "ensure-runtime" { Invoke-EnsureRuntime -WipeData:$WipeData }
     "ensure-baseline" { Invoke-EnsureBaseline }
+    "ensure-exploration-baseline" { Invoke-EnsureExplorationBaseline }
+    "flow" { Invoke-Flow -Scenario $Scenario -Tag $Tag }
+    "play" { Invoke-Play -Tag $Tag }
     "status" { Invoke-Status }
     "launch" { Invoke-LaunchGame }
     "run" {

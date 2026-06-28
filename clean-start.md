@@ -13,6 +13,8 @@
 - 原始 APK 和 140330 资源 dump 保留在 `base/`。
 - Android 4.4.2/API19 ARM 是当前可靠运行时。
 - 旧域名转本地、双端口 server、AES key、资源预载脚本都是有效成果。
+- `work/kssma-runtime.ps1 flow` 是玩法实机验收的默认入口；它负责 server、runtime gate、
+  baseline、登录、route 等待、关键截图和 artifact。
 - 主菜单视觉还原已阶段完成：背景、初始角色脸图、信息框、BGM/角色语音、点角色
   表情变化与同步台词已对照关服前录像验收；点角色台词原版就没有底色/对话框背景。
 - 已知 key：
@@ -62,24 +64,21 @@ world_list.php
 HTTP 200 不是玩法成功标准。只有当请求顺序、截图/scene、下一次点击目标一起证明
 客户端站到了正确层级，才算该流程边打通。
 
-## 第一阶段验收
+## 默认验收
 
-先把本地 server 启动为最小引导服务：
+玩法验收默认跑一个 flow 场景，而不是手动启动 server、逐步截图或 OCR：
 
 ```powershell
-$env:CHECK_INSPECTION_KEY='rBwj1MIAivVN222b'
-$env:CONNECT_APP_KEY='rBwj1MIAivVN222b'
-$env:LOGIN_RESPONSE='sample'
-$env:PORTS='50005,10001'
-node .\server\bootstrap-server.js
+powershell -NoProfile -ExecutionPolicy Bypass -File .\work\kssma-runtime.ps1 flow -Scenario exploration-smoke
 ```
 
-然后运行 ARM19 客户端。第一阶段成功标准：
+成功或失败都先看本次 artifact 的 `summary.json`、`events.jsonl` 和 `requests.jsonl`。
+截图只作为关键里程碑和失败复核，不再作为每一步的主判断。
 
-- server 日志稳定出现 `/check_inspection`
-- 随后出现 `/connect/app/notification/post_devicetoken` 或 `/connect/app/login`
+新增玩法系统时，先新增或扩展 flow scenario，复用已存在的 server 管理、runtime gate、
+登录到主菜单、route wait 和 artifact 收集。不要为每个系统复制一套登录/ADB/server 脚本。
 
-如果只出现 `/check_inspection` 后弹网络重试，说明还卡在启动协议，不要处理资源。
+启动链低层调试仍可手动启动 `bootstrap-server.js`，但那是 debug 路径，不是玩法验收默认路径。
 
 ## 每轮实验格式
 
@@ -112,11 +111,11 @@ Next: 静态追 check_inspection completion path。
 玩法阶段例子：
 
 ```text
-Frontier: 秘境列表点 Local Area 后没有进入楼层列表。
+Frontier: 秘境列表选择区域 0 后没有进入楼层列表。
 Known-good path: 楼层数据已到且楼层列表 UI 曾被正确激活；下一次点击不应重复 /floor。
 Hypothesis: 客户端仍站在秘境列表层级，不是 floor XML 字段缺失。
 One variable changed: 只复用已验收的楼层列表激活路径。
-Observable: /area -> /floor 后截图显示 区域 1；再点楼层不重复 /floor。
+Observable: /area -> /floor 后 flow 截图显示楼层列表；再点楼层发 /get_floor 而不是重复 /floor。
 Result: ...
 Conclusion: ...
 Next: ...
@@ -133,6 +132,8 @@ behavior、flag、列表字段或绘制标志。
 ```text
 请按 AGENTS.md 和 clean-start.md 执行。
 本轮目标不是凑画面，而是推进一个原始客户端流程边。
+默认使用 `work/kssma-runtime.ps1 flow -Scenario <场景名>` 验收；如果没有现成场景，
+本轮优先新增一个复用登录到主菜单阶段的 flow scenario。
 
 当前只允许处理一个 frontier：
 [写当前卡住的流程边，例如“秘境列表 -> 楼层列表”或“楼层列表 -> 返回秘境列表”]

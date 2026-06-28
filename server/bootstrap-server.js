@@ -223,94 +223,177 @@ const CHECK_INSPECTION_OK_XML = [
   "</response>",
 ].join("\n");
 const POST_DEVICE_TOKEN_OK_XML = CHECK_INSPECTION_OK_XML;
-const EXPLORATION_AREA_XML = [
-  '<?xml version="1.0" encoding="UTF-8"?>',
-  "<response>",
-  "  <header>",
-  "    <error><code>0</code></error>",
-  "    <session_id>local-exploration</session_id>",
-  "    <next_scene>6100</next_scene>",
-  "  </header>",
-  "  <body>",
-  "    <exploration_area>",
-  "      <area_id>0</area_id>",
-  "      <locations>0</locations>",
-  "      <area_info_list>",
-  "        <area_info>",
-  "          <id>0</id>",
-  "          <name>Local Area</name>",
-  "          <x>0</x>",
-  "          <y>0</y>",
-  "          <area_type>1</area_type>",
-  "          <prog_area>0</prog_area>",
-  "          <prog_item>0</prog_item>",
-  "        </area_info>",
-  "      </area_info_list>",
-  "    </exploration_area>",
-  "  </body>",
-  "</response>",
-].join("");
-const EXPLORATION_FLOOR_XML = [
-  '<?xml version="1.0" encoding="UTF-8"?>',
-  "<response>",
-  "  <header>",
-  "    <error><code>0</code></error>",
-  "    <session_id>local-exploration</session_id>",
-  "    <next_scene>6100</next_scene>",
-  "  </header>",
-  "  <body>",
-  "    <exploration_floor>",
-  "      <area_id>0</area_id>",
-  "      <boss_down>0</boss_down>",
-  "      <floor_info_list>",
-  "        <floor_info>",
-  "          <id>2</id>",
-  "          <type>0</type>",
-  "          <unlock>1</unlock>",
-  "          <progress>0</progress>",
-  "          <cost>1</cost>",
-  "          <boss_id>0</boss_id>",
-  "          <found_item_list></found_item_list>",
-  "        </floor_info>",
-  "      </floor_info_list>",
-  "    </exploration_floor>",
-  "  </body>",
-  "</response>",
-].join("");
+const EXPLORATION_REGION_BACKGROUNDS = [
+  "adv_bg14",
+  "adv_bg11",
+  "adv_bg12",
+  "adv_bg15",
+  "adv_bg37",
+  "adv_bg42",
+];
+const EXPLORATION_REGION_POSITIONS = [
+  { x: 150, y: 510 },
+  { x: 310, y: 420 },
+  { x: 480, y: 355 },
+  { x: 635, y: 285 },
+  { x: 780, y: 420 },
+  { x: 885, y: 220 },
+];
+const EXPLORATION_FOCUS_DATA_PATH = path.join(
+  __dirname,
+  "..",
+  "work",
+  "external-data",
+  "normalized",
+  "exploration-focus.json"
+);
+const EXPLORATION_FC2_DATA_PATH = path.join(
+  __dirname,
+  "..",
+  "work",
+  "external-data",
+  "normalized",
+  "fc2-exploration-regions.json"
+);
 
-const FIRST_REGION_FLOORS = [
-  { areaId: 0, floorId: 2, areaNo: 1, cost: 1, requiredMoves: 10, goldMin: 16, goldMax: 20 },
-  { areaId: 1, floorId: 3, areaNo: 2, cost: 2, requiredMoves: 11, goldMin: 30, goldMax: 40 },
-  { areaId: 2, floorId: 4, areaNo: 3, cost: 2, requiredMoves: 12, goldMin: 30, goldMax: 40 },
-  { areaId: 3, floorId: 5, areaNo: 4, cost: 2, requiredMoves: 15, goldMin: 30, goldMax: 40 },
-  { areaId: 4, floorId: 6, areaNo: 5, cost: 3, requiredMoves: 16, goldMin: 50, goldMax: 60 },
-  { areaId: 5, floorId: 7, areaNo: 6, cost: 3, requiredMoves: 20, goldMin: 50, goldMax: 60 },
-].map((floor, index) => ({ ...floor, index }));
+function readJsonFile(filePath) {
+  try {
+    return JSON.parse(fs.readFileSync(filePath, "utf8"));
+  } catch {
+    return null;
+  }
+}
+
+function getFc2AreaByTitleAndNo(fc2Data, title, areaNo) {
+  const region = fc2Data?.regions?.find((candidate) => candidate.title === title);
+  return region?.areas?.find((area) => area.area === areaNo) || null;
+}
+
+function inferRequiredMoves(regionIndex, areaNo, fc2Area) {
+  if (Number.isFinite(fc2Area?.required_moves)) {
+    return fc2Area.required_moves;
+  }
+  // ponytail: later wiki rows have unknown clear counts; replace with master/client values when recovered.
+  return 10 + regionIndex * 5 + areaNo;
+}
+
+function createFallbackExplorationRegions() {
+  const rows = [
+    { areaNo: 1, cost: 1, requiredMoves: 10, goldMin: 16, goldMax: 20 },
+    { areaNo: 2, cost: 2, requiredMoves: 11, goldMin: 30, goldMax: 40 },
+    { areaNo: 3, cost: 2, requiredMoves: 12, goldMin: 30, goldMax: 40 },
+    { areaNo: 4, cost: 2, requiredMoves: 15, goldMin: 30, goldMax: 40 },
+    { areaNo: 5, cost: 3, requiredMoves: 16, goldMin: 50, goldMax: 60 },
+    { areaNo: 6, cost: 3, requiredMoves: 20, goldMin: 50, goldMax: 60 },
+  ];
+  return [
+    {
+      regionId: 0,
+      name: "人魚の断崖",
+      bg: EXPLORATION_REGION_BACKGROUNDS[0],
+      position: EXPLORATION_REGION_POSITIONS[0],
+      floors: rows.map((row, index) => ({
+        ...row,
+        regionId: 0,
+        regionName: "人魚の断崖",
+        regionBg: EXPLORATION_REGION_BACKGROUNDS[0],
+        routeAreaId: index,
+        floorId: index + 2,
+        floorIndex: index,
+        goldMin: row.goldMin,
+        goldMax: row.goldMax,
+      })),
+    },
+  ];
+}
+
+function loadExplorationRegions() {
+  const focusData = readJsonFile(EXPLORATION_FOCUS_DATA_PATH);
+  const fc2Data = readJsonFile(EXPLORATION_FC2_DATA_PATH);
+  const regions = focusData?.structured_regions?.slice(0, 6);
+  if (!regions?.length) {
+    return createFallbackExplorationRegions();
+  }
+
+  let nextRouteAreaId = 0;
+  let nextFloorId = 2;
+  return regions.map((region, regionIndex) => {
+    const regionId = region.region_index - 1;
+    const bg = EXPLORATION_REGION_BACKGROUNDS[regionIndex] || EXPLORATION_REGION_BACKGROUNDS[0];
+    const position = EXPLORATION_REGION_POSITIONS[regionIndex] || { x: 0, y: 0 };
+    return {
+      regionId,
+      name: region.name,
+      bg,
+      position,
+      floors: region.floors.map((area, floorIndex) => {
+        const cost = parseInteger(area.ap_cost, 1);
+        const fc2Area = getFc2AreaByTitleAndNo(fc2Data, region.name, area.floor);
+        const floor = {
+          regionId,
+          regionName: region.name,
+          regionBg: bg,
+          routeAreaId: nextRouteAreaId,
+          floorId: nextFloorId,
+          floorIndex,
+          areaNo: area.floor,
+          cost,
+          requiredMoves: inferRequiredMoves(regionIndex, area.floor, fc2Area),
+          goldMin: Number.isFinite(fc2Area?.gold_min_per_move) ? fc2Area.gold_min_per_move : cost * 16,
+          goldMax: Number.isFinite(fc2Area?.gold_max_per_move) ? fc2Area.gold_max_per_move : cost * 20,
+        };
+        nextRouteAreaId += 1;
+        nextFloorId += 1;
+        return floor;
+      }),
+    };
+  });
+}
+
+const EXPLORATION_REGIONS = loadExplorationRegions();
+const EXPLORATION_FLOORS = EXPLORATION_REGIONS.flatMap((region) => region.floors);
+const EXPLORATION_AREA_XML = createExplorationAreaXml();
+let EXPLORATION_FLOOR_XML;
 
 function parseInteger(value, fallback) {
   const parsed = Number.parseInt(value, 10);
   return Number.isFinite(parsed) ? parsed : fallback;
 }
 
-function getFirstRegionFloor(areaId = 0, floorId = 2) {
+function getExplorationRegion(areaId = 0) {
+  const requestedAreaId = parseInteger(areaId, 0);
+  return EXPLORATION_REGIONS.find((region) => region.regionId === requestedAreaId) || EXPLORATION_REGIONS[0];
+}
+
+function getExplorationFloor(areaId = 0, floorId = 2) {
   const requestedFloorId = parseInteger(floorId, 2);
-  const byFloorId = FIRST_REGION_FLOORS.find((floor) => floor.floorId === requestedFloorId);
+  const byFloorId = EXPLORATION_FLOORS.find((floor) => floor.floorId === requestedFloorId);
   if (byFloorId) {
     return byFloorId;
   }
 
-  const requestedAreaId = parseInteger(areaId, 0);
-  const byAreaId = FIRST_REGION_FLOORS.find((floor) => floor.areaId === requestedAreaId);
-  if (byAreaId) {
-    return byAreaId;
+  const requestedRouteAreaId = parseInteger(areaId, 0);
+  const byRouteAreaId = EXPLORATION_FLOORS.find((floor) => floor.routeAreaId === requestedRouteAreaId);
+  if (byRouteAreaId) {
+    return byRouteAreaId;
   }
 
   // ponytail: unknown IDs fall back to the first local row; replace with masterdata mapping when recovered.
-  return FIRST_REGION_FLOORS[0];
+  return getExplorationRegion(areaId).floors[0] || EXPLORATION_FLOORS[0];
 }
 
-function getNextFirstRegionFloor(floor) {
-  return FIRST_REGION_FLOORS[floor.index + 1] || null;
+function getNextExplorationFloor(floor) {
+  const region = EXPLORATION_REGIONS.find((candidate) => candidate.regionId === floor.regionId);
+  return region?.floors[floor.floorIndex + 1] || null;
+}
+
+function getExplorationFloorKeyFromIds(areaId = 0, floorId = 2) {
+  const floor = getExplorationFloor(areaId, floorId);
+  return getExplorationFloorStateKey(floor);
+}
+
+function getExplorationFloorStateKey(floor) {
+  return `${floor.routeAreaId}:${floor.floorId}`;
 }
 
 function clampMoveCount(value, floor) {
@@ -343,21 +426,98 @@ function renderFloorInfoXml(floor, progress, indent = "      ") {
   ];
 }
 
+function getRegionProgress(region, movesByFloor = new Map()) {
+  const requiredMoves = region.floors.reduce((sum, floor) => sum + floor.requiredMoves, 0);
+  if (!requiredMoves) {
+    return 0;
+  }
+  const doneMoves = region.floors.reduce((sum, floor) => {
+    return sum + clampMoveCount(movesByFloor.get(getExplorationFloorStateKey(floor)) || 0, floor);
+  }, 0);
+  return Math.floor((doneMoves * 100) / requiredMoves);
+}
+
+function createExplorationAreaXml(movesByFloor = new Map()) {
+  const areaRows = EXPLORATION_REGIONS.flatMap((region) => [
+    "        <area_info>",
+    `          <id>${region.regionId}</id>`,
+    `          <name>${region.name}</name>`,
+    `          <x>${region.position.x}</x>`,
+    `          <y>${region.position.y}</y>`,
+    "          <area_type>1</area_type>",
+    `          <prog_area>${getRegionProgress(region, movesByFloor)}</prog_area>`,
+    "          <prog_item>0</prog_item>",
+    "        </area_info>",
+  ]);
+
+  return [
+    '<?xml version="1.0" encoding="UTF-8"?>',
+    "<response>",
+    "  <header>",
+    "    <error><code>0</code></error>",
+    "    <session_id>local-exploration</session_id>",
+    "    <next_scene>6100</next_scene>",
+    "  </header>",
+    "  <body>",
+    "    <exploration_area>",
+    "      <area_id>0</area_id>",
+    "      <locations>0</locations>",
+    "      <area_info_list>",
+    ...areaRows,
+    "      </area_info_list>",
+    "    </exploration_area>",
+    "  </body>",
+    "</response>",
+  ].join("");
+}
+
+function createExplorationFloorXml(areaId = 0, movesByFloor = new Map()) {
+  const region = getExplorationRegion(areaId);
+  const floorRows = region.floors.flatMap((floor) => {
+    const floorKey = getExplorationFloorStateKey(floor);
+    const movesDone = movesByFloor instanceof Map ? movesByFloor.get(floorKey) || 0 : 0;
+    return renderFloorInfoXml(floor, getExplorationProgress(floor, movesDone), "        ");
+  });
+
+  // ponytail: v1 unlocks all normal rows from the cached wiki table; add lock gating when progression is save-backed.
+  return [
+    '<?xml version="1.0" encoding="UTF-8"?>',
+    "<response>",
+    "  <header>",
+    "    <error><code>0</code></error>",
+    "    <session_id>local-exploration</session_id>",
+    "    <next_scene>6100</next_scene>",
+    "  </header>",
+    "  <body>",
+    "    <exploration_floor>",
+    `      <area_id>${region.regionId}</area_id>`,
+    "      <boss_down>0</boss_down>",
+    "      <floor_info_list>",
+    ...floorRows,
+    "      </floor_info_list>",
+    "    </exploration_floor>",
+    "  </body>",
+    "</response>",
+  ].join("");
+}
+
+EXPLORATION_FLOOR_XML = createExplorationFloorXml();
+
 function renderNextFloorXml(floor) {
   if (!floor) {
     return [];
   }
   return [
     "      <next_floor>",
-    `        <area_id>${floor.areaId}</area_id>`,
+    `        <area_id>${floor.routeAreaId}</area_id>`,
     ...renderFloorInfoXml(floor, 0, "        "),
     "      </next_floor>",
   ];
 }
 
 function createExplorationGetFloorXml(areaId = 0, floorId = 2, movesDone = 0) {
-  const currentFloor = getFirstRegionFloor(areaId, floorId);
-  const nextFloor = getNextFirstRegionFloor(currentFloor);
+  const currentFloor = getExplorationFloor(areaId, floorId);
+  const nextFloor = getNextExplorationFloor(currentFloor);
   const progress = getExplorationProgress(currentFloor, movesDone);
 
   return [
@@ -370,10 +530,10 @@ function createExplorationGetFloorXml(areaId = 0, floorId = 2, movesDone = 0) {
   "  </header>",
   "  <body>",
   "    <get_floor>",
-  `      <area_id>${currentFloor.areaId}</area_id>`,
-  "      <bg>exp_sarch</bg>",
-  "      <bgm>bgm_sarch1</bgm>",
-  "      <area_name>Local Area</area_name>",
+  `      <area_id>${currentFloor.routeAreaId}</area_id>`,
+  `      <bg>${currentFloor.regionBg}</bg>`,
+  "      <bgm>sarch1</bgm>",
+  `      <area_name>${currentFloor.regionName}</area_name>`,
   "      <next_exp>0</next_exp>",
   ...renderNextFloorXml(nextFloor),
   ...renderFloorInfoXml(currentFloor, progress),
@@ -383,7 +543,7 @@ function createExplorationGetFloorXml(areaId = 0, floorId = 2, movesDone = 0) {
 ].join("");
 }
 const EXPLORATION_GET_FLOOR_XML = createExplorationGetFloorXml();
-function createExplorationExploreXml(progress = 10, rewards = getExplorationStepRewards(FIRST_REGION_FLOORS[0])) {
+function createExplorationExploreXml(progress = 10, rewards = getExplorationStepRewards(EXPLORATION_FLOORS[0])) {
   const safeProgress = Math.min(Math.max(parseInteger(progress, 10), 0), 100);
   const gold = Math.max(parseInteger(rewards.gold, 0), 0);
   const getExp = Math.max(parseInteger(rewards.getExp, 0), 0);
@@ -545,7 +705,7 @@ function getLoginXmlSource(loginXml) {
 }
 
 function getExplorationFloorKey(params) {
-  return `${params.decrypted.area_id || "0"}:${params.decrypted.floor_id || "2"}`;
+  return getExplorationFloorKeyFromIds(params.decrypted.area_id || "0", params.decrypted.floor_id || "2");
 }
 
 function createServer() {
@@ -699,28 +859,33 @@ function createServer() {
       }
 
       if (req.method === "POST" && url.pathname === "/connect/app/exploration/area") {
-        // ponytail: one selectable area is enough to unblock the scene; add real progression when floor/explore proves it needs it.
-        const encrypted = encryptAes128Ecb(EXPLORATION_AREA_XML, connectAppKey);
+        // ponytail: process-local area progress is enough for one reconstruction run; persist after hierarchy is stable.
+        const xml = createExplorationAreaXml(explorationMovesByFloor);
+        const encrypted = encryptAes128Ecb(xml, connectAppKey);
         logRequest("connect_app_response", {
           path: url.pathname,
           mode: "aes-128-ecb",
           key: connectAppKey,
           bytes: encrypted.length,
-          source: "minimal exploration area",
+          source: "wiki exploration area list",
+          areaCount: EXPLORATION_REGIONS.length,
         });
         sendBinary(res, 200, encrypted);
         return;
       }
 
       if (req.method === "POST" && url.pathname === "/connect/app/exploration/floor") {
-        // ponytail: one unlocked floor is enough to expose the next protocol edge.
-        const encrypted = encryptAes128Ecb(EXPLORATION_FLOOR_XML, connectAppKey);
+        // ponytail: floor-list progress is process-local; save-backed persistence comes after return/list progress is accepted.
+        const xml = createExplorationFloorXml(params.decrypted.area_id, explorationMovesByFloor);
+        const encrypted = encryptAes128Ecb(xml, connectAppKey);
         logRequest("connect_app_response", {
           path: url.pathname,
           mode: "aes-128-ecb",
           key: connectAppKey,
           bytes: encrypted.length,
-          source: "minimal exploration floor",
+          source: "wiki exploration floor list",
+          regionId: parseInteger(params.decrypted.area_id, 0),
+          floorCount: getExplorationRegion(params.decrypted.area_id).floors.length,
         });
         sendBinary(res, 200, encrypted);
         return;
@@ -729,6 +894,7 @@ function createServer() {
       if (req.method === "POST" && url.pathname === "/connect/app/exploration/get_floor") {
         // ponytail: one no-branch floor entry is enough to test exploration_main; real event routing comes after the next route proves it.
         const floorKey = getExplorationFloorKey(params);
+        const floor = getExplorationFloor(params.decrypted.area_id, params.decrypted.floor_id);
         const movesDone = explorationMovesByFloor.get(floorKey) || 0;
         const xml = createExplorationGetFloorXml(params.decrypted.area_id, params.decrypted.floor_id, movesDone);
         const encrypted = encryptAes128Ecb(xml, connectAppKey);
@@ -739,6 +905,9 @@ function createServer() {
           bytes: encrypted.length,
           source: "minimal exploration get_floor",
           floorKey,
+          regionId: floor.regionId,
+          floorId: floor.floorId,
+          bg: floor.regionBg,
           movesDone,
         });
         sendBinary(res, 200, encrypted);
@@ -747,7 +916,7 @@ function createServer() {
 
       if (req.method === "POST" && url.pathname === "/connect/app/exploration/explore") {
         // ponytail: keep this as the no-branch walking candidate; battle/fairy/reward routes stay separate frontiers.
-        const floor = getFirstRegionFloor(params.decrypted.area_id, params.decrypted.floor_id);
+        const floor = getExplorationFloor(params.decrypted.area_id, params.decrypted.floor_id);
         const floorKey = getExplorationFloorKey(params);
         const movesDone = clampMoveCount((explorationMovesByFloor.get(floorKey) || 0) + 1, floor);
         explorationMovesByFloor.set(floorKey, movesDone);
@@ -830,7 +999,9 @@ module.exports = {
   decryptAes128EcbBase64,
   encryptAes128Ecb,
   encryptAes128EcbBuffer,
+  createExplorationAreaXml,
   createExplorationExploreXml,
+  createExplorationFloorXml,
   createExplorationGetFloorXml,
   getLoginOkXml,
   getLoginXmlSource,
@@ -841,6 +1012,8 @@ module.exports = {
   EXPLORATION_FLOOR_XML,
   EXPLORATION_GET_FLOOR_XML,
   EXPLORATION_EXPLORE_XML,
+  EXPLORATION_REGIONS,
+  EXPLORATION_FLOORS,
   MAINMENU_UPDATE_XML,
   LOGIN_TUTORIAL_XML,
   LOGIN_OK_XML,
