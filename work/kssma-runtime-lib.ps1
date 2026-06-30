@@ -1,7 +1,9 @@
 $script:KssmaRuntimeConfig = [ordered]@{
   AvdName = "kssma_arm19"
-  PrimarySerial = "127.0.0.1:5583"
-  LegacySerial = "emulator-5582"
+  ConsolePort = 5556
+  AdbPort = 5557
+  PrimarySerial = "emulator-5556"
+  LegacySerial = "127.0.0.1:5557"
   Package = "com.square_enix.million_cn"
   Activity = "com.test.enter.LogoActivity"
   ExpectedAbi = "armeabi-v7a"
@@ -108,6 +110,16 @@ function ConvertTo-RuntimeJson {
   ConvertTo-Json -InputObject $Result -Depth 12
 }
 
+function ConvertTo-ProcessSummary {
+  param($Process)
+
+  [ordered]@{
+    processId = [int]$Process.processId
+    name = "$($Process.name)"
+    commandLine = "$($Process.commandLine)"
+  }
+}
+
 function Invoke-RuntimeProcess {
   param(
     [string]$FilePath,
@@ -161,6 +173,49 @@ function Invoke-Adb {
     $stage.failureClass = Get-AdbFailureClass $stage
   }
   $stage
+}
+
+function Test-TcpAdbSerial {
+  param([string]$Serial)
+  $Serial -match "^(127\.0\.0\.1|localhost):\d+$"
+}
+
+function Invoke-AdbConnectIfTcpSerial {
+  param(
+    [string]$Serial,
+    [int]$TimeoutSeconds = 3
+  )
+
+  if (-not (Test-TcpAdbSerial -Serial $Serial)) {
+    return [ordered]@{
+      ok = $true
+      elapsedMs = 0
+      stdout = ""
+      stderr = ""
+      skipped = $true
+      details = "canonical emulator serial does not need adb connect"
+    }
+  }
+  Invoke-Adb -Arguments @("connect", $Serial) -TimeoutSeconds $TimeoutSeconds -AllowFailure
+}
+
+function Invoke-AdbDisconnectIfTcpSerial {
+  param(
+    [string]$Serial,
+    [int]$TimeoutSeconds = 3
+  )
+
+  if (-not (Test-TcpAdbSerial -Serial $Serial)) {
+    return [ordered]@{
+      ok = $true
+      elapsedMs = 0
+      stdout = ""
+      stderr = ""
+      skipped = $true
+      details = "canonical emulator serial does not need adb disconnect"
+    }
+  }
+  Invoke-Adb -Arguments @("disconnect", $Serial) -TimeoutSeconds $TimeoutSeconds -AllowFailure
 }
 
 function Test-AdbFailureOutput {
@@ -332,8 +387,9 @@ function Update-RuntimeState {
 }
 
 function Get-EmulatorProcesses {
+  $portPair = [regex]::Escape("$($script:KssmaRuntimeConfig.ConsolePort),$($script:KssmaRuntimeConfig.AdbPort)")
   @(Get-CimInstance Win32_Process -Filter "name = 'emulator.exe' or name = 'emulator-arm.exe' or name = 'emulator64-crash-service.exe'" -ErrorAction SilentlyContinue |
-    Where-Object { ($_.CommandLine -as [string]) -match [regex]::Escape($script:KssmaRuntimeConfig.AvdName) -or ($_.CommandLine -as [string]) -match "5582,5583" } |
+    Where-Object { ($_.CommandLine -as [string]) -match [regex]::Escape($script:KssmaRuntimeConfig.AvdName) -or ($_.CommandLine -as [string]) -match $portPair } |
     ForEach-Object {
       [ordered]@{
         processId = $_.ProcessId
@@ -362,8 +418,8 @@ function Test-TcpPortOpen {
 
 function Get-TargetPortSummary {
   [ordered]@{
-    console5582 = Test-TcpPortOpen -Port 5582
-    adb5583 = Test-TcpPortOpen -Port 5583
+    console = Test-TcpPortOpen -Port $script:KssmaRuntimeConfig.ConsolePort
+    adb = Test-TcpPortOpen -Port $script:KssmaRuntimeConfig.AdbPort
   }
 }
 
@@ -468,7 +524,7 @@ function Get-PrimaryHealthData {
   )
 
   $serial = $script:KssmaRuntimeConfig.PrimarySerial
-  $connect = Invoke-Adb -Arguments @("connect", $serial) -TimeoutSeconds $TimeoutSeconds -AllowFailure
+  $connect = Invoke-AdbConnectIfTcpSerial -Serial $serial -TimeoutSeconds $TimeoutSeconds
   Add-Stage $Context "adb-connect-primary" $connect
 
   # ponytail: three one-property reads are noisier but avoid the classic ARM shell
@@ -522,7 +578,7 @@ function Get-PrimaryHealthData {
 
   if ($transport.selectedSerial -and $transport.selectedSerial -ne $script:KssmaRuntimeConfig.PrimarySerial) {
     # ponytail: use the emulator's canonical ADB serial when the TCP alias is stale.
-    $Context.warnings += "Primary TCP serial $serial is unavailable; using healthy ARM19 legacy serial $($transport.selectedSerial) for this command."
+    $Context.warnings += "Primary serial $serial is unavailable; using healthy ARM19 fallback serial $($transport.selectedSerial) for this command."
     $script:KssmaRuntimeConfig.PrimarySerial = $transport.selectedSerial
   }
 
@@ -590,7 +646,7 @@ function Invoke-ConnectRuntime {
     $ctx.warnings += "Other ADB devices present; ignored by KSSMA runtime control plane."
   }
   if ($devices.legacyOffline) {
-    $ctx.warnings += "emulator-5582 is offline; ignored because primary serial is checked directly."
+    $ctx.warnings += "$($script:KssmaRuntimeConfig.LegacySerial) is offline; ignored because primary serial is checked directly."
   }
   $data = [ordered]@{
     abi = $health.abi
@@ -616,18 +672,18 @@ function Invoke-RepairAdb {
   $ctx = New-RuntimeContext "repair-adb"
   $serial = $script:KssmaRuntimeConfig.PrimarySerial
 
-  $connect1 = Invoke-Adb -Arguments @("connect", $serial) -TimeoutSeconds 3 -AllowFailure
+  $connect1 = Invoke-AdbConnectIfTcpSerial -Serial $serial -TimeoutSeconds 3
   Add-Stage $ctx "connect-primary" $connect1
   $health = Get-PrimaryHealthData -Context $ctx -TimeoutSeconds 2 -IncludeTransport
   if ($health.ok) {
     return Complete-RuntimeResult -Context $ctx -Ok $true -Data ([ordered]@{ abi = $health.abi; release = $health.release; bootCompleted = $health.bootCompleted; transport = $health.transport; recovery = "none" })
   }
 
-  $disconnect = Invoke-Adb -Arguments @("disconnect", $serial) -TimeoutSeconds 3 -AllowFailure
+  $disconnect = Invoke-AdbDisconnectIfTcpSerial -Serial $serial -TimeoutSeconds 3
   Add-Stage $ctx "disconnect-primary" $disconnect
   $reconnectOffline = Invoke-Adb -Arguments @("reconnect", "offline") -TimeoutSeconds 5 -AllowFailure
   Add-Stage $ctx "reconnect-offline" $reconnectOffline
-  $connect2 = Invoke-Adb -Arguments @("connect", $serial) -TimeoutSeconds 3 -AllowFailure
+  $connect2 = Invoke-AdbConnectIfTcpSerial -Serial $serial -TimeoutSeconds 3
   Add-Stage $ctx "reconnect-primary" $connect2
   $health2 = Get-PrimaryHealthData -Context $ctx -TimeoutSeconds 2 -IncludeTransport
   if ($health2.ok) {
@@ -642,9 +698,9 @@ function Invoke-RepairAdb {
     if ($restart.ok) {
       $post = Get-PrimaryHealthData -Context $ctx -TimeoutSeconds 2 -IncludeTransport
       if ($post.ok) {
-        $killed = @()
-        if ($restart.data -and $restart.data.Contains("killed")) {
-          $killed = @($restart.data.killed)
+        $killedCount = 0
+        if ($restart.data -and $restart.data.Contains("killedCount")) {
+          $killedCount = [int]$restart.data.killedCount
         }
         return Complete-RuntimeResult -Context $ctx -Ok $true -Data ([ordered]@{
             recovery = "warm-restart"
@@ -655,7 +711,7 @@ function Invoke-RepairAdb {
             bootCompleted = $post.bootCompleted
             restart = [ordered]@{
               reason = $restart.data.reason
-              killedCount = $killed.Count
+              killedCount = $killedCount
             }
           })
       }
@@ -764,7 +820,7 @@ function Start-ClassicEmulator {
   $args = @(
     "-avd", $script:KssmaRuntimeConfig.AvdName,
     "-engine", "classic",
-    "-ports", "5582,5583",
+    "-ports", "$($script:KssmaRuntimeConfig.ConsolePort),$($script:KssmaRuntimeConfig.AdbPort)",
     "-no-snapshot-load",
     "-no-snapshot-save",
     "-no-boot-anim",
@@ -1131,21 +1187,21 @@ function Invoke-EnsureBaseline {
     (Get-StateValue $state "audioOk") -and
     (Get-StateValue $state "packageOk")
   if ($Only.Count -eq 0 -and (Test-StateFresh $state) -and $baselineCacheOk) {
+    $data = [ordered]@{}
     $hosts = Get-HostsOk -Serial $script:KssmaRuntimeConfig.PrimarySerial
     Add-Stage $ctx "check-hosts-cache-guard" $hosts.stage
     if (-not $hosts.ok) {
       $ctx.warnings += "Fresh baseline cache claimed hostsOk, but device hosts no longer matched; repairing hosts only."
-      $data = [ordered]@{ hosts = Ensure-Hosts -Context $ctx }
+      $data.hosts = Ensure-Hosts -Context $ctx
       Update-RuntimeState ([ordered]@{
         serial = $script:KssmaRuntimeConfig.PrimarySerial
         baselineOk = $data.hosts.ok
         bootUptimeSeconds = $boot.uptimeSeconds
         hostsOk = $data.hosts.ok
       })
-      if ($data.hosts.ok) {
-        return Complete-RuntimeResult -Context $ctx -Ok $true -Data $data
+      if (-not $data.hosts.ok) {
+        return Complete-RuntimeResult -Context $ctx -Ok $false -FailureClass "baseline-mismatch" -RestartAllowed $false -RecommendedCommand "Fix hosts repair shown in stages, or run diagnose." -Data $data
       }
-      return Complete-RuntimeResult -Context $ctx -Ok $false -FailureClass "baseline-mismatch" -RestartAllowed $false -RecommendedCommand "Fix hosts repair shown in stages, or run diagnose." -Data $data
     }
     $mount = Get-MountOk -Serial $script:KssmaRuntimeConfig.PrimarySerial
     Add-Stage $ctx "check-mount-cache-guard" $mount.stage
@@ -1177,6 +1233,16 @@ function Invoke-EnsureBaseline {
         return Complete-RuntimeResult -Context $ctx -Ok $true -Data $data
       }
       return Complete-RuntimeResult -Context $ctx -Ok $false -FailureClass "baseline-mismatch" -RestartAllowed $false -RecommendedCommand "Fix mount repair shown in stages, or run diagnose." -Data $data
+    }
+    if ($data.Count -gt 0) {
+      Update-RuntimeState ([ordered]@{
+        serial = $script:KssmaRuntimeConfig.PrimarySerial
+        baselineOk = $true
+        bootUptimeSeconds = $boot.uptimeSeconds
+        hostsOk = $true
+        mountOk = $true
+      })
+      return Complete-RuntimeResult -Context $ctx -Ok $true -Data $data
     }
     Add-Stage $ctx "baseline-cache" ([ordered]@{ ok = $true; elapsedMs = 0; cached = $true; details = "fresh baseline cache" })
     return Complete-RuntimeResult -Context $ctx -Ok $true -Data ([ordered]@{ cache = "fresh"; state = $state })
@@ -1769,14 +1835,14 @@ function Invoke-RestartRuntime {
   Add-Stage $ctx "kill-classic-emulator-processes" ([ordered]@{ ok = $true; elapsedMs = [int]$sw.ElapsedMilliseconds; details = "killed=$($killed.Count)" })
   Start-Sleep -Seconds 2
   Start-ClassicEmulator -Context $ctx -WipeData:$WipeData
-  $bootOk = Wait-PrimaryBoot -Context $ctx -TimeoutSeconds 240
+  $bootOk = Wait-PrimaryBoot -Context $ctx -TimeoutSeconds 120
   if ($bootOk) {
     $boot = Get-DeviceBootFingerprint -Serial $script:KssmaRuntimeConfig.PrimarySerial
     Add-Stage $ctx "boot-fingerprint" $boot.stage
     Reset-BaselineStateValues ([ordered]@{ fastHealthOk = $true; bootCompleted = $true; bootUptimeSeconds = $boot.uptimeSeconds; lastRestartReason = $Reason })
-    return Complete-RuntimeResult -Context $ctx -Ok $true -Data ([ordered]@{ reason = $Reason; killed = $killed })
+    return Complete-RuntimeResult -Context $ctx -Ok $true -Data ([ordered]@{ reason = $Reason; killedCount = $killed.Count; killed = @($killed | ForEach-Object { ConvertTo-ProcessSummary $_ }) })
   } else {
-    return Complete-RuntimeResult -Context $ctx -Ok $false -FailureClass "restart-boot-timeout" -RestartAllowed $false -RecommendedCommand "Run diagnose and inspect emulator stdout/stderr logs." -Data ([ordered]@{ reason = $Reason; killed = $killed; stdoutLog = $script:StdoutLog; stderrLog = $script:StderrLog })
+    return Complete-RuntimeResult -Context $ctx -Ok $false -FailureClass "restart-boot-timeout" -RestartAllowed $false -RecommendedCommand "Run diagnose and inspect emulator stdout/stderr logs." -Data ([ordered]@{ reason = $Reason; killedCount = $killed.Count; killed = @($killed | ForEach-Object { ConvertTo-ProcessSummary $_ }); emulatorProcesses = @(Get-EmulatorProcesses); stdoutLog = $script:StdoutLog; stderrLog = $script:StderrLog })
   }
 }
 
@@ -2009,14 +2075,14 @@ function New-FakeHealth {
 
 function New-FakeDevices {
   param([string[]]$Rows)
-  $primary = Get-AdbRowState -Rows $Rows -Serial "127.0.0.1:5583"
-  $legacy = Get-AdbRowState -Rows $Rows -Serial "emulator-5582"
+  $primary = Get-AdbRowState -Rows $Rows -Serial $script:KssmaRuntimeConfig.PrimarySerial
+  $legacy = Get-AdbRowState -Rows $Rows -Serial $script:KssmaRuntimeConfig.LegacySerial
   [ordered]@{
     rows = $Rows
     primary = $primary
     legacy = $legacy
     otherDevices = @($Rows | Where-Object {
-        $_ -notmatch "^127\.0\.0\.1:5583\s+" -and $_ -notmatch "^emulator-5582\s+"
+        $_ -notmatch "^$([regex]::Escape($script:KssmaRuntimeConfig.PrimarySerial))\s+" -and $_ -notmatch "^$([regex]::Escape($script:KssmaRuntimeConfig.LegacySerial))\s+"
       })
     legacyOffline = $legacy.state -eq "offline"
     primaryDevice = $primary.state -eq "device"
@@ -2025,58 +2091,60 @@ function New-FakeDevices {
 
 function Invoke-TransportSelfCheck {
   $ctx = New-RuntimeContext "self-check-transport"
+  $primarySerial = $script:KssmaRuntimeConfig.PrimarySerial
+  $legacySerial = $script:KssmaRuntimeConfig.LegacySerial
   $ports = [ordered]@{
-    console5582 = [ordered]@{ port = 5582; open = $true; error = "" }
-    adb5583 = [ordered]@{ port = 5583; open = $false; error = "actively refused" }
+    console = [ordered]@{ port = $script:KssmaRuntimeConfig.ConsolePort; open = $true; error = "" }
+    adb = [ordered]@{ port = $script:KssmaRuntimeConfig.AdbPort; open = $false; error = "actively refused" }
   }
-  $emulators = @([ordered]@{ processId = 1; name = "emulator-arm.exe"; commandLine = "emulator-arm.exe -avd kssma_arm19 -ports 5582,5583" })
+  $emulators = @([ordered]@{ processId = 1; name = "emulator-arm.exe"; commandLine = "emulator-arm.exe -avd kssma_arm19 -ports $($script:KssmaRuntimeConfig.ConsolePort),$($script:KssmaRuntimeConfig.AdbPort)" })
   $cases = @(
     [ordered]@{
       name = "healthy-primary"
       expected = "healthy-arm19"
-      primary = New-FakeHealth -Serial "127.0.0.1:5583" -Ok $true -TransportOk $true -Abi "armeabi-v7a" -Release "4.4.2" -Boot "1"
-      legacy = New-FakeHealth -Serial "emulator-5582"
-      devices = New-FakeDevices -Rows @("127.0.0.1:5583 device product:sdk model:sdk device:generic")
+      primary = New-FakeHealth -Serial $primarySerial -Ok $true -TransportOk $true -Abi "armeabi-v7a" -Release "4.4.2" -Boot "1"
+      legacy = New-FakeHealth -Serial $legacySerial
+      devices = New-FakeDevices -Rows @("$primarySerial device product:sdk model:sdk device:generic")
       emulators = $emulators
     },
     [ordered]@{
       name = "healthy-legacy"
       expected = "healthy-arm19"
-      primary = New-FakeHealth -Serial "127.0.0.1:5583"
-      legacy = New-FakeHealth -Serial "emulator-5582" -Ok $true -TransportOk $true -Abi "armeabi-v7a" -Release "4.4.2" -Boot "1"
-      devices = New-FakeDevices -Rows @("emulator-5582 device product:sdk model:sdk device:generic")
+      primary = New-FakeHealth -Serial $primarySerial
+      legacy = New-FakeHealth -Serial $legacySerial -Ok $true -TransportOk $true -Abi "armeabi-v7a" -Release "4.4.2" -Boot "1"
+      devices = New-FakeDevices -Rows @("$legacySerial device product:sdk model:sdk device:generic")
       emulators = $emulators
     },
     [ordered]@{
       name = "detached-arm19"
       expected = "detached-arm19"
-      primary = New-FakeHealth -Serial "127.0.0.1:5583"
-      legacy = New-FakeHealth -Serial "emulator-5582"
+      primary = New-FakeHealth -Serial $primarySerial
+      legacy = New-FakeHealth -Serial $legacySerial
       devices = New-FakeDevices -Rows @("emulator-5554 device product:MI model:MI device:MI")
       emulators = $emulators
     },
     [ordered]@{
       name = "wrong-runtime-only"
       expected = "wrong-runtime-only"
-      primary = New-FakeHealth -Serial "127.0.0.1:5583"
-      legacy = New-FakeHealth -Serial "emulator-5582"
+      primary = New-FakeHealth -Serial $primarySerial
+      legacy = New-FakeHealth -Serial $legacySerial
       devices = New-FakeDevices -Rows @("emulator-5554 device product:MI model:MI device:MI")
       emulators = @()
     },
     [ordered]@{
       name = "adb-offline"
       expected = "adb-offline"
-      primary = New-FakeHealth -Serial "127.0.0.1:5583"
-      legacy = New-FakeHealth -Serial "emulator-5582"
-      devices = New-FakeDevices -Rows @("emulator-5582 offline")
+      primary = New-FakeHealth -Serial $primarySerial
+      legacy = New-FakeHealth -Serial $legacySerial
+      devices = New-FakeDevices -Rows @("$legacySerial offline")
       emulators = $emulators
     },
     [ordered]@{
       name = "wrong-runtime"
       expected = "wrong-runtime"
-      primary = New-FakeHealth -Serial "127.0.0.1:5583" -TransportOk $true -Abi "x86_64" -Release "12" -Boot "1"
-      legacy = New-FakeHealth -Serial "emulator-5582"
-      devices = New-FakeDevices -Rows @("127.0.0.1:5583 device product:MI model:MI device:MI")
+      primary = New-FakeHealth -Serial $primarySerial -TransportOk $true -Abi "x86_64" -Release "12" -Boot "1"
+      legacy = New-FakeHealth -Serial $legacySerial
+      devices = New-FakeDevices -Rows @("$primarySerial device product:MI model:MI device:MI")
       emulators = $emulators
     }
   )

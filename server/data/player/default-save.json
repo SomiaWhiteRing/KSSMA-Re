@@ -11,6 +11,7 @@
     "name": "Arthur",
     "faction": "sword",
     "greeting": "よろしくお願いします",
+    "leaderSerialId": 1,
     "level": 1,
     "maxLevel": 350,
     "exp": 0,
@@ -65,18 +66,41 @@
     "resetBook": 0
   },
   "cards": {
-    "count": 0,
+    "count": 1,
     "max": 350,
     "storageCount": 0,
     "storageMax": 0,
-    "instances": [],
+    "instances": [
+      {
+        "serialId": 1,
+        "masterCardId": 22,
+        "holography": 0,
+        "hp": 5620,
+        "power": 4340,
+        "critical": 0,
+        "level": 36,
+        "maxLevel": 36,
+        "exp": 39200,
+        "maxExp": 39200,
+        "nextExp": 0,
+        "expDiff": 0,
+        "expPercent": 0,
+        "salePrice": 30740,
+        "materialPrice": 40970,
+        "evolutionPrice": 400,
+        "plusLimitCount": 0,
+        "limitOver": 0
+      }
+    ],
     "protectedInstanceIds": [],
     "albumsSeen": [],
     "decks": [
       {
         "id": "main",
         "name": "Main",
-        "cardInstanceIds": [],
+        "cardInstanceIds": [
+          1
+        ],
         "autoBuild": true
       }
     ],

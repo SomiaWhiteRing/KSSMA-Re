@@ -22,6 +22,11 @@
 artifact 目录里的临时 `player-save.json`，避免自动测试污染真实游玩进度。静态游戏资料
 不要重新写死进 `server/bootstrap-server.js`。
 
+`server/data/**/*.json` 是运行数据库，不是考古笔记。里面只放当前采用的唯一游戏基线；
+来源、强弱证据、候选值、推断过程和 wiki 链接写进 `work/*-card-*.md`、
+`work/recovered-data/` 或 `docs/reverse-archive/`。server 自检会拒绝把这些文档字段重新
+混进正式数据。
+
 ## 直接游玩
 
 1. 双击 `start-runtime.cmd` 启动 ARM19 模拟器并准备 hosts、显示、存档挂载、音频、包基线和探索补丁。
@@ -43,7 +48,12 @@ cmd /c stop.cmd self-test
 ```
 
 当前可体验内容：主菜单、角色点击互动/BGM/语音、探索秘境列表、楼层列表、进入关卡、
-关卡前进、AP 消耗、进度保存、按顺序开放下一区域、返回秘境列表。探索深层、战斗、妖精、奖励结算还在开发中。
+关卡前进、AP 消耗、进度保存、按顺序开放下一区域、完成演出、AP 不足页、普通升级与
+AP/BC 分配、返回秘境列表。探索已标记为初步完成；探索深层、战斗、妖精、奖励结算先冻结，
+等玩家数据和主界面资料更完整后再推进。
+
+当前开发主线回到主界面：不要重开已验收的主菜单黑屏、face、背景、BGM、语音或点击台词底框；
+下一步应补齐主界面依赖的玩家资料、资源/HUD 同步、入口路由、通知/信息栏和对应 flow 验收。
 
 ## 开发验收入口
 
@@ -130,7 +140,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\work\kssma-preflight.ps1
 powershell -NoProfile -ExecutionPolicy Bypass -File .\work\kssma-runtime.ps1 fast-health
 ```
 
-快检只连接 `127.0.0.1:5583` 并读取 ABI、Android 版本和 boot 状态；它不会截图、
+快检只检查 `emulator-5556` 并读取 ABI、Android 版本和 boot 状态；它不会截图、
 读 logcat、跑 dumpsys、改 hosts 或重启模拟器。正常热状态应在几秒内返回
 `ok=true`。如果失败，再跑：
 

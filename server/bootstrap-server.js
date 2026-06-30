@@ -54,6 +54,7 @@ const PLAYER_DATA_DIR = path.join(DATA_ROOT, "player");
 const SERVER_DATA_DIR = path.join(DATA_ROOT, "server");
 const EXPLORATION_DATA_PATH = path.join(GAME_DATA_DIR, "exploration.json");
 const MAINMENU_DATA_PATH = path.join(GAME_DATA_DIR, "mainmenu.json");
+const PLAYER_LEVEL_EXP_TABLE_PATH = path.join(GAME_DATA_DIR, "player-level-exp-table.json");
 const DEFAULT_SAVE_DATA_PATH = path.join(PLAYER_DATA_DIR, "default-save.json");
 const LOCAL_SAVE_DATA_PATH = path.join(PLAYER_DATA_DIR, "local-save.json");
 const WORLDS_DATA_PATH = path.join(SERVER_DATA_DIR, "worlds.json");
@@ -285,6 +286,7 @@ const CHECK_INSPECTION_OK_XML = [
 const POST_DEVICE_TOKEN_OK_XML = CHECK_INSPECTION_OK_XML;
 const GAME_EXPLORATION_DATA = readRequiredJsonFile(EXPLORATION_DATA_PATH);
 const GAME_MAINMENU_DATA = readRequiredJsonFile(MAINMENU_DATA_PATH);
+const GAME_PLAYER_LEVEL_EXP_TABLE = readRequiredJsonFile(PLAYER_LEVEL_EXP_TABLE_PATH);
 const DEFAULT_PLAYER_SAVE = readRequiredJsonFile(DEFAULT_SAVE_DATA_PATH);
 const DEFAULT_EXPLORATION_BGM = requireDataString(
   GAME_EXPLORATION_DATA.defaultBgm,
@@ -333,14 +335,35 @@ function loadExplorationRegions() {
   });
 }
 
+const FACTION_COUNTRY_ID = Object.freeze({
+  sword: 1,
+  technique: 2,
+  magic: 3,
+});
+const VALID_COUNTRY_IDS = new Set(Object.values(FACTION_COUNTRY_ID));
 const EXPLORATION_REGIONS = loadExplorationRegions();
 const EXPLORATION_FLOORS = EXPLORATION_REGIONS.flatMap((region) => region.floors);
 const EXPLORATION_AREA_XML = createExplorationAreaXml();
 let EXPLORATION_FLOOR_XML;
+let TOWN_LVUP_STATUS_XML;
+let TOWN_POINTSETTING_XML;
 
 function parseInteger(value, fallback) {
   const parsed = Number.parseInt(value, 10);
   return Number.isFinite(parsed) ? parsed : fallback;
+}
+
+function getPlayerLevelRow(level) {
+  const requestedLevel = parseInteger(level, 1);
+  const row = (GAME_PLAYER_LEVEL_EXP_TABLE.levels || []).find((candidate) => candidate.level === requestedLevel);
+  if (!row) {
+    return null;
+  }
+  const nextExp = parseInteger(row.nextExp, 0);
+  if (nextExp <= 0) {
+    return null;
+  }
+  return { ...row, nextExp };
 }
 
 function getExplorationRegion(areaId = 0) {
@@ -623,6 +646,45 @@ function renderGaugeXml(tagName, gauge = {}, intervalFallback, indent = "      "
   ];
 }
 
+function renderUserCardXml(card, indent = "      ") {
+  const serialId = Math.max(parseInteger(card?.serialId ?? card?.serial_id, 0), 0);
+  const masterCardId = Math.max(parseInteger(card?.masterCardId ?? card?.master_card_id, 0), 0);
+  if (!serialId || !masterCardId) {
+    return [];
+  }
+  return [
+    `${indent}<user_card>`,
+    `${indent}  <serial_id>${serialId}</serial_id>`,
+    `${indent}  <master_card_id>${masterCardId}</master_card_id>`,
+    `${indent}  <holography>${Math.max(parseInteger(card.holography, 0), 0)}</holography>`,
+    `${indent}  <hp>${Math.max(parseInteger(card.hp, 0), 0)}</hp>`,
+    `${indent}  <power>${Math.max(parseInteger(card.power, 0), 0)}</power>`,
+    `${indent}  <critical>${Math.max(parseInteger(card.critical, 0), 0)}</critical>`,
+    `${indent}  <lv>${Math.max(parseInteger(card.level ?? card.lv, 1), 1)}</lv>`,
+    `${indent}  <lv_max>${Math.max(parseInteger(card.maxLevel ?? card.lv_max, 1), 1)}</lv_max>`,
+    `${indent}  <exp>${Math.max(parseInteger(card.exp, 0), 0)}</exp>`,
+    `${indent}  <max_exp>${Math.max(parseInteger(card.maxExp ?? card.max_exp, 0), 0)}</max_exp>`,
+    `${indent}  <next_exp>${Math.max(parseInteger(card.nextExp ?? card.next_exp, 0), 0)}</next_exp>`,
+    `${indent}  <exp_diff>${Math.max(parseInteger(card.expDiff ?? card.exp_diff, 0), 0)}</exp_diff>`,
+    `${indent}  <exp_per>${Math.max(parseInteger(card.expPercent ?? card.exp_per, 0), 0)}</exp_per>`,
+    `${indent}  <sale_price>${Math.max(parseInteger(card.salePrice ?? card.sale_price, 0), 0)}</sale_price>`,
+    `${indent}  <material_price>${Math.max(parseInteger(card.materialPrice ?? card.material_price, 0), 0)}</material_price>`,
+    `${indent}  <evolution_price>${Math.max(parseInteger(card.evolutionPrice ?? card.evolution_price, 0), 0)}</evolution_price>`,
+    `${indent}  <plus_limit_count>${Math.max(parseInteger(card.plusLimitCount ?? card.plus_limit_count, 0), 0)}</plus_limit_count>`,
+    `${indent}  <limit_over>${Math.max(parseInteger(card.limitOver ?? card.limit_over, 0), 0)}</limit_over>`,
+    `${indent}</user_card>`,
+  ];
+}
+
+function renderOwnerCardListXml(cards = {}, indent = "    ") {
+  const instances = Array.isArray(cards.instances) ? cards.instances : [];
+  return [
+    `${indent}<owner_card_list>`,
+    ...instances.flatMap((card) => renderUserCardXml(card, `${indent}  `)),
+    `${indent}</owner_card_list>`,
+  ];
+}
+
 function renderYourDataXml(playerSave, indent = "    ") {
   if (!playerSave) {
     return [];
@@ -635,15 +697,12 @@ function renderYourDataXml(playerSave, indent = "    ") {
   const progression = save.progression || {};
   const abilityPoints = progression.abilityPoints || {};
   const items = save.items || {};
-  const factionCountryId = {
-    sword: 1,
-    technique: 2,
-    magic: 3,
-  };
+  const countryId = getPlayerCountryId(save);
   return [
     `${indent}<your_data>`,
     `${indent}  <name>${escapeXmlText(profile.name || "Arthur")}</name>`,
     `${indent}  <leader_serial_id>${Math.max(parseInteger(profile.leaderSerialId, 0), 0)}</leader_serial_id>`,
+    ...renderOwnerCardListXml(cards, `${indent}  `),
     `${indent}  <town_level>${Math.max(parseInteger(profile.townLevel, 1), 1)}</town_level>`,
     `${indent}  <percentage>${Math.max(parseInteger(profile.percentage, 0), 0)}</percentage>`,
     `${indent}  <gold>${Math.max(parseInteger(currencies.gold, 0), 0)}</gold>`,
@@ -654,12 +713,19 @@ function renderYourDataXml(playerSave, indent = "    ") {
     `${indent}  <max_card_num>${Math.max(parseInteger(cards.max, 0), 0)}</max_card_num>`,
     `${indent}  <free_ap_bc_point>${Math.max(parseInteger(abilityPoints.unspent, 0), 0)}</free_ap_bc_point>`,
     `${indent}  <friendship_point>${Math.max(parseInteger(currencies.friendshipPoint, 0), 0)}</friendship_point>`,
-    `${indent}  <country_id>${Math.max(parseInteger(profile.countryId, factionCountryId[profile.faction] || 1), 1)}</country_id>`,
+    `${indent}  <country_id>${countryId}</country_id>`,
     `${indent}  <ex_gauge>${Math.max(parseInteger(resources.super?.current, 0), 0)}</ex_gauge>`,
     `${indent}  <gacha_ticket>${Math.max(parseInteger(items.gachaTicket, 0), 0)}</gacha_ticket>`,
     `${indent}  <deck_rank>${Math.max(parseInteger(cards.deckRank, 0), 0)}</deck_rank>`,
     `${indent}</your_data>`,
   ];
+}
+
+function getPlayerCountryId(playerSave) {
+  const save = mergeJsonObject(createDefaultPlayerSave(), playerSave || {});
+  const profile = save.profile || {};
+  const countryId = parseInteger(profile.countryId, FACTION_COUNTRY_ID[profile.faction] || 1);
+  return VALID_COUNTRY_IDS.has(countryId) ? countryId : 1;
 }
 
 function replaceHeaderYourData(xml, playerSave) {
@@ -708,12 +774,19 @@ function createExplorationGetFloorXml(areaId = 0, floorId = 2, movesDone = 0, pl
 ].join("");
 }
 const EXPLORATION_GET_FLOOR_XML = createExplorationGetFloorXml();
-function createExplorationExploreXml(progress = 10, rewards = getExplorationStepRewards(EXPLORATION_FLOORS[0]), playerSave = null) {
+function createExplorationExploreXml(
+  progress = 10,
+  rewards = getExplorationStepRewards(EXPLORATION_FLOORS[0]),
+  playerSave = null,
+  levelResult = null
+) {
   const safeProgress = Math.min(Math.max(parseInteger(progress, 10), 0), 100);
   const gold = Math.max(parseInteger(rewards.gold, 0), 0);
   const getExp = Math.max(parseInteger(rewards.getExp, 0), 0);
   const yourDataRows = renderYourDataXml(playerSave);
   const nextExp = getProfileNextExp(playerSave);
+  const lvup = levelResult?.levelUp ? 1 : 0;
+  const isLimit = levelResult?.isLimit ? 1 : 0;
 
   return [
     '<?xml version="1.0" encoding="UTF-8"?>',
@@ -730,6 +803,8 @@ function createExplorationExploreXml(progress = 10, rewards = getExplorationStep
     `      <gold>${gold}</gold>`,
     `      <get_exp>${getExp}</get_exp>`,
     `      <next_exp>${nextExp}</next_exp>`,
+    `      <lvup>${lvup}</lvup>`,
+    `      <is_limit>${isLimit}</is_limit>`,
     "      <next_floor>0</next_floor>",
     "      <friendship_point>0</friendship_point>",
     "      <recover>0</recover>",
@@ -758,6 +833,42 @@ function createExplorationApFailXml() {
   ].join("");
 }
 
+function createTownLvupStatusXml(playerSave = createDefaultPlayerSave()) {
+  // ponytail: route 0x5a is a header-only scene entry until the OK/allocation route proves a body schema.
+  return [
+    '<?xml version="1.0" encoding="UTF-8"?>',
+    "<response>",
+    "  <header>",
+    "    <error><code>0</code></error>",
+    "    <session_id>local-town</session_id>",
+    ...renderYourDataXml(playerSave),
+    "    <next_scene>84100</next_scene>",
+    "  </header>",
+    "  <body></body>",
+    "</response>",
+  ].join("");
+}
+
+TOWN_LVUP_STATUS_XML = createTownLvupStatusXml();
+
+function createTownPointsettingXml(playerSave = createDefaultPlayerSave()) {
+  // ponytail: route 0x5b only needs to persist AP/BC allocation and return to town for the current level-up flow.
+  return [
+    '<?xml version="1.0" encoding="UTF-8"?>',
+    "<response>",
+    "  <header>",
+    "    <error><code>0</code></error>",
+    "    <session_id>local-town</session_id>",
+    ...renderYourDataXml(playerSave),
+    "    <next_scene>2100</next_scene>",
+    "  </header>",
+    "  <body>",
+    ...renderMainmenuFields(playerSave),
+    "  </body>",
+    "</response>",
+  ].join("");
+}
+
 function createExplorationLockedXml() {
   return [
     '<?xml version="1.0" encoding="UTF-8"?>',
@@ -775,34 +886,95 @@ const MAINMENU_BGFILE = requireDataString(GAME_MAINMENU_DATA.background?.current
 const MAINMENU_PREVIOUS_BGFILE = GAME_MAINMENU_DATA.background?.previous || MAINMENU_BGFILE;
 const MAINMENU_INFORMATION = GAME_MAINMENU_DATA.information || {};
 const MAINMENU_MESSAGE = MAINMENU_INFORMATION.message || {};
-const MAINMENU_FIELDS = [
-  "    <mainmenu>",
-  `      <current_bgfile>${MAINMENU_BGFILE}</current_bgfile>`,
-  `      <previous_bgfile>${MAINMENU_PREVIOUS_BGFILE}</previous_bgfile>`,
-  "      <infomation>",
-  `        <fairy_pose>${parseInteger(MAINMENU_INFORMATION.fairyPose, 2)}</fairy_pose>`,
-  `        <fairy_face>${parseInteger(MAINMENU_INFORMATION.fairyFace, 5)}</fairy_face>`,
-  "        <message>",
-  `          <text>${escapeXmlText(requireDataString(MAINMENU_MESSAGE.text, "game.mainmenu.information.message.text"))}</text>`,
-  `          <color>${MAINMENU_MESSAGE.color || "0xFFFFFF"}</color>`,
-  `          <size>${parseInteger(MAINMENU_MESSAGE.size, 20)}</size>`,
-  "        </message>",
-  "      </infomation>",
-  "    </mainmenu>",
-];
-const MAINMENU_UPDATE_XML = [
-  '<?xml version="1.0" encoding="UTF-8"?>',
-  "<response>",
-  "  <header>",
-  "    <error><code>0</code></error>",
-  "    <session_id>local-mainmenu</session_id>",
-  "    <next_scene>2100</next_scene>",
-  "  </header>",
-  "  <body>",
-  ...MAINMENU_FIELDS,
-  "  </body>",
-  "</response>",
-].join("");
+const MAINMENU_BY_COUNTRY = MAINMENU_INFORMATION.byCountry || {};
+
+function getMainmenuInformationForPlayer(playerSave = createDefaultPlayerSave()) {
+  const countryId = getPlayerCountryId(playerSave);
+  const countryInformation = MAINMENU_BY_COUNTRY[String(countryId)] || {};
+  const fallbackPose = parseInteger(MAINMENU_INFORMATION.fairyPose, 2);
+  const fallbackFace = parseInteger(MAINMENU_INFORMATION.fairyFace, 5);
+  return {
+    countryId,
+    fairyCharacterId: Math.max(parseInteger(countryInformation.fairyCharacterId, MAINMENU_INFORMATION.fairyCharacterId || 0), 0),
+    fairyPose: Math.max(parseInteger(countryInformation.fairyPose, fallbackPose), 0),
+    fairyFace: Math.max(parseInteger(countryInformation.fairyFace, fallbackFace), 0),
+  };
+}
+
+function renderMainmenuFields(playerSave = createDefaultPlayerSave(), indent = "    ") {
+  const information = getMainmenuInformationForPlayer(playerSave);
+  return [
+    `${indent}<mainmenu>`,
+    `${indent}  <current_bgfile>${MAINMENU_BGFILE}</current_bgfile>`,
+    `${indent}  <previous_bgfile>${MAINMENU_PREVIOUS_BGFILE}</previous_bgfile>`,
+    `${indent}  <infomation>`,
+    `${indent}    <fairy_pose>${information.fairyPose}</fairy_pose>`,
+    `${indent}    <fairy_face>${information.fairyFace}</fairy_face>`,
+    `${indent}    <message>`,
+    `${indent}      <text>${escapeXmlText(requireDataString(MAINMENU_MESSAGE.text, "game.mainmenu.information.message.text"))}</text>`,
+    `${indent}      <color>${MAINMENU_MESSAGE.color || "0xFFFFFF"}</color>`,
+    `${indent}      <size>${parseInteger(MAINMENU_MESSAGE.size, 20)}</size>`,
+    `${indent}    </message>`,
+    `${indent}  </infomation>`,
+    `${indent}</mainmenu>`,
+  ];
+}
+
+function createMainmenuUpdateXml(playerSave = createDefaultPlayerSave()) {
+  return [
+    '<?xml version="1.0" encoding="UTF-8"?>',
+    "<response>",
+    "  <header>",
+    "    <error><code>0</code></error>",
+    "    <session_id>local-mainmenu</session_id>",
+    ...renderYourDataXml(playerSave),
+    "    <next_scene>2100</next_scene>",
+    "  </header>",
+    "  <body>",
+    ...renderMainmenuFields(playerSave),
+    "  </body>",
+    "</response>",
+  ].join("");
+}
+
+function createSceneForwardXml(nextScene, playerSave = createDefaultPlayerSave(), sessionId = "local-mainmenu-route") {
+  return [
+    '<?xml version="1.0" encoding="UTF-8"?>',
+    "<response>",
+    "  <header>",
+    "    <error><code>0</code></error>",
+    `    <session_id>${sessionId}</session_id>`,
+    ...renderYourDataXml(playerSave),
+    `    <next_scene>${Math.max(parseInteger(nextScene, 2100), 0)}</next_scene>`,
+    "  </header>",
+    "  <body></body>",
+    "</response>",
+  ].join("");
+}
+
+function createGachaSelectSkeletonXml(playerSave = createDefaultPlayerSave()) {
+  return [
+    '<?xml version="1.0" encoding="UTF-8"?>',
+    "<response>",
+    "  <header>",
+    "    <error><code>0</code></error>",
+    "    <session_id>local-gacha</session_id>",
+    ...renderYourDataXml(playerSave),
+    "    <next_scene>9100</next_scene>",
+    "  </header>",
+    "  <body>",
+    "    <gacha_select>",
+    "      <xml_contents>",
+    "        <scroll_height>0</scroll_height>",
+    "      </xml_contents>",
+    "    </gacha_select>",
+    "  </body>",
+    "</response>",
+  ].join("");
+}
+
+const MAINMENU_UPDATE_XML = createMainmenuUpdateXml();
+TOWN_POINTSETTING_XML = createTownPointsettingXml();
 const LOGIN_TUTORIAL_XML = readBundledXml("local_forward_tutorial.xml", CHECK_INSPECTION_OK_XML);
 const WEB_SCENETO_LOCATION = "sceneto://2100";
 const WEB_STUB_HTML = [
@@ -852,7 +1024,72 @@ function readContentFile(relativePath) {
 }
 
 const LOGIN_OK_XML = readBundledXml("local_battle_player.xml", CHECK_INSPECTION_OK_XML);
-const LOGIN_MAINMENU_XML = withMainmenuBg(LOGIN_OK_XML);
+const LOGIN_MAINMENU_XML = createLoginMainmenuXml();
+const MAINMENU_ROUTE_STUBS = {
+  "/connect/app/gacha/select/getcontents": { command: "gacha", nextScene: 9100 },
+  "/connect/app/gacha/comp_sheet": { command: "gacha_comp_sheet", nextScene: 9500, sample: "local_gachacomp.xml" },
+  "/connect/app/gacha/getproductinfo": { command: "gacha_productinfo", nextScene: 8200 },
+  "/connect/app/gacha/buy": { command: "gacha_buy", nextScene: 9200 },
+  "/connect/app/battle/area": { command: "battle", nextScene: 5100, sample: "local_battle_area.xml" },
+  "/connect/app/battle/playerlist": { command: "battle", nextScene: 5200 },
+  "/connect/app/battle/battle_userlist": { command: "battle_userlist", nextScene: 5200, sample: "local_users_event_list.xml" },
+  "/connect/app/battle/battle_userlist_first": { command: "battle_userlist", nextScene: 5200, sample: "local_users_event_list.xml" },
+  "/connect/app/battle/battle_userlist_second": { command: "battle_userlist", nextScene: 5200, sample: "local_users_event_list.xml" },
+  "/connect/app/battle/competition_userlist": { command: "battle_userlist", nextScene: 5300, sample: "local_users_event_list.xml" },
+  "/connect/app/battle/shooting_userlist": { command: "battle_userlist", nextScene: 5300, sample: "local_users_event_list.xml" },
+  "/connect/app/menu/menulist": { command: "menu", nextScene: 20100 },
+  "/connect/app/menu/rewardbox": { command: "reward", nextScene: 21100 },
+  "/connect/app/menu/get_rewards": { command: "get_rewards", nextScene: 90200 },
+  "/connect/app/menu/noticelist": { command: "notice", nextScene: 20100 },
+  "/connect/app/menu/other_list": { command: "other_list", nextScene: 20100 },
+  "/connect/app/menu/friendlist": { command: "friends", nextScene: 22100 },
+  "/connect/app/menu/menu_friend_notification": { command: "friend_notice", nextScene: 22200 },
+  "/connect/app/menu/friend_notice": { command: "friend_notice", nextScene: 22200 },
+  "/connect/app/menu/friend_appstate": { command: "friend_appstate", nextScene: 29300 },
+  "/connect/app/menu/player_search": { command: "friend_search", nextScene: 22300 },
+  "/connect/app/menu/cardcollection": { command: "c_collection", nextScene: 23100 },
+  "/connect/app/menu/recycle/recycle": { command: "recycle", nextScene: 24100 },
+  "/connect/app/menu/recycle/recycle_buy": { command: "recycle_buy", nextScene: 24200 },
+  "/connect/app/menu/recycle/recycle_select": { command: "recycle_select", nextScene: 24200 },
+  "/connect/app/menu/battlehistory": { command: "b_history", nextScene: 25100 },
+  "/connect/app/menu/playerinfo": { command: "p_info", nextScene: 26100 },
+  "/connect/app/menu/goodlist": { command: "goodlist", nextScene: 26700 },
+  "/connect/app/menu/ranking/ranking_arena": { command: "ranking", nextScene: 27100 },
+  "/connect/app/menu/ranking/rankingevent": { command: "ranking", nextScene: 27100 },
+  "/connect/app/ranking/ranking": { command: "ranking", nextScene: 27100 },
+  "/connect/app/ranking/ranking_next": { command: "ranking_next", nextScene: 27100 },
+  "/connect/app/ranking/ranking_previous": { command: "ranking_previous", nextScene: 27100 },
+  "/connect/app/menu/gettownevent": { command: "town_event", nextScene: 28100 },
+  "/connect/app/menu/towneventlist": { command: "town_event", nextScene: 28100 },
+  "/connect/app/menu/fairyselect": { command: "fairy", nextScene: 29200 },
+  "/connect/app/menu/fairyrewards": { command: "fairy_rewards", nextScene: 29200 },
+  "/connect/app/friend/add_friend": { command: "friend_add", nextScene: 17000 },
+  "/connect/app/friend/approve_friend": { command: "friend_approve", nextScene: 17000 },
+  "/connect/app/friend/cancel_apply": { command: "friend_cancel_apply", nextScene: 17000 },
+  "/connect/app/friend/like_user": { command: "friend_like", nextScene: 17000 },
+  "/connect/app/friend/refuse_friend": { command: "friend_refuse", nextScene: 17000 },
+  "/connect/app/friend/remove_friend": { command: "friend_remove", nextScene: 17000 },
+  "/connect/app/item/havelist": { command: "item", nextScene: 30100 },
+  "/connect/app/item/use": { command: "item_use", nextScene: 30200 },
+  "/connect/app/item/use_fakecard": { command: "item_use_fakecard", nextScene: 30200 },
+  "/connect/app/menu/haveparts": { command: "partslist", nextScene: 31100 },
+  "/connect/app/menu/invite_friend": { command: "invide", nextScene: 32100 },
+  "/connect/app/menu/chksnd": { command: "option", nextScene: 33000 },
+  "/connect/app/story/getoutline": { command: "story", nextScene: 3100 },
+  "/connect/app/story/battle": { command: "story_battle", nextScene: 3400 },
+  "/connect/app/shop/shop": { command: "shop", nextScene: 8100 },
+  "/connect/app/shop/buy": { command: "shop_buy", nextScene: 8200 },
+  "/connect/app/shop/use": { command: "shop_use", nextScene: 8100 },
+  "/connect/app/menu/productlist": { command: "productlist", nextScene: 8400 },
+  "/connect/app/menu/buyproduct": { command: "buyproduct", nextScene: 8400 },
+  "/connect/app/trunk/sell": { command: "compound", nextScene: 7500 },
+  "/connect/app/compound/evolution/getinfo": { command: "compound_evolution", nextScene: 7100 },
+  "/connect/app/compound/buildup/getinfo": { command: "compound_buildup", nextScene: 7300 },
+  "/connect/app/compound/evolution/compound": { command: "compound_evolution_commit", nextScene: 7150 },
+  "/connect/app/compound/buildup/compound": { command: "compound_buildup_commit", nextScene: 7350 },
+  "/connect/app/card/exchange": { command: "card_exchange", nextScene: 7200 },
+  "/connect/app/cardselect/savedeckcard": { command: "save_deck", nextScene: 83200 },
+};
 const MASTERDATA_SAMPLES = Object.fromEntries(
   Object.entries(MASTERDATA_ROUTE_FILES).map(([route, relativePath]) => [
     route,
@@ -863,14 +1100,18 @@ const MASTERDATA_SAMPLES = Object.fromEntries(
   ])
 );
 
-function withMainmenuBg(xml) {
+function withMainmenuBg(xml, playerSave = createDefaultPlayerSave()) {
   const body = [
     "<body>",
-    ...MAINMENU_FIELDS,
+    ...renderMainmenuFields(playerSave),
     "</body>",
   ].join("");
   // ponytail: login jumps straight to scene 2100, so seed the layout-bound town model fields there too.
   return suppressLoginUpdates(xml.replace(/<body>\s*<\/body>/, body));
+}
+
+function createLoginMainmenuXml(playerSave = createDefaultPlayerSave()) {
+  return replaceHeaderYourData(withMainmenuBg(LOGIN_OK_XML, playerSave), playerSave);
 }
 
 function suppressLoginUpdates(xml) {
@@ -880,14 +1121,14 @@ function suppressLoginUpdates(xml) {
     .replace(/<revision>\d+<\/revision>/g, "<revision>0</revision>");
 }
 
-function getLoginOkXml() {
+function getLoginOkXml(playerSave = createDefaultPlayerSave()) {
   // ponytail: default to the safe stub; opt into native scene payloads only when debugging that path.
   const loginResponse = (process.env.LOGIN_RESPONSE || "").trim().toLowerCase();
   if (loginResponse === "tutorial") {
     return LOGIN_TUTORIAL_XML;
   }
   if (loginResponse === "sample") {
-    return LOGIN_MAINMENU_XML;
+    return createLoginMainmenuXml(playerSave);
   }
   return CHECK_INSPECTION_OK_XML;
 }
@@ -896,10 +1137,26 @@ function getLoginXmlSource(loginXml) {
   if (loginXml === LOGIN_TUTORIAL_XML) {
     return "assets/bundle/local_forward_tutorial.xml";
   }
-  if (loginXml === LOGIN_MAINMENU_XML) {
+  if (loginXml === LOGIN_MAINMENU_XML || /<mainmenu>/.test(loginXml)) {
     return "assets/bundle/local_battle_player.xml + mainmenu bg";
   }
   return "minimal";
+}
+
+function createMainmenuRouteXml(routePath, playerSave = createDefaultPlayerSave()) {
+  const route = MAINMENU_ROUTE_STUBS[routePath];
+  if (!route) {
+    return null;
+  }
+  if (route.command === "gacha") {
+    return createGachaSelectSkeletonXml(playerSave);
+  }
+  if (route.sample) {
+    const fallback = createSceneForwardXml(route.nextScene, playerSave, `local-${route.command}`);
+    return replaceHeaderYourData(suppressLoginUpdates(readBundledXml(route.sample, fallback)), playerSave);
+  }
+  // ponytail: these are route skeletons for page entry/back testing; page-specific lists come after a flow proves the next frontier.
+  return createSceneForwardXml(route.nextScene, playerSave, `local-${route.command}`);
 }
 
 function getExplorationFloorKey(params) {
@@ -937,12 +1194,120 @@ function ensureExplorationSaveShape(playerSave) {
   playerSave.profile = playerSave.profile || {};
   playerSave.resources = playerSave.resources || {};
   playerSave.resources.ap = playerSave.resources.ap || {};
+  playerSave.resources.bc = playerSave.resources.bc || {};
+  playerSave.progression = playerSave.progression || {};
+  playerSave.progression.abilityPoints = playerSave.progression.abilityPoints || {};
   playerSave.currencies = playerSave.currencies || {};
   playerSave.exploration = playerSave.exploration || {};
   playerSave.exploration.movesByFloor = playerSave.exploration.movesByFloor || {};
   playerSave.exploration.regions = playerSave.exploration.regions || {};
   playerSave.exploration.floors = playerSave.exploration.floors || {};
   playerSave.stats = playerSave.stats || {};
+}
+
+function getLevelUpPointGrant(newLevel, playerSave) {
+  const rules = playerSave.progression?.levelUpRules || {};
+  const pointsUntilLevel50 = Math.max(parseInteger(rules.pointsUntilLevel50, 3), 0);
+  const pointsAfterLevel50 = Math.max(parseInteger(rules.pointsAfterLevel50, 2), 0);
+  return newLevel >= 50 ? pointsAfterLevel50 : pointsUntilLevel50;
+}
+
+function applyTownPointsetting(playerSave, params = {}) {
+  ensureExplorationSaveShape(playerSave);
+  const abilityPoints = playerSave.progression.abilityPoints;
+  const available = Math.max(parseInteger(abilityPoints.unspent, 0), 0);
+  const requestedAp = Math.max(parseInteger(params.inc_ap ?? params.ap ?? 0, 0), 0);
+  const requestedBc = Math.max(parseInteger(params.inc_bc ?? params.bc ?? 0, 0), 0);
+  const totalRequested = requestedAp + requestedBc;
+  const totalAllocated = Math.min(totalRequested, available);
+  const apAllocated = Math.min(requestedAp, totalAllocated);
+  const bcAllocated = Math.min(requestedBc, totalAllocated - apAllocated);
+
+  playerSave.resources.ap.max = Math.max(parseInteger(playerSave.resources.ap.max, 0) + apAllocated, 0);
+  playerSave.resources.ap.current = Math.max(parseInteger(playerSave.resources.ap.current, 0) + apAllocated, 0);
+  playerSave.resources.bc.max = Math.max(parseInteger(playerSave.resources.bc.max, 0) + bcAllocated, 0);
+  playerSave.resources.bc.current = Math.max(parseInteger(playerSave.resources.bc.current, 0) + bcAllocated, 0);
+  abilityPoints.unspent = Math.max(available - apAllocated - bcAllocated, 0);
+  abilityPoints.apAllocated = Math.max(parseInteger(abilityPoints.apAllocated, 0) + apAllocated, 0);
+  abilityPoints.bcAllocated = Math.max(parseInteger(abilityPoints.bcAllocated, 0) + bcAllocated, 0);
+
+  return {
+    requestedAp,
+    requestedBc,
+    apAllocated,
+    bcAllocated,
+    remainingAbilityPoints: abilityPoints.unspent,
+  };
+}
+
+function applyExplorationExperience(playerSave, gainedExp) {
+  const profile = playerSave.profile;
+  const beforeLevel = Math.max(parseInteger(profile.level, 1), 1);
+  const maxLevel = Math.max(parseInteger(profile.maxLevel, beforeLevel), beforeLevel);
+  const beforeExp = Math.max(parseInteger(profile.exp, 0), 0);
+  const gained = Math.max(parseInteger(gainedExp, 0), 0);
+  const currentRow = getPlayerLevelRow(beforeLevel);
+  const currentThreshold = currentRow?.nextExp || 0;
+  const afterExp = beforeExp + gained;
+
+  profile.exp = afterExp;
+  if (beforeLevel >= maxLevel) {
+    profile.percentage = 100;
+    return {
+      levelUp: false,
+      isLimit: true,
+      beforeLevel,
+      afterLevel: beforeLevel,
+      beforeExp,
+      afterExp,
+      nextExp: Math.max(parseInteger(profile.nextExp, 0), 0),
+      abilityPointsGranted: 0,
+    };
+  }
+
+  if (!currentThreshold || afterExp < currentThreshold) {
+    profile.nextExp = currentThreshold || Math.max(parseInteger(profile.nextExp, 0), 0);
+    profile.percentage = currentThreshold ? Math.floor((afterExp * 100) / currentThreshold) : Math.max(parseInteger(profile.percentage, 0), 0);
+    return {
+      levelUp: false,
+      isLimit: false,
+      beforeLevel,
+      afterLevel: beforeLevel,
+      beforeExp,
+      afterExp,
+      nextExp: profile.nextExp,
+      abilityPointsGranted: 0,
+    };
+  }
+
+  // ponytail: one exploration step is tiny; add a multi-level loop only after a full trusted table exists.
+  const afterLevel = beforeLevel + 1;
+  const carryExp = afterExp - currentThreshold;
+  const nextRow = getPlayerLevelRow(afterLevel);
+  const nextThreshold = nextRow?.nextExp || 0;
+  const isLimit = afterLevel >= maxLevel;
+  const abilityPoints = playerSave.progression.abilityPoints;
+  const granted = getLevelUpPointGrant(afterLevel, playerSave);
+
+  profile.level = afterLevel;
+  profile.exp = carryExp;
+  profile.nextExp = nextThreshold;
+  profile.percentage = nextThreshold ? Math.floor((carryExp * 100) / nextThreshold) : 0;
+  playerSave.resources.ap.current = Math.max(parseInteger(playerSave.resources.ap.max, playerSave.resources.ap.current), 0);
+  playerSave.resources.bc.current = Math.max(parseInteger(playerSave.resources.bc.max, playerSave.resources.bc.current), 0);
+  abilityPoints.unspent = Math.max(parseInteger(abilityPoints.unspent, 0) + granted, 0);
+  abilityPoints.fromLevels = Math.max(parseInteger(abilityPoints.fromLevels, 0) + granted, 0);
+
+  return {
+    levelUp: true,
+    isLimit,
+    beforeLevel,
+    afterLevel,
+    beforeExp,
+    afterExp: carryExp,
+    nextExp: nextThreshold,
+    abilityPointsGranted: granted,
+  };
 }
 
 function applyExplorationSeed(moves) {
@@ -985,7 +1350,7 @@ function updateExplorationSaveAfterMove(playerSave, floor, moves) {
   const rewards = getExplorationStepRewards(floor);
 
   playerSave.resources.ap.current = Math.max(parseInteger(playerSave.resources.ap.current, 0) - floor.cost, 0);
-  playerSave.profile.exp = Math.max(parseInteger(playerSave.profile.exp, 0) + rewards.getExp, 0);
+  const levelResult = applyExplorationExperience(playerSave, rewards.getExp);
   playerSave.currencies.gold = Math.max(parseInteger(playerSave.currencies.gold, 0) + rewards.gold, 0);
 
   playerSave.exploration.currentRegionId = floor.regionId;
@@ -1041,6 +1406,7 @@ function updateExplorationSaveAfterMove(playerSave, floor, moves) {
   if (progress >= 100 && !floorSave.cleared) {
     playerSave.stats.explorationClears = parseInteger(playerSave.stats.explorationClears, 0) + 1;
   }
+  return levelResult;
 }
 
 function unlockExplorationProgressFromMoves(playerSave, moves) {
@@ -1217,15 +1583,15 @@ function createServer() {
       if (req.method === "POST" && url.pathname === "/connect/app/login") {
         // ponytail: keep the login sample that gets furthest into native bootstrap; add the real payload only when the next blocker proves we need it.
         const playerSave = readPlayerSave(playerSavePath);
-        const baseLoginXml = getLoginOkXml();
-        const loginXml = replaceHeaderYourData(baseLoginXml, playerSave);
+        const loginXml = getLoginOkXml(playerSave);
         const encrypted = encryptAes128Ecb(loginXml, connectAppKey);
         logRequest("connect_app_response", {
           path: url.pathname,
           mode: "aes-128-ecb",
           key: connectAppKey,
           bytes: encrypted.length,
-          source: getLoginXmlSource(baseLoginXml),
+          source: getLoginXmlSource(loginXml),
+          mainmenu: getMainmenuInformationForPlayer(playerSave),
         });
         sendBinary(res, 200, encrypted);
         return;
@@ -1234,7 +1600,7 @@ function createServer() {
       if (req.method === "POST" && url.pathname === "/connect/app/mainmenu/update") {
         // ponytail: one known-good mainbg is enough to un-black the town background; real rotation can wait for event data.
         const playerSave = readPlayerSave(playerSavePath);
-        const xml = replaceHeaderYourData(MAINMENU_UPDATE_XML, playerSave);
+        const xml = createMainmenuUpdateXml(playerSave);
         const encrypted = encryptAes128Ecb(xml, connectAppKey);
         logRequest("connect_app_response", {
           path: url.pathname,
@@ -1242,6 +1608,7 @@ function createServer() {
           key: connectAppKey,
           bytes: encrypted.length,
           source: "minimal mainmenu update",
+          mainmenu: getMainmenuInformationForPlayer(playerSave),
         });
         sendBinary(res, 200, encrypted);
         return;
@@ -1250,7 +1617,7 @@ function createServer() {
       if (req.method === "POST" && url.pathname === "/connect/app/mainmenu") {
         // ponytail: the exploration return path only needs the same mainmenu payload as update; split behavior later if evidence demands it.
         const playerSave = readPlayerSave(playerSavePath);
-        const xml = replaceHeaderYourData(MAINMENU_UPDATE_XML, playerSave);
+        const xml = createMainmenuUpdateXml(playerSave);
         const encrypted = encryptAes128Ecb(xml, connectAppKey);
         logRequest("connect_app_response", {
           path: url.pathname,
@@ -1258,6 +1625,7 @@ function createServer() {
           key: connectAppKey,
           bytes: encrypted.length,
           source: "minimal mainmenu",
+          mainmenu: getMainmenuInformationForPlayer(playerSave),
         });
         sendBinary(res, 200, encrypted);
         return;
@@ -1403,11 +1771,11 @@ function createServer() {
         }
         const movesDone = clampMoveCount((moves.get(floorKey) || 0) + 1, floor);
         moves.set(floorKey, movesDone);
-        updateExplorationSaveAfterMove(playerSave, floor, moves);
+        const levelResult = updateExplorationSaveAfterMove(playerSave, floor, moves);
         saveExplorationMoves(playerSave, playerSavePath, moves);
         const progress = getExplorationProgress(floor, movesDone);
         const rewards = getExplorationStepRewards(floor);
-        const encrypted = encryptAes128Ecb(createExplorationExploreXml(progress, rewards, playerSave), connectAppKey);
+        const encrypted = encryptAes128Ecb(createExplorationExploreXml(progress, rewards, playerSave, levelResult), connectAppKey);
         logRequest("connect_app_response", {
           path: url.pathname,
           mode: "aes-128-ecb",
@@ -1426,8 +1794,84 @@ function createServer() {
           progress,
           gold: rewards.gold,
           getExp: rewards.getExp,
+          levelUp: !!levelResult?.levelUp,
+          isLimit: !!levelResult?.isLimit,
+          beforeLevel: levelResult?.beforeLevel || parseInteger(playerSave.profile?.level, 1),
+          level: parseInteger(playerSave.profile?.level, 1),
+          profileExp: parseInteger(playerSave.profile?.exp, 0),
+          nextExp: parseInteger(playerSave.profile?.nextExp, 0),
+          abilityPoints: parseInteger(playerSave.progression?.abilityPoints?.unspent, 0),
+          abilityPointsGranted: levelResult?.abilityPointsGranted || 0,
           saved: true,
           savePath: getLogSafePath(playerSavePath),
+        });
+        sendBinary(res, 200, encrypted);
+        return;
+      }
+
+      if (req.method === "POST" && url.pathname === "/connect/app/town/lvup_status") {
+        const playerSave = readPlayerSave(playerSavePath);
+        const xml = createTownLvupStatusXml(playerSave);
+        const encrypted = encryptAes128Ecb(xml, connectAppKey);
+        logRequest("connect_app_response", {
+          path: url.pathname,
+          mode: "aes-128-ecb",
+          key: connectAppKey,
+          bytes: encrypted.length,
+          source: "minimal town lvup status",
+          nextScene: 84100,
+          level: parseInteger(playerSave.profile?.level, 1),
+          profileExp: parseInteger(playerSave.profile?.exp, 0),
+          nextExp: parseInteger(playerSave.profile?.nextExp, 0),
+          apCurrent: parseInteger(playerSave.resources?.ap?.current, 0),
+          apMax: parseInteger(playerSave.resources?.ap?.max, 0),
+          bcCurrent: parseInteger(playerSave.resources?.bc?.current, 0),
+          bcMax: parseInteger(playerSave.resources?.bc?.max, 0),
+          abilityPoints: parseInteger(playerSave.progression?.abilityPoints?.unspent, 0),
+          savePath: getLogSafePath(playerSavePath),
+        });
+        sendBinary(res, 200, encrypted);
+        return;
+      }
+
+      if (req.method === "POST" && url.pathname === "/connect/app/town/pointsetting") {
+        const playerSave = readPlayerSave(playerSavePath);
+        const allocation = applyTownPointsetting(playerSave, params.decrypted);
+        writeJsonFileAtomic(playerSavePath, playerSave);
+        const xml = createTownPointsettingXml(playerSave);
+        const encrypted = encryptAes128Ecb(xml, connectAppKey);
+        logRequest("connect_app_response", {
+          path: url.pathname,
+          mode: "aes-128-ecb",
+          key: connectAppKey,
+          bytes: encrypted.length,
+          source: "minimal town pointsetting",
+          nextScene: 2100,
+          ...allocation,
+          apCurrent: parseInteger(playerSave.resources?.ap?.current, 0),
+          apMax: parseInteger(playerSave.resources?.ap?.max, 0),
+          bcCurrent: parseInteger(playerSave.resources?.bc?.current, 0),
+          bcMax: parseInteger(playerSave.resources?.bc?.max, 0),
+          abilityPoints: parseInteger(playerSave.progression?.abilityPoints?.unspent, 0),
+          saved: true,
+          savePath: getLogSafePath(playerSavePath),
+        });
+        sendBinary(res, 200, encrypted);
+        return;
+      }
+
+      const mainmenuRouteXml = req.method === "POST" ? createMainmenuRouteXml(url.pathname, readPlayerSave(playerSavePath)) : null;
+      if (mainmenuRouteXml) {
+        const route = MAINMENU_ROUTE_STUBS[url.pathname];
+        const encrypted = encryptAes128Ecb(mainmenuRouteXml, connectAppKey);
+        logRequest("connect_app_response", {
+          path: url.pathname,
+          mode: "aes-128-ecb",
+          key: connectAppKey,
+          bytes: encrypted.length,
+          source: route.sample ? `assets/bundle/${route.sample}` : "mainmenu route skeleton",
+          command: route.command,
+          nextScene: route.nextScene,
         });
         sendBinary(res, 200, encrypted);
         return;
@@ -1454,6 +1898,11 @@ function createServer() {
         return;
       }
 
+      logRequest("connect_app_response", {
+        path: url.pathname,
+        status: 501,
+        source: "connect/app not implemented yet",
+      });
       return sendText(res, 501, "connect/app not implemented yet\n");
     }
 
@@ -1499,6 +1948,13 @@ module.exports = {
   createExplorationFloorXml,
   createExplorationGetFloorXml,
   createExplorationLockedXml,
+  createGachaSelectSkeletonXml,
+  createMainmenuUpdateXml,
+  createMainmenuRouteXml,
+  createLoginMainmenuXml,
+  createTownLvupStatusXml,
+  createTownPointsettingXml,
+  getMainmenuInformationForPlayer,
   getLoginOkXml,
   getLoginXmlSource,
   parseConnectAppBody,
@@ -1508,12 +1964,16 @@ module.exports = {
   EXPLORATION_FLOOR_XML,
   EXPLORATION_GET_FLOOR_XML,
   EXPLORATION_EXPLORE_XML,
+  TOWN_LVUP_STATUS_XML,
+  TOWN_POINTSETTING_XML,
   EXPLORATION_REGIONS,
   EXPLORATION_FLOORS,
   GAME_EXPLORATION_DATA,
   GAME_MAINMENU_DATA,
+  GAME_PLAYER_LEVEL_EXP_TABLE,
   DEFAULT_PLAYER_SAVE,
   SERVER_WORLD_DATA,
+  MAINMENU_ROUTE_STUBS,
   MAINMENU_UPDATE_XML,
   LOGIN_TUTORIAL_XML,
   LOGIN_OK_XML,

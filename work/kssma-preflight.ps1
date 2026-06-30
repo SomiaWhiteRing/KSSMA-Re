@@ -1,6 +1,6 @@
 param(
-  [string]$PreferredSerial = "127.0.0.1:5583",
-  [string[]]$FallbackSerials = @("emulator-5582")
+  [string]$PreferredSerial = "emulator-5556",
+  [string[]]$FallbackSerials = @("127.0.0.1:5557")
 )
 
 $ErrorActionPreference = "Stop"

@@ -13,7 +13,9 @@ notes are archived at
 - Decompiled output and working assets: `work/million_cn/`.
 - Runtime target: Android `4.4.2` / API 19 / `armeabi-v7a` classic ARM emulator.
 - Runtime control entry: `work/kssma-runtime.ps1`; `work/android44-arm19.ps1` is only a legacy shim.
-- Primary serial is `127.0.0.1:5583`; the healthy fallback alias commonly used by helper commands is `emulator-5582`.
+- Primary serial is `emulator-5556`; `127.0.0.1:5557` is only a compatibility/diagnostic alias.
+  Old `5582/5583` ports are not a current baseline because this Windows environment reserves
+  TCP `5562..5661`, and the classic emulator can fail to bind inside that range.
 - Known keys:
   - `k1`: `A1dPUcrvur2CRQyl`
   - `k2`: `rBwj1MIAivVN222b`
@@ -47,9 +49,20 @@ notes are archived at
 - `/connect/web/` notice handling is not a failure by itself; only interact with it when screenshot/UI proves an active notice is blocking play.
 - Main menu visual restoration is accepted:
   - background uses `<mainmenu><current_bgfile>mainbg_an</current_bgfile><previous_bgfile>mainbg_an</previous_bgfile>`;
-  - initial character face/pose and information box are accepted;
+  - initial main-menu pixie face/pose and information box are accepted for all three faction slots:
+    `sword -> 117/1/4`, `technique -> 120/1/8`, `magic -> 111/2/4`;
   - BGM/voice runtime baseline is accepted;
   - user footage confirmed tapped character subtitles originally had no backing dialogue box.
+- Mainmenu faction mapping evidence:
+  `work/mainmenu-faction-fairy-card-20260630.md`; `server/test-bootstrap-server.js`
+  covers all three login and mainmenu-update XML paths, and runtime artifact
+  `work/kssma-flow-mainmenu-faction-smoke-20260630-193142` validates the
+  non-default `technique` path with `countryId=2`, `fairyCharacterId=120`,
+  `fairyPose=1`, `fairyFace=8`, and `screenshots/mainmenu-technique.png`.
+- Mainmenu expression preview artifact:
+  `work/mainmenu-fairy-expression-preview-20260630/all-labeled-sheet.png`.
+  The adopted closed-mouth defaults are user-selected from that sheet:
+  `111_2_4`, `117_1_4`, and `120_1_8`.
 - Do not reopen main menu black background, face black, BGM, voice, or tapped dialogue-box work without a new resource-miss log, native texture crash, or regression screenshot.
 
 Archive: `docs/reverse-archive/startup-mainmenu-20260624-20260625.md`.
@@ -62,7 +75,7 @@ Archive: `docs/reverse-archive/startup-mainmenu-20260624-20260625.md`.
 - For manual/debug device work outside flow, run `fast-health` first and run `repair-adb` only after it explicitly fails.
 - `repair-adb` first tries short reconnect repair. It may automatically warm-restart
   only `detached-arm19`: `kssma_arm19` still has classic emulator processes, but
-  both `127.0.0.1:5583` and `emulator-5582` cannot shell.
+  both `emulator-5556` and `127.0.0.1:5557` cannot shell.
 - Manual `restart-runtime -Force -Reason "..."` remains explicit-only outside that
   detached ARM19 repair path.
 - `install-apk` only accepts the unique client baseline APK. Old APKs are archived and must not be installed.
@@ -72,6 +85,12 @@ Archive: `docs/reverse-archive/startup-mainmenu-20260624-20260625.md`.
 Archive: `docs/reverse-archive/runtime-control-arm19-20260625-20260627.md`.
 
 ## Accepted Exploration State
+
+Exploration is initially complete as of 2026-06-30. It is good enough for the current project baseline:
+enter from main menu, show the save-gated area list, show the floor list, enter a floor, walk, spend AP,
+persist progress, unlock the next floor, show AP shortage, handle ordinary level-up, and play the normal
+floor-clear / next-area transition. Deeper exploration work is intentionally frozen until player data is
+more complete.
 
 The accepted hierarchy is:
 
@@ -92,6 +111,8 @@ Current accepted flow evidence:
   area; `/exploration/explore` spends AP, persists floor progress, and unlocks the next floor when progress reaches
   100%. Locked floor/stage requests return an encrypted locked response and do not mutate the save.
 - AP shortage uses the bundled `ap_fail_in` scene id `81100` and does not mutate AP, progress, EXP, or Gold.
+- Ordinary exploration level-up routes through `/town/lvup_status` and `/town/pointsetting`, with AP/BC allocation
+  persisted in the player save.
 - Historical six-area artifacts remain useful for background/value checks, but they predate save-gated unlocking and
   are no longer the default new-player smoke path.
 
@@ -148,6 +169,14 @@ Archives:
 
 - Flow-first runtime acceptance is now the default project path. Use:
   `powershell -NoProfile -ExecutionPolicy Bypass -File .\work\kssma-runtime.ps1 flow -Scenario exploration-smoke`.
+- Active product frontier is back to the main menu / home hub. Do not reopen the accepted main-menu black-screen,
+  face, background, BGM, voice, or tapped subtitle visual work without new regression evidence. The next main-menu
+  work should improve user-data-backed hub behavior: shared player save fields, visible AP/BC/card/friend/currency
+  consistency, main-menu entry routes, information/notification data, and reusable flow scenarios for those menu
+  edges.
+- Exploration is marked initially complete for now. Keep its smoke/walk/floor-clear/AP-shortage/level-up flows as
+  regression tests, but pause cross-region completion, guardian/battle, event, fairy, and reward branches until the
+  player data model is stronger.
 - Current accepted exploration smoke artifact:
   `work/kssma-flow-exploration-smoke-dev21-area1-two-step-smoke`.
 - Flow-first reset regression artifact:
@@ -194,7 +223,9 @@ Archives:
 - Client baseline uniqueization runtime proof: `start-runtime` now reports `clientBaseline.status=already-matched`.
   `install-check` without `-ApkPath` verifies the unique baseline, and `flow -Scenario exploration-smoke -Tag client-baseline-uniqueization`
   passed with artifact `work/kssma-flow-exploration-smoke-client-baseline-uniqueization`.
-- The active exploration product frontier is beyond the smoke path: repeated walking, floor-clear, next-floor continuation, return behavior from exploration main, and future event/battle/fairy/reward branches. Pick one flow edge per round.
+- Former exploration frontier beyond normal walking, floor-clear, and next-floor continuation is now frozen:
+  return behavior from exploration main, cross-region completion, guardian/battle, event, fairy, and reward branches
+  are not active until main-menu/player-data work catches up.
 - The active tooling frontier is adding new `flow` scenarios for new systems instead of copying login/server/ADB setup into separate scripts.
 - Detailed pre-flow-first exploration depth, media, ADB, native-baseline, and smoke-run notes were moved to:
   `docs/reverse-archive/exploration-frontiers-before-flow-first-20260628.md`.
@@ -212,8 +243,8 @@ Archives:
   `area -> floor area_id=0 -> get_floor area_id=0 floor_id=7 -> explore area_id=5 floor_id=6` twice,
   while server maps stage actions back to `floorKey=5:7`. Server response evidence: first walk
   `progress=5`, second walk `progress=10`, both with `gold=55`, `getExp=9`; the returned floor-list
-  response reported `maxProgress=10`, `maxProgressFloorId=7`, `maxProgressAreaNo=6`. Current frontier
-  moves to floor completion / next-floor behavior.
+  response reported `maxProgress=10`, `maxProgressFloorId=7`, `maxProgressAreaNo=6`. Floor completion and
+  next-floor behavior are superseded by the accepted floor-clear evidence below.
 - Random exploration area review: static random sample picked `錯乱の平原 / 区域7`
   (`routeAreaId=21`, `floorId=23`, `areaNo=7`, `bg=adv_bg12`) and `createExplorationGetFloorXml(...)`
   rendered the current visible `floor_info.id` as `7`. Runtime non-default review passed with artifact
@@ -234,6 +265,13 @@ Archives:
   No `Fatal signal`, `SIGSEGV`, `JResourceLoader`, `loadTexture`, or `getSDPackFile` evidence was found.
   Flow calibration note: selecting area 5 in the floor list requires first tapping the second visible row,
   then after the list recenters, tapping the top highlighted row to enter.
+- Exploration floor-clear / next-area revalidated on 2026-06-30 with no product-code change. Checks:
+  `node .\server\test-bootstrap-server.js`, `flow -Scenario self-check -Tag floorclear-current-selfcheck`, and
+  `flow -Scenario exploration-floor-clear-smoke -Tag floorclear-current-runtime` all passed. Artifact:
+  `work/kssma-flow-exploration-floor-clear-smoke-floorclear-current-runtime`. Runtime route sequence again proved
+  `/exploration/get_floor area_id=0 floor_id=6 -> /exploration/explore area_id=4 floor_id=5 progress=100 ->
+  /exploration/get_floor area_id=5 floor_id=6`; screenshots show `地区5` at `100%` with `进入下一个区域`, then
+  `地区6` at `0%`. Logcat had no fatal/resource-miss evidence; only the known APN permission noise appeared.
 - Exploration forward visual update fix: `/connect/app/exploration/explore` no longer includes
   `<next_scene>6200</next_scene>`; only `/exploration/get_floor` keeps that stage-entry header. Hypothesis was
   that forward responses were being treated like re-entering `exploration_main`, causing the progress bar and
@@ -298,7 +336,7 @@ Archives:
   `emulator-5582`, and this was not a gameplay/protocol failure.
 - Player HUD synchronization fix: login/mainmenu/exploration list/stage routes now all derive header `your_data` from
   the same player save instead of mixing the old `local_battle_player.xml` sample with live exploration state.
-  Server self-check seeds a deliberately different save (`level=7`, `AP=19/31`, `BC=12/33`, `Gold=4567`,
+  Server self-check seeds a deliberately different save (`level=10`, `AP=19/31`, `BC=12/33`, `Gold=4567`,
   `friendshipPoint=88`, `maxCardNum=222`, `nextExp=321`) and asserts those values appear in `/connect/app/login`,
   `/mainmenu/update`, `/mainmenu`, `/exploration/area`, `/exploration/floor`, and `/exploration/get_floor`. It then
   asserts two explore steps return updated global totals in `your_data` (`AP 18/31`, `Gold 4585`, then `AP 17/31`,
@@ -313,6 +351,82 @@ Archives:
   `get_exp`, and `next_exp`, and `layout_exploration_main.xml` has `lvup_event -> exp_lvCheck` plus `lv_max_anm`, but
   the `lvup` value/nested shape and EXP threshold table are still open. Do not copy battle-only
   `before_level/after_level` from `local_battle_result.xml` into `/exploration/explore` without native proof.
+- AP shortage runtime accepted: added `flow -Scenario exploration-ap-shortage-smoke`, which uses an artifact-local
+  `player-save.json` with `resources.ap.current=0`. Runtime artifact
+  `work/kssma-flow-exploration-ap-shortage-smoke-20260629-083016` passed. Route sequence reached
+  `/exploration/area -> /exploration/floor area_id=0 -> /exploration/get_floor area_id=0 floor_id=2 ->
+  /exploration/explore area_id=0 floor_id=1`; server logged `source="exploration ap fail"`, `nextScene=81100`,
+  `currentAp=0`, and `saved=false`. Screenshot `screenshots/ap-shortage-page.png` shows the original AP shortage
+  page, and artifact-local save remained unchanged: AP `0`, `movesByFloor` empty, EXP `0`, Gold `0`.
+- AP shortage return and AP purchase-page return accepted: extended `flow -Scenario exploration-ap-shortage-smoke`
+  and runtime artifact `work/kssma-flow-exploration-ap-shortage-smoke-20260629-232520` passed. The AP shortage back
+  button returns to the stage, and tapping forward reaches `/exploration/explore` with the AP-fail response again.
+  The AP recovery shop page is client-local in this path: tapping its purchase entry emitted no route before the
+  screenshot `screenshots/ap-shortage-buy-page.png`. Its back button returns to a usable stage
+  (`screenshots/ap-shortage-after-buy-return.png`). The first forward tap after returning from the shop may emit
+  `/exploration/get_floor area_id=0 floor_id=1 check=1` to reload the current stage; after that, the next forward
+  reaches `/exploration/explore area_id=0 floor_id=1` and the AP-fail response again. The artifact-local save stayed
+  unchanged: AP `0`, `movesByFloor` empty, EXP `0`, Gold `0`.
+- Player level EXP table is now clean adopted game data:
+  `server/data/game/player-level-exp-table.json`. Runtime rows contain only playable baseline fields:
+  `level`, `nextExp`, `statPointsOnLevelUp`, and optional `friendMax`. Evidence/source ranking is kept in
+  `work/player-level-exp-table-card-20260629.md`, not in the runtime JSON.
+- Ordinary exploration level-up accepted: `work/exploration-levelup-schema-card-20260629.md` closes scalar
+  `<lvup>` and `<is_limit>` for non-max exploration upgrades when paired with trusted EXP rows. Server self-check
+  covers Lv17 `1997/2000` + one AP=1 move, and runtime artifact
+  `work/kssma-flow-exploration-levelup-smoke-20260630-002346` passed. Observed `/exploration/explore` response:
+  `levelUp=true`, `isLimit=false`, `beforeLevel=17`, `level=18`, `profileExp=0`, `nextExp=2100`,
+  `remainingAp=25`, `abilityPoints=3`, `abilityPointsGranted=3`.
+  Artifact-local save ended with level 18, EXP 0, AP/BC 25/25, free AP/BC points 3, Gold 18, and
+  `movesByFloor["0:2"]=1`.
+- Level-up status and AP/BC allocation accepted: `work/town-lvup-status-schema-card-20260630.md`,
+  `work/town-pointsetting-schema-card-20260630.md`, and `work/player-owner-card-bootstrap-card-20260630.md`.
+  The first `/town/lvup_status` implementation exposed a missing-player-card crash
+  (`_UserCard::isCardNull` from `_AnmAeLvUpStatus`), fixed by seeding default/local player saves with
+  `leaderSerialId=1` and one owned card `serialId=1/masterCardId=22`, then emitting it through
+  `your_data/owner_card_list`. Runtime artifact
+  `work/kssma-flow-exploration-levelup-smoke-levelup-accepted-runtime` passed with route sequence
+  `/exploration/explore levelUp=true -> /town/lvup_status -> /town/pointsetting ap=3 bc=0`. Artifact-local save
+  ended at Lv18, EXP 0, AP `28/28`, BC `25/25`, `free_ap_bc_point=0`,
+  `abilityPoints.apAllocated=3`, `bcAllocated=0`, Gold 18, and `movesByFloor["0:2"]=1`. No
+  `_UserCard::isCardNull`/FATAL crash remained; APN permission log noise is unrelated emulator noise.
+- Wide player EXP search completed: `work/player-level-exp-table-wide-search-card-20260630.md` and
+  `work/recovered-data/player-level-exp-table-wide-20260630.json` separate original mobile evidence from
+  cross-version candidates and rejected card-EXP tables. No complete original mobile player EXP table was found.
+  Direct original mobile rows remain Lv17-Lv26 only. The broadest candidate is 3DS FC2 to Lv200 plus comment/pattern
+  support: counts are `mobile_exact=10`, `fc2_3ds_exact=101`, `fc2_3ds_uncertain=2`,
+  `pattern_inferred_from_fc2_comment_supported=1`, `pattern_inferred_from_fc2=78`, `missing=8`
+  (`10-16, 200`). English Fandom `Experience Table` and zh-Fandom `強化合成` are card reinforcement EXP, not player
+  level next-EXP; do not use them for player level-up.
+- Lv10-Lv16 player EXP weak candidates added after targeted search failed to find direct rows:
+  `work/player-level-exp-lv10-lv16-weak-candidates-card-20260630.md`. Values are `10=1300`, `11=1400`,
+  `12=1500`, `13=1600`, `14=1700`, `15=1800`, `16=1900`, derived by extending the direct mobile Lv17-Lv25 +100
+  sequence backward and supported only by the FC2/mobile overlap at Lv21-Lv26. A weak-filled table exists at
+  `work/recovered-data/player-level-exp-table-wide-20260630-lv10-lv16-weak-filled.json`; it leaves only Lv200
+  missing. Do not promote these rows to `mobile_exact` or `fc2_3ds_exact`.
+- Lv10-Lv16 adopted EXP values are in the clean game table as ordinary baseline rows:
+  `10=1300`, `11=1400`, `12=1500`, `13=1600`, `14=1700`, `15=1800`, `16=1900`.
+  Their weak evidence caveat remains in `work/player-level-exp-lv10-lv16-weak-candidates-card-20260630.md`.
+  Runtime code no longer carries source-rank fields. `node .\server\test-bootstrap-server.js` covers Lv16
+  `1897/1900` + one AP=1 exploration move, producing Lv17, carry EXP 0, next EXP 2000, and AP/BC full recovery.
+- Data-layer hygiene rule accepted: `server/data/**/*.json` is runtime data only, not documentation.
+  Source strength, wiki URLs, rejected candidates, inference notes, and provenance belong in evidence cards,
+  `work/recovered-data/`, or archive docs. Server self-check rejects documentation/provenance fields in formal data.
+- Main-menu entry route skeletons added: `work/mainmenu-button-route-card-20260630.md` records button command,
+  route, scene, and sample-body evidence. `server/bootstrap-server.js` now handles representative main/menu entry
+  routes such as `/gacha/select/getcontents`, `/battle/area`, `/menu/menulist`, `/menu/playerinfo`, `/shop/shop`,
+  `/menu/rewardbox`, `/item/havelist`, `/menu/fairyselect`, `/story/getoutline`, and compound/card/shop skeletons.
+  Gacha entry deliberately uses a minimal safe `gacha_select/xml_contents` shell; `local_gachaselect.xml` is rejected
+  for the entry smoke because runtime crashed on missing `gac_event_0`. Battle still uses bundled
+  `local_battle_area.xml`; other route entries are explicit scene skeletons, not full subsystem implementations.
+- `flow -Scenario mainmenu-buttons-route-smoke` accepted on ARM19 with artifact
+  `work/kssma-flow-mainmenu-buttons-route-smoke-20260630-212726`. It logs in and proves:
+  `/gacha/select/getcontents -> /mainmenu`, `/battle/area -> /mainmenu`,
+  `/card/exchange mode=1 -> /mainmenu`, `/shop/shop -> /mainmenu`,
+  `/menu/menulist -> /menu/playerinfo kind=6 user_id=0 -> /menu/menulist`.
+  Screenshots cover each entered page. No fatal/SIGSEGV/resource-miss evidence appeared; the only matched logcat
+  noise was a system Binder `RuntimeException`. Return-to-town remains `/connect/app/mainmenu`; player-info back
+  returns to `/connect/app/menu/menulist` first.
 
 ## Archive Index
 

@@ -42,7 +42,7 @@ It is a JSON-backed database shape, not the final storage engine.
 
 ## Current Runtime Use
 
-Only exploration walking currently mutates this save:
+Exploration walking and level-up point allocation currently mutate this save:
 
 - Routes that draw the global player HUD now read `your_data` from the same save:
   `/connect/app/login`, `/connect/app/mainmenu/update`, `/connect/app/mainmenu`,
@@ -53,6 +53,23 @@ Only exploration walking currently mutates this save:
 - Exploration stage bodies use `profile.nextExp` for `<next_exp>`. The local save also stores
   accumulated `profile.exp`, but no direct response field for "current total EXP" is wired yet;
   do not invent one until native/schema evidence proves where the client reads it.
+- Player level EXP thresholds are stored as clean adopted game data at
+  `server/data/game/player-level-exp-table.json`. The file is the playable baseline only:
+  `level`, `nextExp`, `statPointsOnLevelUp`, and optional `friendMax`. Source strength,
+  rejected candidates, wiki URLs, and inference notes live in evidence cards and recovered-data
+  artifacts, not in the runtime JSON.
+- When an exploration step crosses a trusted threshold, `/connect/app/exploration/explore`
+  emits scalar `lvup`/`is_limit`, carries leftover EXP into the new level, updates `nextExp`
+  from the trusted next row, fully restores AP/BC, and grants AP/BC allocation points using
+  `progression.levelUpRules`. The first accepted runtime case is Lv17 `1997/2000` + 3 EXP ->
+  Lv18 `0/2100`.
+- The default local player owns one leader card (`profile.leaderSerialId=1`,
+  `cards.instances[0].serialId=1`, `masterCardId=22`) because level-up status rendering asks
+  the client card manager for the current leader image. Shared header `your_data` emits this
+  as `owner_card_list`.
+- `/connect/app/town/pointsetting` persists AP/BC allocation after the level-up status page.
+  The accepted Lv18 smoke allocates all 3 free points to AP, ending with AP `28/28`,
+  BC `25/25`, `progression.abilityPoints.unspent=0`, `apAllocated=3`, and `bcAllocated=0`.
 - `/connect/app/exploration/explore` increments `exploration.movesByFloor[floorKey]`.
 - The same step spends AP from `resources.ap.current` and adds step rewards to
   `profile.exp` and `currencies.gold`.

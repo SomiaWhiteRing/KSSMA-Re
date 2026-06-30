@@ -119,6 +119,215 @@ function ConvertTo-FlowHashtable {
   return $table
 }
 
+function Get-FlowObjectPropertyCount {
+  param($Object)
+
+  if ($null -eq $Object) {
+    return 0
+  }
+  if ($Object -is [System.Collections.IDictionary]) {
+    return $Object.Count
+  }
+  return @($Object.PSObject.Properties).Count
+}
+
+function Read-FlowPlayerSave {
+  param(
+    $Context,
+    [string]$Step
+  )
+
+  if (-not (Test-Path -LiteralPath $Context.playerSave)) {
+    Stop-FlowWithFailure -Context $Context -FailureClass "player-save-missing" -Step $Step -Message "Artifact player save is missing: $($Context.playerSave)"
+  }
+  try {
+    return [System.IO.File]::ReadAllText($Context.playerSave, [System.Text.Encoding]::UTF8) | ConvertFrom-Json
+  } catch {
+    Stop-FlowWithFailure -Context $Context -FailureClass "player-save-invalid" -Step $Step -Message "Artifact player save is not valid JSON: $($_.Exception.Message)"
+  }
+}
+
+function Set-FlowApShortagePlayerSave {
+  param($Context)
+
+  $defaultSavePath = Join-Path $script:RepoRoot "server\data\player\default-save.json"
+  try {
+    $save = [System.IO.File]::ReadAllText($defaultSavePath, [System.Text.Encoding]::UTF8) | ConvertFrom-Json
+  } catch {
+    Stop-FlowWithFailure -Context $Context -FailureClass "player-save-invalid" -Step "ap-shortage-save-setup" -Message "Cannot read default player save: $($_.Exception.Message)"
+  }
+
+  $save.resources.ap.current = 0
+  $json = $save | ConvertTo-Json -Depth 40
+  $utf8NoBom = New-Object -TypeName System.Text.UTF8Encoding -ArgumentList $false
+  [System.IO.File]::WriteAllText($Context.playerSave, $json + [Environment]::NewLine, $utf8NoBom)
+  Add-FlowEvent -Context $Context -Type "player-save-seeded" -Data ([ordered]@{
+      scenario = "exploration-ap-shortage-smoke"
+      source = $defaultSavePath
+      path = $Context.playerSave
+      apCurrent = [int]$save.resources.ap.current
+      profileExp = [int]$save.profile.exp
+      gold = [int]$save.currencies.gold
+      movesByFloorCount = Get-FlowObjectPropertyCount -Object $save.exploration.movesByFloor
+    })
+}
+
+function Set-FlowLevelUpPlayerSave {
+  param($Context)
+
+  $defaultSavePath = Join-Path $script:RepoRoot "server\data\player\default-save.json"
+  try {
+    $save = [System.IO.File]::ReadAllText($defaultSavePath, [System.Text.Encoding]::UTF8) | ConvertFrom-Json
+  } catch {
+    Stop-FlowWithFailure -Context $Context -FailureClass "player-save-invalid" -Step "levelup-save-setup" -Message "Cannot read default player save: $($_.Exception.Message)"
+  }
+
+  $save.profile.level = 17
+  $save.profile.exp = 1997
+  $save.profile.nextExp = 2000
+  $save.profile | Add-Member -NotePropertyName "percentage" -NotePropertyValue 99 -Force
+  $save.resources.ap.current = 1
+  $save.resources.ap.max = 25
+  $save.resources.bc.current = 7
+  $save.resources.bc.max = 25
+  $save.progression.abilityPoints.unspent = 0
+  $save.progression.abilityPoints.fromLevels = 0
+  $json = $save | ConvertTo-Json -Depth 40
+  $utf8NoBom = New-Object -TypeName System.Text.UTF8Encoding -ArgumentList $false
+  [System.IO.File]::WriteAllText($Context.playerSave, $json + [Environment]::NewLine, $utf8NoBom)
+  Add-FlowEvent -Context $Context -Type "player-save-seeded" -Data ([ordered]@{
+      scenario = "exploration-levelup-smoke"
+      source = $defaultSavePath
+      path = $Context.playerSave
+      level = [int]$save.profile.level
+      profileExp = [int]$save.profile.exp
+      nextExp = [int]$save.profile.nextExp
+      apCurrent = [int]$save.resources.ap.current
+      bcCurrent = [int]$save.resources.bc.current
+    })
+}
+
+function Set-FlowMainmenuFactionPlayerSave {
+  param($Context)
+
+  $defaultSavePath = Join-Path $script:RepoRoot "server\data\player\default-save.json"
+  try {
+    $save = [System.IO.File]::ReadAllText($defaultSavePath, [System.Text.Encoding]::UTF8) | ConvertFrom-Json
+  } catch {
+    Stop-FlowWithFailure -Context $Context -FailureClass "player-save-invalid" -Step "mainmenu-faction-save-setup" -Message "Cannot read default player save: $($_.Exception.Message)"
+  }
+
+  $save.profile.faction = "technique"
+  $json = $save | ConvertTo-Json -Depth 40
+  $utf8NoBom = New-Object -TypeName System.Text.UTF8Encoding -ArgumentList $false
+  [System.IO.File]::WriteAllText($Context.playerSave, $json + [Environment]::NewLine, $utf8NoBom)
+  Add-FlowEvent -Context $Context -Type "player-save-seeded" -Data ([ordered]@{
+      scenario = "mainmenu-faction-smoke"
+      source = $defaultSavePath
+      path = $Context.playerSave
+      faction = $save.profile.faction
+      expectedCountryId = 2
+      expectedFairyCharacterId = 120
+      expectedFairyPose = 1
+      expectedFairyFace = 8
+    })
+}
+
+function Assert-FlowLevelUpPlayerSave {
+  param($Context)
+
+  $actual = Read-FlowPlayerSave -Context $Context -Step "levelup-save-after"
+  $level = [int]$actual.profile.level
+  $exp = [int]$actual.profile.exp
+  $nextExp = [int]$actual.profile.nextExp
+  $ap = [int]$actual.resources.ap.current
+  $bc = [int]$actual.resources.bc.current
+  $abilityPoints = [int]$actual.progression.abilityPoints.unspent
+  $fromLevels = [int]$actual.progression.abilityPoints.fromLevels
+  $moves = [int]$actual.exploration.movesByFloor.'0:2'
+  if ($level -ne 18 -or $exp -ne 0 -or $nextExp -ne 2100 -or $ap -ne 25 -or $bc -ne 25 -or $abilityPoints -ne 3 -or $fromLevels -ne 3 -or $moves -ne 1) {
+    Stop-FlowWithFailure -Context $Context -FailureClass "levelup-save-mismatch" -Step "levelup-save-after" -Message "Level-up save mismatch: level=$level exp=$exp nextExp=$nextExp ap=$ap bc=$bc ability=$abilityPoints fromLevels=$fromLevels moves=$moves."
+  }
+
+  Add-FlowEvent -Context $Context -Type "levelup-save-ok" -Data ([ordered]@{
+      level = $level
+      profileExp = $exp
+      nextExp = $nextExp
+      apCurrent = $ap
+      bcCurrent = $bc
+      abilityPoints = $abilityPoints
+      movesByFloor0x2 = $moves
+    })
+}
+
+function Assert-FlowLevelUpPointsettingPlayerSave {
+  param($Context)
+
+  $actual = Read-FlowPlayerSave -Context $Context -Step "levelup-pointsetting-save-after"
+  $level = [int]$actual.profile.level
+  $exp = [int]$actual.profile.exp
+  $nextExp = [int]$actual.profile.nextExp
+  $apCurrent = [int]$actual.resources.ap.current
+  $apMax = [int]$actual.resources.ap.max
+  $bcCurrent = [int]$actual.resources.bc.current
+  $bcMax = [int]$actual.resources.bc.max
+  $abilityPoints = [int]$actual.progression.abilityPoints.unspent
+  $fromLevels = [int]$actual.progression.abilityPoints.fromLevels
+  $apAllocated = [int]$actual.progression.abilityPoints.apAllocated
+  $bcAllocated = [int]$actual.progression.abilityPoints.bcAllocated
+  $moves = [int]$actual.exploration.movesByFloor.'0:2'
+  if (
+    $level -ne 18 -or $exp -ne 0 -or $nextExp -ne 2100 -or
+    $apCurrent -ne 28 -or $apMax -ne 28 -or
+    $bcCurrent -ne 25 -or $bcMax -ne 25 -or
+    $abilityPoints -ne 0 -or $fromLevels -ne 3 -or
+    $apAllocated -ne 3 -or $bcAllocated -ne 0 -or $moves -ne 1
+  ) {
+    Stop-FlowWithFailure -Context $Context -FailureClass "levelup-pointsetting-save-mismatch" -Step "levelup-pointsetting-save-after" -Message "Pointsetting save mismatch: level=$level exp=$exp nextExp=$nextExp ap=$apCurrent/$apMax bc=$bcCurrent/$bcMax ability=$abilityPoints fromLevels=$fromLevels apAllocated=$apAllocated bcAllocated=$bcAllocated moves=$moves."
+  }
+
+  Add-FlowEvent -Context $Context -Type "levelup-pointsetting-save-ok" -Data ([ordered]@{
+      level = $level
+      profileExp = $exp
+      nextExp = $nextExp
+      apCurrent = $apCurrent
+      apMax = $apMax
+      bcCurrent = $bcCurrent
+      bcMax = $bcMax
+      abilityPoints = $abilityPoints
+      apAllocated = $apAllocated
+      bcAllocated = $bcAllocated
+      movesByFloor0x2 = $moves
+    })
+}
+
+function Assert-FlowApShortagePlayerSaveUnchanged {
+  param(
+    $Context,
+    $InitialSave
+  )
+
+  $actual = Read-FlowPlayerSave -Context $Context -Step "ap-shortage-save-after"
+  $initialMoves = Get-FlowObjectPropertyCount -Object $InitialSave.exploration.movesByFloor
+  $actualMoves = Get-FlowObjectPropertyCount -Object $actual.exploration.movesByFloor
+  $initialExp = [int]$InitialSave.profile.exp
+  $actualExp = [int]$actual.profile.exp
+  $initialGold = [int]$InitialSave.currencies.gold
+  $actualGold = [int]$actual.currencies.gold
+  $actualAp = [int]$actual.resources.ap.current
+
+  if ($actualAp -ne 0 -or $actualMoves -ne 0 -or $actualMoves -ne $initialMoves -or $actualExp -ne $initialExp -or $actualGold -ne $initialGold) {
+    Stop-FlowWithFailure -Context $Context -FailureClass "ap-shortage-save-mutated" -Step "ap-shortage-save-after" -Message "AP shortage explore mutated player save: ap=$actualAp moves=$actualMoves exp=$actualExp gold=$actualGold."
+  }
+
+  Add-FlowEvent -Context $Context -Type "ap-shortage-save-ok" -Data ([ordered]@{
+      apCurrent = $actualAp
+      movesByFloorCount = $actualMoves
+      profileExp = $actualExp
+      gold = $actualGold
+    })
+}
+
 function Parse-FlowServerLine {
   param(
     [string]$Line,
@@ -280,6 +489,70 @@ function Wait-FlowServerEvent {
   Stop-FlowWithFailure -Context $Context -FailureClass $failure -Step $Step -Message "Timed out waiting for $Tag $Path."
 }
 
+function Wait-FlowServerEventOptional {
+  param(
+    $Context,
+    [string]$Step,
+    [string]$Tag,
+    [string]$Path,
+    [hashtable]$Params = @{},
+    [hashtable]$Fields = @{},
+    [int]$TimeoutSeconds = 8
+  )
+
+  Add-FlowEvent -Context $Context -Type "wait-optional-start" -Data ([ordered]@{
+      step = $Step
+      tag = $Tag
+      path = $Path
+      params = $Params
+      fields = $Fields
+      timeoutSeconds = $TimeoutSeconds
+    })
+  $deadline = (Get-Date).AddSeconds($TimeoutSeconds)
+  $startCursor = [int]$Context.requestCursor
+  $samePathMismatch = $null
+  while ((Get-Date) -lt $deadline) {
+    $events = @(Sync-FlowServerEvents -Context $Context)
+    $newEvents = @($events | Where-Object { [int]$_.index -ge $startCursor })
+    foreach ($event in $newEvents) {
+      if ((-not $Tag -or $event.tag -eq $Tag) -and (-not $Path -or $event.path -eq $Path)) {
+        if (Test-FlowServerEventMatch -Event $event -Tag $Tag -Path $Path -Params $Params -Fields $Fields) {
+          $Context.requestCursor = [int]$event.index + 1
+          Add-FlowEvent -Context $Context -Type "wait-optional-ok" -Data ([ordered]@{
+              step = $Step
+              index = $event.index
+              tag = $event.tag
+              path = $event.path
+              decryptedParams = $event.decryptedParams
+              payload = $event.payload
+            })
+          return $event
+        }
+        if (-not $samePathMismatch) {
+          $samePathMismatch = $event
+        }
+      }
+    }
+    Start-Sleep -Milliseconds 500
+  }
+
+  if ($samePathMismatch) {
+    Add-FlowEvent -Context $Context -Type "wait-optional-mismatch" -Data ([ordered]@{
+        step = $Step
+        path = $samePathMismatch.path
+        decryptedParams = $samePathMismatch.decryptedParams
+        payload = $samePathMismatch.payload
+      })
+    return $samePathMismatch
+  }
+  Add-FlowEvent -Context $Context -Type "wait-optional-timeout" -Data ([ordered]@{
+      step = $Step
+      tag = $Tag
+      path = $Path
+    })
+  return $null
+}
+
 function Wait-FlowServerQuiet {
   param(
     $Context,
@@ -403,6 +676,11 @@ function Assert-FlowClientAlive {
 
   if (Test-FlowCrashDialog -Context $Context -Name "crash-$Step") {
     Stop-FlowWithFailure -Context $Context -FailureClass "client-crash" -Step $Step -Message "Android crash dialog is visible."
+  }
+  $activityLine = Get-FlowCurrentActivity -Serial $Context.serial
+  $Context.lastActivity = $activityLine
+  if (-not (Test-FlowGameActivity $activityLine)) {
+    Stop-FlowWithFailure -Context $Context -FailureClass "client-crash" -Step $Step -Message "Game activity is no longer resumed: $activityLine"
   }
 }
 
@@ -915,8 +1193,9 @@ function Wait-FlowMainMenuReady {
         Invoke-FlowCancelExitConfirmIfPresent -Context $Context | Out-Null
       }
       if ((Test-FlowNoticeWebView -Context $Context) -and -not $dismissTried) {
-        Invoke-FlowDismissNoticeIfPresent -Context $Context
+        Invoke-FlowDismissNoticeIfPresent -Context $Context | Out-Null
         $dismissTried = $true
+        $deadline = (Get-Date).AddSeconds(45)
         continue
       }
       if (-not (Test-FlowNoticeWebView -Context $Context)) {
@@ -930,8 +1209,9 @@ function Wait-FlowMainMenuReady {
     if (-not $dismissTried) {
       $connectWebSeen = [bool](@($Context.requestEvents | Where-Object { $_.tag -eq "connect_web_stub" }).Count)
       if ($connectWebSeen -or (Test-FlowNoticeWebView -Context $Context)) {
-        Invoke-FlowDismissNoticeIfPresent -Context $Context
+        Invoke-FlowDismissNoticeIfPresent -Context $Context | Out-Null
         $dismissTried = $true
+        $deadline = (Get-Date).AddSeconds(45)
       }
     }
     Start-Sleep -Seconds 1
@@ -989,6 +1269,137 @@ function Invoke-FlowTapThenWaitProbe {
   return Wait-FlowServerEvent -Context $Context -Step $Name -Tag "connect_app_probe" -Path $Path -Params $Params -TimeoutSeconds $TimeoutSeconds -NoEventFailureClass "tap-no-effect"
 }
 
+function Invoke-FlowMainmenuFactionSmoke {
+  param($Context)
+
+  Sync-FlowServerEvents -Context $Context | Out-Null
+  $mainmenuResponse = @(
+    $Context.requestEvents |
+      Where-Object {
+        $_.tag -eq "connect_app_response" -and
+        ($_.path -eq "/connect/app/login" -or $_.path -eq "/connect/app/mainmenu/update" -or $_.path -eq "/connect/app/mainmenu")
+      } |
+      Select-Object -First 1
+  )
+  if ($mainmenuResponse.Count -eq 0) {
+    Stop-FlowWithFailure -Context $Context -FailureClass "route-timeout" -Step "mainmenu-faction-response" -Message "No login/mainmenu response was observed."
+  }
+
+  $mainmenu = Get-FlowProperty -Object $mainmenuResponse[0].payload -Name "mainmenu"
+  $countryId = Get-FlowProperty -Object $mainmenu -Name "countryId"
+  $fairyCharacterId = Get-FlowProperty -Object $mainmenu -Name "fairyCharacterId"
+  $fairyPose = Get-FlowProperty -Object $mainmenu -Name "fairyPose"
+  $fairyFace = Get-FlowProperty -Object $mainmenu -Name "fairyFace"
+  if ("$countryId" -ne "2" -or "$fairyCharacterId" -ne "120" -or "$fairyPose" -ne "1" -or "$fairyFace" -ne "8") {
+    Stop-FlowWithFailure -Context $Context -FailureClass "route-param-mismatch" -Step "mainmenu-faction-response" -Message "Unexpected mainmenu faction mapping: countryId=$countryId fairyCharacterId=$fairyCharacterId fairyPose=$fairyPose fairyFace=$fairyFace."
+  }
+
+  Add-FlowEvent -Context $Context -Type "mainmenu-faction-ok" -Data ([ordered]@{
+      responsePath = $mainmenuResponse[0].path
+      countryId = $countryId
+      fairyCharacterId = $fairyCharacterId
+      fairyPose = $fairyPose
+      fairyFace = $fairyFace
+    })
+  Capture-FlowScreenshot -Context $Context -Name "mainmenu-technique" | Out-Null
+}
+
+function Get-FlowMainmenuRouteCoords {
+  @{
+    gacha = @{ x = 1090; y = 95 }
+    battle = @{ x = 1090; y = 400 }
+    compound = @{ x = 1090; y = 555 }
+    shop = @{ x = 1090; y = 690 }
+    menu = @{ x = 990; y = 675 }
+    menuPlayerInfo = @{ x = 525; y = 115 }
+    return = @{ x = 1090; y = 585 }
+  }
+}
+
+function Move-FlowRequestCursorToEnd {
+  param($Context)
+
+  $events = @(Sync-FlowServerEvents -Context $Context)
+  if ($events.Count -gt 0) {
+    $Context.requestCursor = [int]$events[-1].index + 1
+  }
+}
+
+function Invoke-FlowReturnToMainmenu {
+  param(
+    $Context,
+    [string]$Name
+  )
+
+  $coords = Get-FlowMainmenuRouteCoords
+  Invoke-FlowTap -Context $Context -Name $Name -X $coords.return.x -Y $coords.return.y
+  $mainmenuProbe = Wait-FlowServerEventOptional -Context $Context -Step "$Name-mainmenu-probe" -Tag "connect_app_probe" -Path "/connect/app/mainmenu" -TimeoutSeconds 8
+  if ($mainmenuProbe) {
+    Wait-FlowServerEvent -Context $Context -Step "$Name-mainmenu-response" -Tag "connect_app_response" -Path "/connect/app/mainmenu" -TimeoutSeconds 10 | Out-Null
+  } else {
+    Wait-FlowServerQuiet -Context $Context -Step "$Name-local-back-settle" -QuietSeconds 3 -TimeoutSeconds 12
+    Move-FlowRequestCursorToEnd -Context $Context
+  }
+  Start-Sleep -Seconds 3
+  Assert-FlowClientAlive -Context $Context -Step "$Name-after-return"
+  Capture-FlowScreenshot -Context $Context -Name "$Name-mainmenu" | Out-Null
+}
+
+function Invoke-FlowReturnToMenuList {
+  param(
+    $Context,
+    [string]$Name
+  )
+
+  $coords = Get-FlowMainmenuRouteCoords
+  Invoke-FlowTap -Context $Context -Name $Name -X $coords.return.x -Y $coords.return.y
+  Wait-FlowServerEvent -Context $Context -Step "$Name-menu-probe" -Tag "connect_app_probe" -Path "/connect/app/menu/menulist" -TimeoutSeconds 10 | Out-Null
+  Wait-FlowServerEvent -Context $Context -Step "$Name-menu-response" -Tag "connect_app_response" -Path "/connect/app/menu/menulist" -Fields @{ command = "menu"; nextScene = 20100 } -TimeoutSeconds 10 | Out-Null
+  Start-Sleep -Seconds 3
+  Assert-FlowClientAlive -Context $Context -Step "$Name-after-return"
+  Capture-FlowScreenshot -Context $Context -Name "$Name-menu" | Out-Null
+}
+
+function Invoke-FlowOpenMainmenuRoute {
+  param(
+    $Context,
+    [string]$Name,
+    [int]$X,
+    [int]$Y,
+    [string]$Path,
+    [hashtable]$Params = @{},
+    [hashtable]$Fields
+  )
+
+  Invoke-FlowTapThenWaitProbe -Context $Context -Name $Name -X $X -Y $Y -Path $Path -Params $Params -TimeoutSeconds 25 | Out-Null
+  Wait-FlowServerEvent -Context $Context -Step "$Name-response" -Tag "connect_app_response" -Path $Path -Fields $Fields -TimeoutSeconds 10 | Out-Null
+  Start-Sleep -Seconds 3
+  Assert-FlowClientAlive -Context $Context -Step "$Name-after-response"
+  Capture-FlowScreenshot -Context $Context -Name $Name | Out-Null
+}
+
+function Invoke-FlowMainmenuButtonsRouteSmoke {
+  param($Context)
+
+  $coords = Get-FlowMainmenuRouteCoords
+  $entries = @(
+    @{ name = "open-mainmenu-gacha"; coord = $coords.gacha; path = "/connect/app/gacha/select/getcontents"; fields = @{ command = "gacha"; nextScene = 9100 } },
+    @{ name = "open-mainmenu-battle"; coord = $coords.battle; path = "/connect/app/battle/area"; fields = @{ command = "battle"; nextScene = 5100 } },
+    @{ name = "open-mainmenu-compound"; coord = $coords.compound; path = "/connect/app/card/exchange"; params = @{ mode = "1" }; fields = @{ command = "card_exchange"; nextScene = 7200 } },
+    @{ name = "open-mainmenu-shop"; coord = $coords.shop; path = "/connect/app/shop/shop"; fields = @{ command = "shop"; nextScene = 8100 } }
+  )
+
+  foreach ($entry in $entries) {
+    $params = if ($entry.ContainsKey("params")) { $entry.params } else { @{} }
+    Invoke-FlowOpenMainmenuRoute -Context $Context -Name $entry.name -X $entry.coord.x -Y $entry.coord.y -Path $entry.path -Params $params -Fields $entry.fields
+    Invoke-FlowReturnToMainmenu -Context $Context -Name "return-from-$($entry.name)"
+  }
+
+  Invoke-FlowOpenMainmenuRoute -Context $Context -Name "open-mainmenu-menu" -X $coords.menu.x -Y $coords.menu.y -Path "/connect/app/menu/menulist" -Fields @{ command = "menu"; nextScene = 20100 }
+  Invoke-FlowOpenMainmenuRoute -Context $Context -Name "open-menu-playerinfo" -X $coords.menuPlayerInfo.x -Y $coords.menuPlayerInfo.y -Path "/connect/app/menu/playerinfo" -Fields @{ command = "p_info"; nextScene = 26100 }
+  Invoke-FlowReturnToMenuList -Context $Context -Name "return-from-open-menu-playerinfo"
+}
+
 function Invoke-FlowFastTapThenWaitProbe {
   param(
     $Context,
@@ -1019,6 +1430,11 @@ function Get-FlowExplorationCoords {
     explorationForward = @{ x = 1090; y = 95 }
     explorationNextFloor = @{ x = 1090; y = 95 }
     explorationReturn = @{ x = 1090; y = 585 }
+    apShortageBuy = @{ x = 775; y = 340 }
+    apShortageReturn = @{ x = 1090; y = 585 }
+    shopReturn = @{ x = 1090; y = 585 }
+    lvupApAll = @{ x = 1000; y = 465 }
+    lvupOk = @{ x = 1090; y = 100 }
   }
 }
 
@@ -1151,6 +1567,171 @@ function Invoke-FlowExplorationFloorClearSmoke {
   Wait-FlowServerEvent -Context $Context -Step "tap-next-floor-after-clear-response" -Tag "connect_app_response" -Path "/connect/app/exploration/get_floor" -Fields @{ regionId = 0; floorId = 7; areaNo = 6; bg = "adv_bg14"; movesDone = 0; progress = 0; hasNextFloor = $false } -TimeoutSeconds 10 | Out-Null
   Start-Sleep -Seconds 5
   Capture-FlowScreenshot -Context $Context -Name "area0-area6-main-after-next-floor" | Out-Null
+}
+
+function Invoke-FlowExplorationApShortageSmoke {
+  param($Context)
+
+  $coords = Enter-FlowExplorationArea0Main -Context $Context
+  $initialSave = Read-FlowPlayerSave -Context $Context -Step "ap-shortage-save-before"
+
+  Invoke-FlowTap -Context $Context -Name "ap-shortage-forward" -X $coords.explorationForward.x -Y $coords.explorationForward.y
+  $probe = Wait-FlowServerEventOptional -Context $Context -Step "ap-shortage-forward-optional-probe" -Tag "connect_app_probe" -Path "/connect/app/exploration/explore" -Params @{ area_id = "0"; floor_id = "1" } -TimeoutSeconds 8
+  if ($probe) {
+    Wait-FlowServerEvent -Context $Context -Step "ap-shortage-forward-response" -Tag "connect_app_response" -Path "/connect/app/exploration/explore" -Fields @{ source = "exploration ap fail"; nextScene = 81100; saved = $false; currentAp = 0 } -TimeoutSeconds 10 | Out-Null
+    Add-FlowEvent -Context $Context -Type "ap-shortage-mode" -Data ([ordered]@{
+        mode = "server-response"
+        observable = "explore request reached server and returned AP shortage branch"
+      })
+  } else {
+    Assert-FlowClientAlive -Context $Context -Step "ap-shortage-local-page"
+    Add-FlowEvent -Context $Context -Type "ap-shortage-mode" -Data ([ordered]@{
+        mode = "client-local"
+        observable = "AP=0 was blocked by the client before /exploration/explore"
+      })
+  }
+  Start-Sleep -Seconds 3
+  Capture-FlowScreenshot -Context $Context -Name "ap-shortage-page" | Out-Null
+  Assert-FlowApShortagePlayerSaveUnchanged -Context $Context -InitialSave $initialSave
+
+  Invoke-FlowTap -Context $Context -Name "ap-shortage-return" -X $coords.apShortageReturn.x -Y $coords.apShortageReturn.y
+  Wait-FlowServerQuiet -Context $Context -Step "ap-shortage-return-settle" -QuietSeconds 3 -TimeoutSeconds 12
+  Start-Sleep -Seconds 2
+  Capture-FlowScreenshot -Context $Context -Name "ap-shortage-after-return" | Out-Null
+
+  Invoke-FlowTap -Context $Context -Name "ap-shortage-forward-after-return" -X $coords.explorationForward.x -Y $coords.explorationForward.y
+  $returnProbe = Wait-FlowServerEventOptional -Context $Context -Step "ap-shortage-forward-after-return-probe" -Tag "connect_app_probe" -Path "/connect/app/exploration/explore" -Params @{ area_id = "0"; floor_id = "1" } -TimeoutSeconds 8
+  if (-not $returnProbe) {
+    Stop-FlowWithFailure -Context $Context -FailureClass "ap-shortage-return-stuck" -Step "ap-shortage-forward-after-return" -Message "After tapping the AP shortage back button, tapping the stage forward button did not emit /exploration/explore. The client is probably still on the AP shortage scene or focused on the wrong layer."
+  }
+  Wait-FlowServerEvent -Context $Context -Step "ap-shortage-forward-after-return-response" -Tag "connect_app_response" -Path "/connect/app/exploration/explore" -Fields @{ source = "exploration ap fail"; nextScene = 81100; saved = $false; currentAp = 0 } -TimeoutSeconds 10 | Out-Null
+  Start-Sleep -Seconds 2
+  Capture-FlowScreenshot -Context $Context -Name "ap-shortage-page-after-return-forward" | Out-Null
+  Assert-FlowApShortagePlayerSaveUnchanged -Context $Context -InitialSave $initialSave
+
+  Invoke-FlowTap -Context $Context -Name "ap-shortage-buy" -X $coords.apShortageBuy.x -Y $coords.apShortageBuy.y
+  $buyProbe = Wait-FlowServerEventOptional -Context $Context -Step "ap-shortage-buy-route" -Tag "connect_app_probe" -Path "" -TimeoutSeconds 8
+  if ($buyProbe) {
+    Add-FlowEvent -Context $Context -Type "ap-shortage-buy-route" -Data ([ordered]@{
+        path = $buyProbe.path
+        decryptedParams = $buyProbe.decryptedParams
+      })
+    $buyResponse = Wait-FlowServerEventOptional -Context $Context -Step "ap-shortage-buy-response" -Tag "connect_app_response" -Path $buyProbe.path -TimeoutSeconds 10
+    if ($buyResponse -and "$(Get-FlowProperty -Object $buyResponse.payload -Name 'status')" -eq "501") {
+      Start-Sleep -Seconds 2
+      Capture-FlowScreenshot -Context $Context -Name "ap-shortage-buy-unimplemented-route" | Out-Null
+      Stop-FlowWithFailure -Context $Context -FailureClass "shop-route-unimplemented" -Step "ap-shortage-buy" -Message "AP shortage buy button emitted $($buyProbe.path), but the local server returned the generic 501 response. Implement the smallest shop response before judging the buy-page back button."
+    }
+  } else {
+    Assert-FlowClientAlive -Context $Context -Step "ap-shortage-buy-local-page"
+    Add-FlowEvent -Context $Context -Type "ap-shortage-buy-route" -Data ([ordered]@{
+        path = ""
+        observable = "buy button did not emit a server route before the screenshot"
+      })
+  }
+  Start-Sleep -Seconds 3
+  Capture-FlowScreenshot -Context $Context -Name "ap-shortage-buy-page" | Out-Null
+
+  Invoke-FlowTap -Context $Context -Name "ap-shortage-buy-return" -X $coords.shopReturn.x -Y $coords.shopReturn.y
+  Wait-FlowServerQuiet -Context $Context -Step "ap-shortage-buy-return-settle" -QuietSeconds 3 -TimeoutSeconds 12
+  Start-Sleep -Seconds 2
+  Capture-FlowScreenshot -Context $Context -Name "ap-shortage-after-buy-return" | Out-Null
+
+  Invoke-FlowTap -Context $Context -Name "ap-shortage-forward-after-buy-return" -X $coords.explorationForward.x -Y $coords.explorationForward.y
+  $buyReturnProbe = Wait-FlowServerEventOptional -Context $Context -Step "ap-shortage-forward-after-buy-return-probe" -Tag "connect_app_probe" -Path "" -TimeoutSeconds 8
+  if ($buyReturnProbe -and $buyReturnProbe.path -eq "/connect/app/exploration/get_floor") {
+    Add-FlowEvent -Context $Context -Type "ap-shortage-buy-return-stage-reload" -Data ([ordered]@{
+        path = $buyReturnProbe.path
+        decryptedParams = $buyReturnProbe.decryptedParams
+      })
+    Wait-FlowServerEvent -Context $Context -Step "ap-shortage-buy-return-get-floor-response" -Tag "connect_app_response" -Path "/connect/app/exploration/get_floor" -Fields @{ regionId = 0; floorId = 2; areaNo = 1 } -TimeoutSeconds 10 | Out-Null
+    Start-Sleep -Seconds 4
+    Capture-FlowScreenshot -Context $Context -Name "ap-shortage-stage-after-buy-return-reload" | Out-Null
+    Invoke-FlowTap -Context $Context -Name "ap-shortage-forward-after-buy-return-reload" -X $coords.explorationForward.x -Y $coords.explorationForward.y
+    $buyReturnProbe = Wait-FlowServerEventOptional -Context $Context -Step "ap-shortage-forward-after-buy-return-reload-probe" -Tag "connect_app_probe" -Path "/connect/app/exploration/explore" -Params @{ area_id = "0"; floor_id = "1" } -TimeoutSeconds 8
+  } elseif ($buyReturnProbe -and $buyReturnProbe.path -ne "/connect/app/exploration/explore") {
+    Stop-FlowWithFailure -Context $Context -FailureClass "ap-shortage-buy-return-wrong-route" -Step "ap-shortage-forward-after-buy-return" -Message "After returning from the AP purchase page, tapping the stage forward coordinate emitted $($buyReturnProbe.path), not /exploration/explore."
+  }
+  if (-not $buyReturnProbe) {
+    Invoke-FlowTap -Context $Context -Name "ap-shortage-return-after-buy-return" -X $coords.apShortageReturn.x -Y $coords.apShortageReturn.y
+    Wait-FlowServerQuiet -Context $Context -Step "ap-shortage-return-after-buy-return-settle" -QuietSeconds 3 -TimeoutSeconds 12
+    Start-Sleep -Seconds 2
+    Capture-FlowScreenshot -Context $Context -Name "ap-shortage-stage-after-buy-return" | Out-Null
+    Invoke-FlowTap -Context $Context -Name "ap-shortage-forward-after-buy-return-and-ap-return" -X $coords.explorationForward.x -Y $coords.explorationForward.y
+    $buyReturnProbe = Wait-FlowServerEventOptional -Context $Context -Step "ap-shortage-forward-after-buy-return-and-ap-return-probe" -Tag "connect_app_probe" -Path "/connect/app/exploration/explore" -Params @{ area_id = "0"; floor_id = "1" } -TimeoutSeconds 8
+  }
+  if (-not $buyReturnProbe) {
+    Stop-FlowWithFailure -Context $Context -FailureClass "ap-shortage-buy-return-stuck" -Step "ap-shortage-buy-return" -Message "After returning from the AP purchase page, neither the stage forward button nor the AP shortage back button restored a usable exploration stage."
+  }
+  Wait-FlowServerEvent -Context $Context -Step "ap-shortage-forward-after-buy-return-response" -Tag "connect_app_response" -Path "/connect/app/exploration/explore" -Fields @{ source = "exploration ap fail"; nextScene = 81100; saved = $false; currentAp = 0 } -TimeoutSeconds 10 | Out-Null
+  Start-Sleep -Seconds 2
+  Capture-FlowScreenshot -Context $Context -Name "ap-shortage-page-after-buy-return-forward" | Out-Null
+  Assert-FlowApShortagePlayerSaveUnchanged -Context $Context -InitialSave $initialSave
+}
+
+function Invoke-FlowExplorationLevelUpSmoke {
+  param($Context)
+
+  $coords = Enter-FlowExplorationArea0Main -Context $Context
+
+  Invoke-FlowTapThenWaitProbe -Context $Context -Name "levelup-forward" -X $coords.explorationForward.x -Y $coords.explorationForward.y -Path "/connect/app/exploration/explore" -Params @{ area_id = "0"; floor_id = "1" } -TimeoutSeconds 25 | Out-Null
+  Wait-FlowServerEvent -Context $Context -Step "levelup-forward-response" -Tag "connect_app_response" -Path "/connect/app/exploration/explore" -Fields @{
+    regionId = 0
+    floorId = 2
+    areaNo = 1
+    movesDone = 1
+    progress = 10
+    gold = 18
+    getExp = 3
+    levelUp = $true
+    isLimit = $false
+    beforeLevel = 17
+    level = 18
+    profileExp = 0
+    nextExp = 2100
+    remainingAp = 25
+    abilityPoints = 3
+    abilityPointsGranted = 3
+  } -TimeoutSeconds 10 | Out-Null
+  Wait-FlowServerEvent -Context $Context -Step "levelup-status-probe" -Tag "connect_app_probe" -Path "/connect/app/town/lvup_status" -TimeoutSeconds 20 | Out-Null
+  Wait-FlowServerEvent -Context $Context -Step "levelup-status-response" -Tag "connect_app_response" -Path "/connect/app/town/lvup_status" -Fields @{
+    source = "minimal town lvup status"
+    nextScene = 84100
+    level = 18
+    profileExp = 0
+    nextExp = 2100
+    apCurrent = 25
+    apMax = 25
+    bcCurrent = 25
+    bcMax = 25
+    abilityPoints = 3
+  } -TimeoutSeconds 10 | Out-Null
+  Start-Sleep -Seconds 5
+  Capture-FlowScreenshot -Context $Context -Name "levelup-after-forward" | Out-Null
+  Assert-FlowLevelUpPlayerSave -Context $Context
+
+  Invoke-FlowTap -Context $Context -Name "levelup-ap-all" -X $coords.lvupApAll.x -Y $coords.lvupApAll.y
+  Wait-FlowServerQuiet -Context $Context -Step "levelup-ap-all-local-settle" -QuietSeconds 2 -TimeoutSeconds 8
+  Capture-FlowScreenshot -Context $Context -Name "levelup-after-ap-all" | Out-Null
+  Invoke-FlowTapThenWaitProbe -Context $Context -Name "levelup-ok" -X $coords.lvupOk.x -Y $coords.lvupOk.y -Path "/connect/app/town/pointsetting" -Params @{ ap = "3"; bc = "0" } -TimeoutSeconds 20 | Out-Null
+  Wait-FlowServerEvent -Context $Context -Step "levelup-pointsetting-response" -Tag "connect_app_response" -Path "/connect/app/town/pointsetting" -Fields @{
+    source = "minimal town pointsetting"
+    nextScene = 2100
+    requestedAp = 3
+    requestedBc = 0
+    apAllocated = 3
+    bcAllocated = 0
+    remainingAbilityPoints = 0
+    apCurrent = 28
+    apMax = 28
+    bcCurrent = 25
+    bcMax = 25
+    abilityPoints = 0
+    saved = $true
+  } -TimeoutSeconds 10 | Out-Null
+  Start-Sleep -Seconds 5
+  Capture-FlowScreenshot -Context $Context -Name "levelup-after-pointsetting" | Out-Null
+  Assert-FlowLevelUpPointsettingPlayerSave -Context $Context
 }
 
 function Collect-FlowArtifacts {
@@ -1309,8 +1890,41 @@ function Invoke-FlowSelfCheck {
       '[2026-01-01T00:00:04.000Z] connect_app_probe {"path":"/connect/app/exploration/explore","decryptedParams":{"area_id":"4","floor_id":"5","auto_build":"1"}}',
       '[2026-01-01T00:00:04.100Z] connect_app_response {"path":"/connect/app/exploration/explore","regionId":0,"floorId":6,"areaNo":5,"movesDone":16,"progress":100,"gold":55,"getExp":9}',
       '[2026-01-01T00:00:05.000Z] connect_app_probe {"path":"/connect/app/exploration/get_floor","decryptedParams":{"area_id":"5","floor_id":"6","check":"1"}}',
-      '[2026-01-01T00:00:05.100Z] connect_app_response {"path":"/connect/app/exploration/get_floor","regionId":0,"floorId":7,"areaNo":6,"movesDone":0,"progress":0,"hasNextFloor":false,"bg":"adv_bg14"}'
+      '[2026-01-01T00:00:05.100Z] connect_app_response {"path":"/connect/app/exploration/get_floor","regionId":0,"floorId":7,"areaNo":6,"movesDone":0,"progress":0,"hasNextFloor":false,"bg":"adv_bg14"}',
+      '[2026-01-01T00:00:06.000Z] connect_app_probe {"path":"/connect/app/exploration/explore","decryptedParams":{"area_id":"0","floor_id":"1","auto_build":"1"}}',
+      '[2026-01-01T00:00:06.100Z] connect_app_response {"path":"/connect/app/exploration/explore","source":"exploration ap fail","nextScene":81100,"saved":false,"currentAp":0,"floorKey":"0:2","regionId":0,"floorId":2,"areaNo":1}',
+      '[2026-01-01T00:00:07.000Z] connect_app_probe {"path":"/connect/app/exploration/explore","decryptedParams":{"area_id":"0","floor_id":"1","auto_build":"1"}}',
+      '[2026-01-01T00:00:07.100Z] connect_app_response {"path":"/connect/app/exploration/explore","regionId":0,"floorId":2,"areaNo":1,"movesDone":1,"progress":10,"gold":18,"getExp":3,"levelUp":true,"isLimit":false,"beforeLevel":17,"level":18,"profileExp":0,"nextExp":2100,"remainingAp":25,"abilityPoints":3,"abilityPointsGranted":3}',
+      '[2026-01-01T00:00:08.000Z] connect_app_probe {"path":"/connect/app/town/lvup_status","decryptedParams":{}}',
+      '[2026-01-01T00:00:08.100Z] connect_app_response {"path":"/connect/app/town/lvup_status","source":"minimal town lvup status","nextScene":84100,"level":18,"profileExp":0,"nextExp":2100,"apCurrent":25,"apMax":25,"bcCurrent":25,"bcMax":25,"abilityPoints":3}',
+      '[2026-01-01T00:00:09.000Z] connect_app_probe {"path":"/connect/app/town/pointsetting","decryptedParams":{"ap":"3","bc":"0"}}',
+      '[2026-01-01T00:00:09.100Z] connect_app_response {"path":"/connect/app/town/pointsetting","source":"minimal town pointsetting","nextScene":2100,"requestedAp":3,"requestedBc":0,"apAllocated":3,"bcAllocated":0,"remainingAbilityPoints":0,"apCurrent":28,"apMax":28,"bcCurrent":25,"bcMax":25,"abilityPoints":0,"saved":true}'
     ) | Set-Content -LiteralPath $ctx.serverOut -Encoding UTF8
+    Set-FlowApShortagePlayerSave -Context $ctx
+    $initialApShortageSave = Read-FlowPlayerSave -Context $ctx -Step "self-ap-shortage-save-before"
+    Assert-FlowApShortagePlayerSaveUnchanged -Context $ctx -InitialSave $initialApShortageSave
+    Set-FlowLevelUpPlayerSave -Context $ctx
+    $levelUpSave = Read-FlowPlayerSave -Context $ctx -Step "self-levelup-save-before"
+    $levelUpSave.profile.level = 18
+    $levelUpSave.profile.exp = 0
+    $levelUpSave.profile.nextExp = 2100
+    $levelUpSave.resources.ap.current = 25
+    $levelUpSave.resources.bc.current = 25
+    $levelUpSave.progression.abilityPoints.unspent = 3
+    $levelUpSave.progression.abilityPoints.fromLevels = 3
+    $levelUpSave.exploration.movesByFloor | Add-Member -NotePropertyName "0:2" -NotePropertyValue 1 -Force
+    $utf8NoBom = New-Object -TypeName System.Text.UTF8Encoding -ArgumentList $false
+    [System.IO.File]::WriteAllText($ctx.playerSave, ($levelUpSave | ConvertTo-Json -Depth 40) + [Environment]::NewLine, $utf8NoBom)
+    Assert-FlowLevelUpPlayerSave -Context $ctx
+    $levelUpSave.resources.ap.current = 28
+    $levelUpSave.resources.ap.max = 28
+    $levelUpSave.resources.bc.current = 25
+    $levelUpSave.resources.bc.max = 25
+    $levelUpSave.progression.abilityPoints.unspent = 0
+    $levelUpSave.progression.abilityPoints.apAllocated = 3
+    $levelUpSave.progression.abilityPoints.bcAllocated = 0
+    [System.IO.File]::WriteAllText($ctx.playerSave, ($levelUpSave | ConvertTo-Json -Depth 40) + [Environment]::NewLine, $utf8NoBom)
+    Assert-FlowLevelUpPointsettingPlayerSave -Context $ctx
     Wait-FlowServerEvent -Context $ctx -Step "self-floor" -Tag "connect_app_probe" -Path "/connect/app/exploration/floor" -Params @{ area_id = "0" } -TimeoutSeconds 2 | Out-Null
     Wait-FlowServerEvent -Context $ctx -Step "self-floor-response" -Tag "connect_app_response" -Path "/connect/app/exploration/floor" -Fields @{ regionId = 0; maxProgress = 10; maxProgressFloorId = 7 } -TimeoutSeconds 2 | Out-Null
     Wait-FlowServerEvent -Context $ctx -Step "self-get-floor" -Tag "connect_app_probe" -Path "/connect/app/exploration/get_floor" -Params @{ area_id = "0"; check = "1" } -TimeoutSeconds 2 | Out-Null
@@ -1323,6 +1937,14 @@ function Invoke-FlowSelfCheck {
     Wait-FlowServerEvent -Context $ctx -Step "self-clear-explore-response" -Tag "connect_app_response" -Path "/connect/app/exploration/explore" -Fields @{ floorId = 6; areaNo = 5; progress = 100 } -TimeoutSeconds 2 | Out-Null
     Wait-FlowServerEvent -Context $ctx -Step "self-next-floor-get-floor" -Tag "connect_app_probe" -Path "/connect/app/exploration/get_floor" -Params @{ area_id = "5"; floor_id = "6" } -TimeoutSeconds 2 | Out-Null
     Wait-FlowServerEvent -Context $ctx -Step "self-next-floor-get-floor-response" -Tag "connect_app_response" -Path "/connect/app/exploration/get_floor" -Fields @{ floorId = 7; areaNo = 6; progress = 0; hasNextFloor = $false } -TimeoutSeconds 2 | Out-Null
+    Wait-FlowServerEvent -Context $ctx -Step "self-ap-shortage-explore" -Tag "connect_app_probe" -Path "/connect/app/exploration/explore" -Params @{ area_id = "0"; floor_id = "1" } -TimeoutSeconds 2 | Out-Null
+    Wait-FlowServerEvent -Context $ctx -Step "self-ap-shortage-explore-response" -Tag "connect_app_response" -Path "/connect/app/exploration/explore" -Fields @{ source = "exploration ap fail"; nextScene = 81100; saved = $false; currentAp = 0 } -TimeoutSeconds 2 | Out-Null
+    Wait-FlowServerEvent -Context $ctx -Step "self-levelup-explore" -Tag "connect_app_probe" -Path "/connect/app/exploration/explore" -Params @{ area_id = "0"; floor_id = "1" } -TimeoutSeconds 2 | Out-Null
+    Wait-FlowServerEvent -Context $ctx -Step "self-levelup-explore-response" -Tag "connect_app_response" -Path "/connect/app/exploration/explore" -Fields @{ levelUp = $true; isLimit = $false; beforeLevel = 17; level = 18; profileExp = 0; nextExp = 2100; remainingAp = 25; abilityPoints = 3; abilityPointsGranted = 3 } -TimeoutSeconds 2 | Out-Null
+    Wait-FlowServerEvent -Context $ctx -Step "self-levelup-status-probe" -Tag "connect_app_probe" -Path "/connect/app/town/lvup_status" -TimeoutSeconds 2 | Out-Null
+    Wait-FlowServerEvent -Context $ctx -Step "self-levelup-status-response" -Tag "connect_app_response" -Path "/connect/app/town/lvup_status" -Fields @{ source = "minimal town lvup status"; nextScene = 84100; level = 18; profileExp = 0; nextExp = 2100; apCurrent = 25; apMax = 25; bcCurrent = 25; bcMax = 25; abilityPoints = 3 } -TimeoutSeconds 2 | Out-Null
+    Wait-FlowServerEvent -Context $ctx -Step "self-levelup-pointsetting-probe" -Tag "connect_app_probe" -Path "/connect/app/town/pointsetting" -Params @{ ap = "3"; bc = "0" } -TimeoutSeconds 2 | Out-Null
+    Wait-FlowServerEvent -Context $ctx -Step "self-levelup-pointsetting-response" -Tag "connect_app_response" -Path "/connect/app/town/pointsetting" -Fields @{ source = "minimal town pointsetting"; nextScene = 2100; requestedAp = 3; requestedBc = 0; apAllocated = 3; bcAllocated = 0; remainingAbilityPoints = 0; apCurrent = 28; apMax = 28; bcCurrent = 25; bcMax = 25; abilityPoints = 0; saved = $true } -TimeoutSeconds 2 | Out-Null
     $plainUi = [xml]"<?xml version='1.0'?><hierarchy><node class='android.view.View' /></hierarchy>"
     $webUi = [xml]"<?xml version='1.0'?><hierarchy><node class='android.webkit.WebView' /></hierarchy>"
     if (Test-FlowUiHasWebView -Ui $plainUi) {
@@ -1348,6 +1970,7 @@ function Invoke-FlowSelfCheck {
         requests = $ctx.requestsJsonl
         summary = $ctx.summaryTxt
         summaryJson = $ctx.summaryJson
+        playerSave = $ctx.playerSave
         serverOut = $ctx.serverOut
       }
     }
@@ -1402,6 +2025,20 @@ function Invoke-FlowSelfCheck {
 function Get-FlowScenarioCatalog {
   @(
     [ordered]@{
+      name = "mainmenu-faction-smoke"
+      default = $false
+      startsRuntime = $true
+      ownsServer = $true
+      description = "Login with a technique-faction artifact save and verify the main-menu fairy selector and screenshot."
+    },
+    [ordered]@{
+      name = "mainmenu-buttons-route-smoke"
+      default = $false
+      startsRuntime = $true
+      ownsServer = $true
+      description = "Login to main menu, tap representative main/menu entries, verify their first route, screenshot pages, and return to main menu."
+    },
+    [ordered]@{
       name = "exploration-smoke"
       default = $true
       startsRuntime = $true
@@ -1428,6 +2065,20 @@ function Get-FlowScenarioCatalog {
       startsRuntime = $true
       ownsServer = $true
       description = "Login to main menu, enter region 0 area 5 with a flow-only near-clear seed, verify floor-clear, then enter area 6."
+    },
+    [ordered]@{
+      name = "exploration-ap-shortage-smoke"
+      default = $false
+      startsRuntime = $true
+      ownsServer = $true
+      description = "Login with an artifact-local AP=0 save, verify AP shortage, AP shortage back, AP purchase page back, and unchanged save."
+    },
+    [ordered]@{
+      name = "exploration-levelup-smoke"
+      default = $false
+      startsRuntime = $true
+      ownsServer = $true
+      description = "Login with a Lv17 artifact-local save at 1997/2000 EXP, advance once, and verify Lv18/AP-BC recovery/ability-point save state."
     },
     [ordered]@{
       name = "self-check"
@@ -1515,7 +2166,7 @@ function Invoke-Flow {
   if ($Scenario -eq "self-check") {
     return Invoke-FlowSelfCheck -Scenario $Scenario -Tag $Tag
   }
-  $supportedRuntimeScenarios = @("exploration-smoke", "exploration-walk-smoke", "exploration-forward-visual-smoke", "exploration-floor-clear-smoke")
+  $supportedRuntimeScenarios = @("mainmenu-faction-smoke", "mainmenu-buttons-route-smoke", "exploration-smoke", "exploration-walk-smoke", "exploration-forward-visual-smoke", "exploration-floor-clear-smoke", "exploration-ap-shortage-smoke", "exploration-levelup-smoke")
   if ($Scenario -notin $supportedRuntimeScenarios) {
     $ctx = New-FlowContext -Scenario $Scenario -Tag $Tag
     $supported = (@(Get-FlowScenarioCatalog).name -join ", ")
@@ -1526,6 +2177,15 @@ function Invoke-Flow {
   try {
     Add-FlowEvent -Context $ctx -Type "flow-start" -Data ([ordered]@{ scenario = $Scenario })
     $serverEnvironment = @{}
+    if ($Scenario -eq "exploration-ap-shortage-smoke") {
+      Set-FlowApShortagePlayerSave -Context $ctx
+    }
+    if ($Scenario -eq "exploration-levelup-smoke") {
+      Set-FlowLevelUpPlayerSave -Context $ctx
+    }
+    if ($Scenario -eq "mainmenu-faction-smoke") {
+      Set-FlowMainmenuFactionPlayerSave -Context $ctx
+    }
     if ($Scenario -eq "exploration-floor-clear-smoke") {
       $serverEnvironment["KSSMA_EXPLORATION_MOVES_SEED"] = '{"4:6":15}'
     }
@@ -1536,10 +2196,14 @@ function Invoke-Flow {
     Invoke-FlowRuntimeGate -Context $ctx
     Invoke-FlowLaunchAndLogin -Context $ctx
     switch ($Scenario) {
+      "mainmenu-faction-smoke" { Invoke-FlowMainmenuFactionSmoke -Context $ctx }
+      "mainmenu-buttons-route-smoke" { Invoke-FlowMainmenuButtonsRouteSmoke -Context $ctx }
       "exploration-smoke" { Invoke-FlowExplorationSmoke -Context $ctx }
       "exploration-walk-smoke" { Invoke-FlowExplorationWalkSmoke -Context $ctx }
       "exploration-forward-visual-smoke" { Invoke-FlowExplorationForwardVisualSmoke -Context $ctx }
       "exploration-floor-clear-smoke" { Invoke-FlowExplorationFloorClearSmoke -Context $ctx }
+      "exploration-ap-shortage-smoke" { Invoke-FlowExplorationApShortageSmoke -Context $ctx }
+      "exploration-levelup-smoke" { Invoke-FlowExplorationLevelUpSmoke -Context $ctx }
     }
     Add-FlowEvent -Context $ctx -Type "flow-pass" -Data ([ordered]@{ scenario = $Scenario })
     return Complete-FlowResult -Context $ctx -Ok $true
@@ -1548,6 +2212,6 @@ function Invoke-Flow {
     $failureStep = if ($_.Exception.Data["FlowFailureStep"]) { $_.Exception.Data["FlowFailureStep"] } else { "flow" }
     return Complete-FlowResult -Context $ctx -Ok $false -FailureClass $failureClass -FailureStep $failureStep -FailureMessage $_.Exception.Message
   } finally {
-    Stop-FlowServer -Context $ctx
+    Stop-FlowServer -Context $ctx | Out-Null
   }
 }

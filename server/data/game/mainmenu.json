@@ -5,7 +5,24 @@
   },
   "information": {
     "fairyPose": 2,
-    "fairyFace": 5,
+    "fairyFace": 4,
+    "byCountry": {
+      "1": {
+        "fairyCharacterId": 117,
+        "fairyPose": 1,
+        "fairyFace": 4
+      },
+      "2": {
+        "fairyCharacterId": 120,
+        "fairyPose": 1,
+        "fairyFace": 8
+      },
+      "3": {
+        "fairyCharacterId": 111,
+        "fairyPose": 2,
+        "fairyFace": 4
+      }
+    },
     "message": {
       "text": "Welcome back.",
       "color": "0xFFFFFF",

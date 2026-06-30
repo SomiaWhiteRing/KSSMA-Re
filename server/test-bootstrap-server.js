@@ -17,17 +17,28 @@ const {
   createExplorationFloorXml,
   createExplorationGetFloorXml,
   createExplorationLockedXml,
+  createGachaSelectSkeletonXml,
+  createLoginMainmenuXml,
+  createMainmenuUpdateXml,
+  createMainmenuRouteXml,
+  createTownLvupStatusXml,
+  createTownPointsettingXml,
   EXPLORATION_AREA_XML,
   EXPLORATION_EXPLORE_XML,
   EXPLORATION_FLOOR_XML,
   EXPLORATION_GET_FLOOR_XML,
+  TOWN_LVUP_STATUS_XML,
+  TOWN_POINTSETTING_XML,
   EXPLORATION_REGIONS,
   EXPLORATION_FLOORS,
   GAME_EXPLORATION_DATA,
   GAME_MAINMENU_DATA,
+  GAME_PLAYER_LEVEL_EXP_TABLE,
   DEFAULT_PLAYER_SAVE,
   SERVER_WORLD_DATA,
+  MAINMENU_ROUTE_STUBS,
   MAINMENU_UPDATE_XML,
+  getMainmenuInformationForPlayer,
   getLoginOkXml,
   getLoginXmlSource,
   LOGIN_OK_XML,
@@ -38,9 +49,32 @@ const {
   parsePortList,
   WEB_SCENETO_LOCATION,
   WEB_STUB_HTML,
+  readSampleSaveFile,
 } = require("./bootstrap-server");
 
 const CONNECT_APP_KEY = "rBwj1MIAivVN222b";
+const DATA_META_FIELD_NAMES = new Set([
+  "candidateNextExp",
+  "caveat",
+  "confidence",
+  "evidence",
+  "fc2MaxStatPoints",
+  "fc2NextExp",
+  "fc2NextExpUncertain",
+  "fetchedVia",
+  "mobileNextExp",
+  "note",
+  "notes",
+  "provenance",
+  "scope",
+  "source",
+  "sourceRank",
+  "sourceRankMeaning",
+  "sources",
+  "url",
+  "versionNote",
+  "weakCandidateEvidence",
+]);
 
 function post(port, path, body) {
   return new Promise((resolve, reject) => {
@@ -71,6 +105,31 @@ function post(port, path, body) {
     req.on("error", reject);
     req.end(body);
   });
+}
+
+function walkJsonData(value, visit, pathParts = []) {
+  if (Array.isArray(value)) {
+    value.forEach((item, index) => walkJsonData(item, visit, pathParts.concat(`[${index}]`)));
+    return;
+  }
+  if (!value || typeof value !== "object") {
+    return;
+  }
+  for (const [key, child] of Object.entries(value)) {
+    visit(key, pathParts.concat(key));
+    walkJsonData(child, visit, pathParts.concat(key));
+  }
+}
+
+function assertNoDataMetaFields(filePath) {
+  const data = JSON.parse(fs.readFileSync(filePath, "utf8"));
+  const offenders = [];
+  walkJsonData(data, (key, pathParts) => {
+    if (DATA_META_FIELD_NAMES.has(key)) {
+      offenders.push(pathParts.join("."));
+    }
+  });
+  assert.deepEqual(offenders, [], `${filePath} contains documentation/provenance fields`);
 }
 
 function get(port, path) {
@@ -118,6 +177,15 @@ function connectAppBody(values) {
 }
 
 function assertPlayerHeader(xml, expected) {
+  if (expected.leaderSerialId !== undefined) {
+    assert.match(xml, new RegExp(`<your_data>[\\s\\S]*<leader_serial_id>${expected.leaderSerialId}</leader_serial_id>`));
+  }
+  if (expected.ownerCardSerialId !== undefined) {
+    assert.match(xml, new RegExp(`<owner_card_list>[\\s\\S]*<serial_id>${expected.ownerCardSerialId}</serial_id>`));
+  }
+  if (expected.ownerCardMasterCardId !== undefined) {
+    assert.match(xml, new RegExp(`<owner_card_list>[\\s\\S]*<master_card_id>${expected.ownerCardMasterCardId}</master_card_id>`));
+  }
   if (expected.apCurrent !== undefined) {
     assert.match(xml, new RegExp(`<your_data>[\\s\\S]*<ap>[\\s\\S]*<current>${expected.apCurrent}</current>`));
   }
@@ -145,9 +213,41 @@ function assertPlayerHeader(xml, expected) {
   if (expected.friendshipPoint !== undefined) {
     assert.match(xml, new RegExp(`<your_data>[\\s\\S]*<friendship_point>${expected.friendshipPoint}</friendship_point>`));
   }
+  if (expected.countryId !== undefined) {
+    assert.match(xml, new RegExp(`<your_data>[\\s\\S]*<country_id>${expected.countryId}</country_id>`));
+  }
   if (expected.nextExp !== undefined) {
     assert.match(xml, new RegExp(`<next_exp>${expected.nextExp}</next_exp>`));
   }
+  if (expected.freeApBcPoint !== undefined) {
+    assert.match(xml, new RegExp(`<your_data>[\\s\\S]*<free_ap_bc_point>${expected.freeApBcPoint}</free_ap_bc_point>`));
+  }
+}
+
+function assertMainmenuInformation(xml, expected) {
+  assert.match(xml, /<mainmenu>/);
+  assert.match(xml, /<current_bgfile>mainbg_an<\/current_bgfile>/);
+  assert.match(xml, /<previous_bgfile>mainbg_an<\/previous_bgfile>/);
+  assert.match(xml, /<infomation>/);
+  assert.match(xml, new RegExp(`<fairy_pose>${expected.fairyPose}</fairy_pose>`));
+  assert.match(xml, new RegExp(`<fairy_face>${expected.fairyFace}</fairy_face>`));
+  assert.match(xml, /<text>Welcome back\.<\/text>/);
+  assert.match(xml, /<color>0xFFFFFF<\/color>/);
+  assert.match(xml, /<size>20<\/size>/);
+  assert.doesNotMatch(xml, /<currentBgfile>/);
+  assert.doesNotMatch(xml, /<imagefile>/);
+  assert.doesNotMatch(xml, /<focus>/);
+  assert.doesNotMatch(xml, /<link>/);
+  assert.doesNotMatch(xml, /<banner>/);
+  assert.doesNotMatch(xml, /<rewards>/);
+  assert.doesNotMatch(xml, /<event_type>/);
+}
+
+function saveWithFaction(faction) {
+  const save = JSON.parse(JSON.stringify(DEFAULT_PLAYER_SAVE));
+  save.profile.faction = faction;
+  delete save.profile.countryId;
+  return save;
 }
 
 async function main() {
@@ -155,6 +255,17 @@ async function main() {
   const previousLoginResponse = process.env.LOGIN_RESPONSE;
   const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "kssma-player-save-"));
   const tempPlayerSavePath = path.join(tempDir, "player-save.json");
+
+  for (const relativePath of [
+    "server/data/game/exploration.json",
+    "server/data/game/mainmenu.json",
+    "server/data/game/player-level-exp-table.json",
+    "server/data/player/default-save.json",
+    "server/data/server/masterdata-routes.json",
+    "server/data/server/worlds.json",
+  ]) {
+    assertNoDataMetaFields(path.join(__dirname, "..", relativePath));
+  }
 
   assert.deepEqual(parsePortList("", 50005), [50005]);
   assert.deepEqual(parsePortList("50005,10001 50005", 50005), [50005, 10001]);
@@ -175,8 +286,12 @@ async function main() {
   assert.equal(DEFAULT_PLAYER_SAVE.resources.bc.current, 25);
   assert.equal(DEFAULT_PLAYER_SAVE.resources.bc.max, 25);
   assert.equal(DEFAULT_PLAYER_SAVE.resources.bc.regenSeconds, 60);
-  assert.equal(DEFAULT_PLAYER_SAVE.cards.count, 0);
+  assert.equal(DEFAULT_PLAYER_SAVE.profile.leaderSerialId, 1);
+  assert.equal(DEFAULT_PLAYER_SAVE.cards.count, 1);
   assert.equal(DEFAULT_PLAYER_SAVE.cards.max, 350);
+  assert.equal(DEFAULT_PLAYER_SAVE.cards.instances[0].serialId, 1);
+  assert.equal(DEFAULT_PLAYER_SAVE.cards.instances[0].masterCardId, 22);
+  assert.deepEqual(DEFAULT_PLAYER_SAVE.cards.decks[0].cardInstanceIds, [1]);
   assert.equal(DEFAULT_PLAYER_SAVE.friends.count, 0);
   assert.equal(DEFAULT_PLAYER_SAVE.friends.max, 30);
   assert.equal(DEFAULT_PLAYER_SAVE.gacha.friendshipCost, 200);
@@ -184,6 +299,17 @@ async function main() {
   assert.equal(DEFAULT_PLAYER_SAVE.exploration.regions["0"].unlocked, true);
   assert.equal(DEFAULT_PLAYER_SAVE.exploration.regions["1"].unlocked, false);
   assert.deepEqual(DEFAULT_PLAYER_SAVE.exploration.movesByFloor, {});
+  const level17Row = GAME_PLAYER_LEVEL_EXP_TABLE.levels.find((row) => row.level === 17);
+  const level18Row = GAME_PLAYER_LEVEL_EXP_TABLE.levels.find((row) => row.level === 18);
+  const level10Row = GAME_PLAYER_LEVEL_EXP_TABLE.levels.find((row) => row.level === 10);
+  assert.equal(level17Row.nextExp, 2000);
+  assert.equal(level18Row.nextExp, 2100);
+  assert.equal(level10Row.nextExp, 1300);
+  for (const row of GAME_PLAYER_LEVEL_EXP_TABLE.levels) {
+    for (const key of Object.keys(row)) {
+      assert.ok(["friendMax", "level", "nextExp", "statPointsOnLevelUp"].includes(key), `unexpected level table key: ${key}`);
+    }
+  }
   assert.match(EXPLORATION_AREA_XML, /<next_scene>6100<\/next_scene>/);
   assert.match(EXPLORATION_AREA_XML, /<exploration_area>/);
   assert.match(EXPLORATION_AREA_XML, /<your_data>[\s\S]*<ap>[\s\S]*<current>25<\/current>/);
@@ -262,9 +388,15 @@ async function main() {
   assert.match(EXPLORATION_EXPLORE_XML, /<progress>10<\/progress>/);
   assert.match(EXPLORATION_EXPLORE_XML, /<gold>18<\/gold>/);
   assert.match(EXPLORATION_EXPLORE_XML, /<get_exp>3<\/get_exp>/);
+  assert.match(EXPLORATION_EXPLORE_XML, /<lvup>0<\/lvup>/);
+  assert.match(EXPLORATION_EXPLORE_XML, /<is_limit>0<\/is_limit>/);
   assert.match(createExplorationExploreXml(9, { gold: 35, getExp: 6 }), /<progress>9<\/progress>/);
   assert.match(createExplorationExploreXml(9, { gold: 35, getExp: 6 }), /<gold>35<\/gold>/);
   assert.match(createExplorationExploreXml(9, { gold: 35, getExp: 6 }), /<get_exp>6<\/get_exp>/);
+  assert.match(
+    createExplorationExploreXml(10, { gold: 18, getExp: 3 }, { profile: { level: 18, nextExp: 2100 } }, { levelUp: true, isLimit: false }),
+    /<lvup>1<\/lvup>[\s\S]*<is_limit>0<\/is_limit>/
+  );
   assert.match(createExplorationExploreXml(99), /<next_floor>0<\/next_floor>/);
   assert.match(createExplorationExploreXml(100), /<progress>100<\/progress>/);
   assert.match(createExplorationExploreXml(100), /<next_floor>0<\/next_floor>/);
@@ -279,48 +411,110 @@ async function main() {
   assert.match(createExplorationGetFloorXml(0, 2, 0, { profile: { nextExp: 123 } }), /<next_exp>123<\/next_exp>/);
   assert.match(EXPLORATION_EXPLORE_XML, /<event_type>0<\/event_type>/);
   assert.doesNotMatch(EXPLORATION_EXPLORE_XML, /<get_exp>0<\/get_exp>/);
-  assert.match(MAINMENU_UPDATE_XML, /<mainmenu>/);
-  assert.match(MAINMENU_UPDATE_XML, /<current_bgfile>mainbg_an<\/current_bgfile>/);
-  assert.match(MAINMENU_UPDATE_XML, /<previous_bgfile>mainbg_an<\/previous_bgfile>/);
-  assert.match(MAINMENU_UPDATE_XML, /<infomation>/);
-  assert.match(MAINMENU_UPDATE_XML, /<fairy_pose>2<\/fairy_pose>/);
-  assert.match(MAINMENU_UPDATE_XML, /<fairy_face>5<\/fairy_face>/);
-  assert.match(MAINMENU_UPDATE_XML, /<text>Welcome back\.<\/text>/);
-  assert.match(MAINMENU_UPDATE_XML, /<color>0xFFFFFF<\/color>/);
-  assert.match(MAINMENU_UPDATE_XML, /<size>20<\/size>/);
-  assert.doesNotMatch(MAINMENU_UPDATE_XML, /<currentBgfile>/);
-  assert.doesNotMatch(MAINMENU_UPDATE_XML, /<imagefile>/);
-  assert.doesNotMatch(MAINMENU_UPDATE_XML, /<focus>/);
-  assert.doesNotMatch(MAINMENU_UPDATE_XML, /<link>/);
-  assert.doesNotMatch(MAINMENU_UPDATE_XML, /<banner>/);
-  assert.doesNotMatch(MAINMENU_UPDATE_XML, /<rewards>/);
-  assert.doesNotMatch(MAINMENU_UPDATE_XML, /<event_type>/);
+  assert.match(TOWN_LVUP_STATUS_XML, /<next_scene>84100<\/next_scene>/);
+  assert.match(TOWN_LVUP_STATUS_XML, /<body><\/body>/);
+  assert.match(TOWN_LVUP_STATUS_XML, /<your_data>[\s\S]*<free_ap_bc_point>0<\/free_ap_bc_point>/);
+  assertPlayerHeader(TOWN_LVUP_STATUS_XML, {
+    leaderSerialId: 1,
+    ownerCardSerialId: 1,
+    ownerCardMasterCardId: 22,
+  });
+  assert.match(TOWN_POINTSETTING_XML, /<next_scene>2100<\/next_scene>/);
+  assert.match(TOWN_POINTSETTING_XML, /<mainmenu>/);
+  assertMainmenuInformation(TOWN_POINTSETTING_XML, { fairyPose: 1, fairyFace: 4 });
+  assertPlayerHeader(
+    createTownLvupStatusXml({
+      profile: { level: 18, exp: 0, nextExp: 2100, percentage: 0 },
+      resources: { ap: { current: 25, max: 25 }, bc: { current: 25, max: 25 } },
+      progression: { abilityPoints: { unspent: 3 } },
+    }),
+    {
+      apCurrent: 25,
+      apMax: 25,
+      bcCurrent: 25,
+      bcMax: 25,
+      rank: 18,
+      percentage: 0,
+      freeApBcPoint: 3,
+    }
+  );
+  assertPlayerHeader(
+    createTownPointsettingXml({
+      profile: { level: 18, exp: 0, nextExp: 2100, percentage: 0 },
+      resources: { ap: { current: 28, max: 28 }, bc: { current: 25, max: 25 } },
+      progression: { abilityPoints: { unspent: 0 } },
+    }),
+    {
+      apCurrent: 28,
+      apMax: 28,
+      bcCurrent: 25,
+      bcMax: 25,
+      rank: 18,
+      percentage: 0,
+      freeApBcPoint: 0,
+    }
+  );
+  assertMainmenuInformation(MAINMENU_UPDATE_XML, { fairyPose: 1, fairyFace: 4 });
+  for (const [faction, countryId, fairyCharacterId, fairyPose, fairyFace] of [
+    ["sword", 1, 117, 1, 4],
+    ["technique", 2, 120, 1, 8],
+    ["magic", 3, 111, 2, 4],
+  ]) {
+    const save = saveWithFaction(faction);
+    assert.deepEqual(getMainmenuInformationForPlayer(save), {
+      countryId,
+      fairyCharacterId,
+      fairyPose,
+      fairyFace,
+    });
+    const updateXml = createMainmenuUpdateXml(save);
+    assertPlayerHeader(updateXml, { countryId });
+    assertMainmenuInformation(updateXml, { fairyPose, fairyFace });
+    const loginSampleXml = createLoginMainmenuXml(save);
+    assertPlayerHeader(loginSampleXml, { countryId });
+    assertMainmenuInformation(loginSampleXml, { fairyPose, fairyFace });
+    assert.ok(readSampleSaveFile(`download/image/adv/adv_chara${fairyCharacterId}`)?.length > 0);
+    assert.ok(readSampleSaveFile(`download/image/adv/adv_chara${fairyCharacterId}_${fairyPose}_${fairyFace}`)?.length > 0);
+  }
+  assert.deepEqual(getMainmenuInformationForPlayer({ profile: { countryId: 99 } }), {
+    countryId: 1,
+    fairyCharacterId: 117,
+    fairyPose: 1,
+    fairyFace: 4,
+  });
   assert.equal(getLoginOkXml(), CHECK_INSPECTION_OK_XML);
   assert.equal(getLoginXmlSource(getLoginOkXml()), "minimal");
   process.env.LOGIN_RESPONSE = "tutorial";
   assert.equal(getLoginOkXml(), LOGIN_TUTORIAL_XML);
   assert.equal(getLoginXmlSource(getLoginOkXml()), "assets/bundle/local_forward_tutorial.xml");
   process.env.LOGIN_RESPONSE = "sample";
-  assert.equal(getLoginOkXml(), LOGIN_MAINMENU_XML);
-  assert.equal(getLoginXmlSource(getLoginOkXml()), "assets/bundle/local_battle_player.xml + mainmenu bg");
-  assert.match(getLoginOkXml(), /<mainmenu>/);
-  assert.match(getLoginOkXml(), /<current_bgfile>mainbg_an<\/current_bgfile>/);
-  assert.match(getLoginOkXml(), /<previous_bgfile>mainbg_an<\/previous_bgfile>/);
-  assert.match(getLoginOkXml(), /<infomation>/);
-  assert.match(getLoginOkXml(), /<fairy_pose>2<\/fairy_pose>/);
-  assert.match(getLoginOkXml(), /<fairy_face>5<\/fairy_face>/);
-  assert.match(getLoginOkXml(), /<text>Welcome back\.<\/text>/);
-  assert.match(getLoginOkXml(), /<color>0xFFFFFF<\/color>/);
-  assert.match(getLoginOkXml(), /<size>20<\/size>/);
-  assert.doesNotMatch(getLoginOkXml(), /<currentBgfile>/);
-  assert.doesNotMatch(getLoginOkXml(), /<imagefile>/);
-  assert.doesNotMatch(getLoginOkXml(), /<focus>/);
-  assert.doesNotMatch(getLoginOkXml(), /<link>/);
-  assert.doesNotMatch(getLoginOkXml(), /<banner>/);
-  assert.doesNotMatch(getLoginOkXml(), /<rewards>/);
-  assert.doesNotMatch(getLoginOkXml(), /<event_type>/);
-  assert.doesNotMatch(getLoginOkXml(), /<card_rev>[1-9]/);
-  assert.doesNotMatch(getLoginOkXml(), /<resource_rev>[\s\S]*?<revision>[1-9]/);
+  const loginOkSampleXml = getLoginOkXml();
+  assert.equal(getLoginXmlSource(loginOkSampleXml), "assets/bundle/local_battle_player.xml + mainmenu bg");
+  assertPlayerHeader(loginOkSampleXml, { countryId: 1 });
+  assertMainmenuInformation(loginOkSampleXml, { fairyPose: 1, fairyFace: 4 });
+  assert.doesNotMatch(loginOkSampleXml, /<card_rev>[1-9]/);
+  assert.doesNotMatch(loginOkSampleXml, /<resource_rev>[\s\S]*?<revision>[1-9]/);
+  assert.equal(MAINMENU_ROUTE_STUBS["/connect/app/gacha/select/getcontents"].nextScene, 9100);
+  assert.match(createMainmenuRouteXml("/connect/app/gacha/select/getcontents", DEFAULT_PLAYER_SAVE), /<next_scene>9100<\/next_scene>/);
+  assert.match(createMainmenuRouteXml("/connect/app/gacha/select/getcontents", DEFAULT_PLAYER_SAVE), /<gacha_select>[\s\S]*<xml_contents>[\s\S]*<scroll_height>0<\/scroll_height>/);
+  assert.doesNotMatch(createGachaSelectSkeletonXml(DEFAULT_PLAYER_SAVE), /gac_event_0|gac_free_0|gac_cp_0|<imagefile>/);
+  assertPlayerHeader(createMainmenuRouteXml("/connect/app/gacha/select/getcontents", DEFAULT_PLAYER_SAVE), {
+    apCurrent: DEFAULT_PLAYER_SAVE.resources.ap.current,
+    apMax: DEFAULT_PLAYER_SAVE.resources.ap.max,
+    bcCurrent: DEFAULT_PLAYER_SAVE.resources.bc.current,
+    bcMax: DEFAULT_PLAYER_SAVE.resources.bc.max,
+  });
+  assert.match(createMainmenuRouteXml("/connect/app/battle/area", DEFAULT_PLAYER_SAVE), /<competition_parts>/);
+  assert.match(createMainmenuRouteXml("/connect/app/battle/area", DEFAULT_PLAYER_SAVE), /<next_scene>\s*5100\s*<\/next_scene>/);
+  assert.match(createMainmenuRouteXml("/connect/app/menu/menulist", DEFAULT_PLAYER_SAVE), /<next_scene>20100<\/next_scene>/);
+  assert.match(createMainmenuRouteXml("/connect/app/menu/playerinfo", DEFAULT_PLAYER_SAVE), /<next_scene>26100<\/next_scene>/);
+  assert.match(createMainmenuRouteXml("/connect/app/shop/shop", DEFAULT_PLAYER_SAVE), /<next_scene>8100<\/next_scene>/);
+  assert.match(createMainmenuRouteXml("/connect/app/menu/productlist", DEFAULT_PLAYER_SAVE), /<next_scene>8400<\/next_scene>/);
+  assert.match(createMainmenuRouteXml("/connect/app/item/use", DEFAULT_PLAYER_SAVE), /<next_scene>30200<\/next_scene>/);
+  assert.match(createMainmenuRouteXml("/connect/app/friend/like_user", DEFAULT_PLAYER_SAVE), /<next_scene>17000<\/next_scene>/);
+  assert.match(createMainmenuRouteXml("/connect/app/battle/battle_userlist", DEFAULT_PLAYER_SAVE), /<battle_userlist>/);
+  assert.match(createMainmenuRouteXml("/connect/app/cardselect/savedeckcard", DEFAULT_PLAYER_SAVE), /<next_scene>83200<\/next_scene>/);
+  assert.equal(createMainmenuRouteXml("/connect/app/not/a/mainmenu/route", DEFAULT_PLAYER_SAVE), null);
   delete process.env.LOGIN_RESPONSE;
   assert.deepEqual(
     parseConnectAppBody(
@@ -344,7 +538,8 @@ async function main() {
   process.env.LOGIN_RESPONSE = "sample";
   delete process.env.KSSMA_EXPLORATION_MOVES_SEED;
   const syncedSave = JSON.parse(JSON.stringify(DEFAULT_PLAYER_SAVE));
-  syncedSave.profile.level = 7;
+  syncedSave.profile.level = 10;
+  syncedSave.profile.faction = "technique";
   syncedSave.profile.percentage = 44;
   syncedSave.profile.nextExp = 321;
   syncedSave.resources.ap.current = 19;
@@ -355,6 +550,12 @@ async function main() {
   syncedSave.currencies.friendshipPoint = 88;
   syncedSave.cards.max = 222;
   fs.writeFileSync(tempPlayerSavePath, JSON.stringify(syncedSave), "utf8");
+  const serverLogs = [];
+  const originalWrite = process.stdout.write;
+  process.stdout.write = function writeServerCapture(chunk, encoding, callback) {
+    serverLogs.push(String(chunk));
+    return originalWrite.call(process.stdout, chunk, encoding, callback);
+  };
   const server = createServer();
   await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
   const port = server.address().port;
@@ -406,16 +607,20 @@ async function main() {
     const loginDecoded = decryptAes128EcbBase64(login.buffer.toString("base64"), "rBwj1MIAivVN222b");
     assert.match(loginDecoded, /<mainmenu>/);
     assertPlayerHeader(loginDecoded, {
+      countryId: 2,
       apCurrent: 19,
       apMax: 31,
       bcCurrent: 12,
       bcMax: 33,
       gold: 4567,
-      rank: 7,
+      rank: 10,
       percentage: 44,
       maxCardNum: 222,
       friendshipPoint: 88,
     });
+    assertMainmenuInformation(loginDecoded, { fairyPose: 1, fairyFace: 8 });
+    const loginResponseLog = serverLogs.find((line) => line.includes('"path":"/connect/app/login"') && line.includes("connect_app_response"));
+    assert.match(loginResponseLog, /"mainmenu":\{"countryId":2,"fairyCharacterId":120,"fairyPose":1,"fairyFace":8\}/);
     assert.doesNotMatch(loginDecoded, /<ap>[\s\S]*<current>27<\/current>/);
 
     const mainmenuUpdate = await post(
@@ -430,16 +635,20 @@ async function main() {
     );
     assert.match(mainmenuUpdateDecoded, /<mainmenu>/);
     assertPlayerHeader(mainmenuUpdateDecoded, {
+      countryId: 2,
       apCurrent: 19,
       apMax: 31,
       bcCurrent: 12,
       bcMax: 33,
       gold: 4567,
-      rank: 7,
+      rank: 10,
       percentage: 44,
       maxCardNum: 222,
       friendshipPoint: 88,
     });
+    assertMainmenuInformation(mainmenuUpdateDecoded, { fairyPose: 1, fairyFace: 8 });
+    const mainmenuUpdateResponseLog = serverLogs.find((line) => line.includes('"path":"/connect/app/mainmenu/update"') && line.includes("connect_app_response"));
+    assert.match(mainmenuUpdateResponseLog, /"mainmenu":\{"countryId":2,"fairyCharacterId":120,"fairyPose":1,"fairyFace":8\}/);
 
     const mainmenu = await post(port, "/connect/app/mainmenu?cyt=1", "");
     assert.equal(mainmenu.statusCode, 200);
@@ -449,16 +658,76 @@ async function main() {
     );
     assert.match(mainmenuDecoded, /<mainmenu>/);
     assertPlayerHeader(mainmenuDecoded, {
+      countryId: 2,
       apCurrent: 19,
       apMax: 31,
       bcCurrent: 12,
       bcMax: 33,
       gold: 4567,
-      rank: 7,
+      rank: 10,
       percentage: 44,
       maxCardNum: 222,
       friendshipPoint: 88,
     });
+    assertMainmenuInformation(mainmenuDecoded, { fairyPose: 1, fairyFace: 8 });
+    const mainmenuResponseLog = serverLogs.find((line) => line.includes('"path":"/connect/app/mainmenu"') && line.includes("connect_app_response"));
+    assert.match(mainmenuResponseLog, /"mainmenu":\{"countryId":2,"fairyCharacterId":120,"fairyPose":1,"fairyFace":8\}/);
+
+    const gachaSelect = await post(port, "/connect/app/gacha/select/getcontents?cyt=1", "");
+    assert.equal(gachaSelect.statusCode, 200);
+    const gachaSelectDecoded = decryptAes128EcbBase64(gachaSelect.buffer.toString("base64"), "rBwj1MIAivVN222b");
+    assert.match(gachaSelectDecoded, /<next_scene>9100<\/next_scene>/);
+    assert.match(gachaSelectDecoded, /<gacha_select>[\s\S]*<xml_contents>[\s\S]*<scroll_height>0<\/scroll_height>/);
+    assert.doesNotMatch(gachaSelectDecoded, /gac_event_0|gac_free_0|gac_cp_0|<imagefile>/);
+    assertPlayerHeader(gachaSelectDecoded, {
+      apCurrent: 19,
+      apMax: 31,
+      bcCurrent: 12,
+      bcMax: 33,
+      rank: 10,
+    });
+    const gachaResponseLog = serverLogs.find((line) => line.includes('"path":"/connect/app/gacha/select/getcontents"') && line.includes("connect_app_response"));
+    assert.match(gachaResponseLog, /"command":"gacha"/);
+    assert.match(gachaResponseLog, /"nextScene":9100/);
+
+    const battleArea = await post(port, "/connect/app/battle/area?cyt=1", "");
+    assert.equal(battleArea.statusCode, 200);
+    const battleAreaDecoded = decryptAes128EcbBase64(battleArea.buffer.toString("base64"), "rBwj1MIAivVN222b");
+    assert.match(battleAreaDecoded, /<next_scene>\s*5100\s*<\/next_scene>/);
+    assert.match(battleAreaDecoded, /<competition_parts>/);
+    assertPlayerHeader(battleAreaDecoded, { apCurrent: 19, bcCurrent: 12, rank: 10 });
+
+    const menuList = await post(port, "/connect/app/menu/menulist?cyt=1", "");
+    assert.equal(menuList.statusCode, 200);
+    const menuListDecoded = decryptAes128EcbBase64(menuList.buffer.toString("base64"), "rBwj1MIAivVN222b");
+    assert.match(menuListDecoded, /<next_scene>20100<\/next_scene>/);
+    assert.match(menuListDecoded, /<body><\/body>/);
+    assertPlayerHeader(menuListDecoded, { apCurrent: 19, bcCurrent: 12, rank: 10 });
+
+    const playerInfo = await post(port, "/connect/app/menu/playerinfo?cyt=1", "");
+    assert.equal(playerInfo.statusCode, 200);
+    const playerInfoDecoded = decryptAes128EcbBase64(playerInfo.buffer.toString("base64"), "rBwj1MIAivVN222b");
+    assert.match(playerInfoDecoded, /<next_scene>26100<\/next_scene>/);
+
+    const shop = await post(port, "/connect/app/shop/shop?cyt=1", "");
+    assert.equal(shop.statusCode, 200);
+    const shopDecoded = decryptAes128EcbBase64(shop.buffer.toString("base64"), "rBwj1MIAivVN222b");
+    assert.match(shopDecoded, /<next_scene>8100<\/next_scene>/);
+
+    const productList = await post(port, "/connect/app/menu/productlist?cyt=1", "");
+    assert.equal(productList.statusCode, 200);
+    const productListDecoded = decryptAes128EcbBase64(productList.buffer.toString("base64"), "rBwj1MIAivVN222b");
+    assert.match(productListDecoded, /<next_scene>8400<\/next_scene>/);
+
+    const friendLike = await post(port, "/connect/app/friend/like_user?cyt=1", "");
+    assert.equal(friendLike.statusCode, 200);
+    const friendLikeDecoded = decryptAes128EcbBase64(friendLike.buffer.toString("base64"), "rBwj1MIAivVN222b");
+    assert.match(friendLikeDecoded, /<next_scene>17000<\/next_scene>/);
+
+    const battleUserlist = await post(port, "/connect/app/battle/battle_userlist?cyt=1", "");
+    assert.equal(battleUserlist.statusCode, 200);
+    const battleUserlistDecoded = decryptAes128EcbBase64(battleUserlist.buffer.toString("base64"), "rBwj1MIAivVN222b");
+    assert.match(battleUserlistDecoded, /<battle_userlist>/);
 
     const explorationArea = await post(
       port,
@@ -477,7 +746,7 @@ async function main() {
       bcCurrent: 12,
       bcMax: 33,
       gold: 4567,
-      rank: 7,
+      rank: 10,
       percentage: 44,
       maxCardNum: 222,
       friendshipPoint: 88,
@@ -503,7 +772,7 @@ async function main() {
       bcCurrent: 12,
       bcMax: 33,
       gold: 4567,
-      rank: 7,
+      rank: 10,
       percentage: 44,
       maxCardNum: 222,
       friendshipPoint: 88,
@@ -526,7 +795,7 @@ async function main() {
       bcCurrent: 12,
       bcMax: 33,
       gold: 4567,
-      rank: 7,
+      rank: 10,
       percentage: 44,
       maxCardNum: 222,
       friendshipPoint: 88,
@@ -534,7 +803,6 @@ async function main() {
     });
 
     const capturedLogs = [];
-    const originalWrite = process.stdout.write;
     process.stdout.write = function writeCapture(chunk, encoding, callback) {
       capturedLogs.push(String(chunk));
       if (typeof callback === "function") {
@@ -609,15 +877,17 @@ async function main() {
       bcCurrent: 12,
       bcMax: 33,
       gold: 4585,
-      rank: 7,
-      percentage: 44,
+      rank: 10,
+      percentage: 0,
       maxCardNum: 222,
       friendshipPoint: 88,
-      nextExp: 321,
+      nextExp: 1300,
     });
     const saveAfterExplore = JSON.parse(fs.readFileSync(tempPlayerSavePath, "utf8"));
     assert.equal(saveAfterExplore.resources.ap.current, 18);
     assert.equal(saveAfterExplore.profile.exp, 3);
+    assert.equal(saveAfterExplore.profile.nextExp, 1300);
+    assert.equal(saveAfterExplore.profile.percentage, 0);
     assert.equal(saveAfterExplore.currencies.gold, 4585);
     assert.equal(saveAfterExplore.exploration.movesByFloor["0:2"], 1);
     assert.equal(saveAfterExplore.exploration.currentRegionId, 0);
@@ -649,15 +919,17 @@ async function main() {
       bcCurrent: 12,
       bcMax: 33,
       gold: 4603,
-      rank: 7,
-      percentage: 44,
+      rank: 10,
+      percentage: 0,
       maxCardNum: 222,
       friendshipPoint: 88,
-      nextExp: 321,
+      nextExp: 1300,
     });
     const saveAfterExploreAgain = JSON.parse(fs.readFileSync(tempPlayerSavePath, "utf8"));
     assert.equal(saveAfterExploreAgain.resources.ap.current, 17);
     assert.equal(saveAfterExploreAgain.profile.exp, 6);
+    assert.equal(saveAfterExploreAgain.profile.nextExp, 1300);
+    assert.equal(saveAfterExploreAgain.profile.percentage, 0);
     assert.equal(saveAfterExploreAgain.currencies.gold, 4603);
     assert.equal(saveAfterExploreAgain.exploration.movesByFloor["0:2"], 2);
     assert.equal(saveAfterExploreAgain.exploration.floors["0:2"].movesDone, 2);
@@ -870,6 +1142,157 @@ async function main() {
       process.env.KSSMA_PLAYER_SAVE_PATH = tempPlayerSavePath;
     }
 
+    const levelUpSavePath = path.join(tempDir, "levelup-player-save.json");
+    const levelUpSave = JSON.parse(JSON.stringify(DEFAULT_PLAYER_SAVE));
+    levelUpSave.profile.level = 17;
+    levelUpSave.profile.exp = 1997;
+    levelUpSave.profile.nextExp = 2000;
+    levelUpSave.profile.percentage = 99;
+    levelUpSave.resources.ap.current = 1;
+    levelUpSave.resources.ap.max = 25;
+    levelUpSave.resources.bc.current = 7;
+    levelUpSave.resources.bc.max = 25;
+    levelUpSave.progression.abilityPoints.unspent = 0;
+    levelUpSave.progression.abilityPoints.fromLevels = 0;
+    fs.writeFileSync(levelUpSavePath, JSON.stringify(levelUpSave), "utf8");
+    process.env.KSSMA_PLAYER_SAVE_PATH = levelUpSavePath;
+    delete process.env.KSSMA_EXPLORATION_MOVES_SEED;
+    const levelUpServer = createServer();
+    await new Promise((resolve) => levelUpServer.listen(0, "127.0.0.1", resolve));
+    const levelUpPort = levelUpServer.address().port;
+    try {
+      const levelUpExplore = await post(
+        levelUpPort,
+        "/connect/app/exploration/explore?cyt=1",
+        connectAppBody({ area_id: 0, auto_build: 1, floor_id: 1 })
+      );
+      assert.equal(levelUpExplore.statusCode, 200);
+      const levelUpExploreDecoded = decryptAes128EcbBase64(levelUpExplore.buffer.toString("base64"), CONNECT_APP_KEY);
+      assert.match(levelUpExploreDecoded, /<progress>10<\/progress>/);
+      assert.match(levelUpExploreDecoded, /<gold>18<\/gold>/);
+      assert.match(levelUpExploreDecoded, /<get_exp>3<\/get_exp>/);
+      assert.match(levelUpExploreDecoded, /<lvup>1<\/lvup>/);
+      assert.match(levelUpExploreDecoded, /<is_limit>0<\/is_limit>/);
+      assertPlayerHeader(levelUpExploreDecoded, {
+        apCurrent: 25,
+        apMax: 25,
+        bcCurrent: 25,
+        bcMax: 25,
+        gold: 18,
+        rank: 18,
+        percentage: 0,
+        freeApBcPoint: 3,
+      });
+      const saveAfterLevelUp = JSON.parse(fs.readFileSync(levelUpSavePath, "utf8"));
+      assert.equal(saveAfterLevelUp.profile.level, 18);
+      assert.equal(saveAfterLevelUp.profile.exp, 0);
+      assert.equal(saveAfterLevelUp.profile.nextExp, 2100);
+      assert.equal(saveAfterLevelUp.profile.percentage, 0);
+      assert.equal(saveAfterLevelUp.resources.ap.current, 25);
+      assert.equal(saveAfterLevelUp.resources.bc.current, 25);
+      assert.equal(saveAfterLevelUp.progression.abilityPoints.unspent, 3);
+      assert.equal(saveAfterLevelUp.progression.abilityPoints.fromLevels, 3);
+      assert.equal(saveAfterLevelUp.currencies.gold, 18);
+      assert.equal(saveAfterLevelUp.exploration.movesByFloor["0:2"], 1);
+
+      const townLvupStatus = await post(
+        levelUpPort,
+        "/connect/app/town/lvup_status?cyt=1",
+        ""
+      );
+      assert.equal(townLvupStatus.statusCode, 200);
+      const townLvupStatusDecoded = decryptAes128EcbBase64(townLvupStatus.buffer.toString("base64"), CONNECT_APP_KEY);
+      assert.match(townLvupStatusDecoded, /<next_scene>84100<\/next_scene>/);
+      assert.match(townLvupStatusDecoded, /<body><\/body>/);
+      assertPlayerHeader(townLvupStatusDecoded, {
+        apCurrent: 25,
+        apMax: 25,
+        bcCurrent: 25,
+        bcMax: 25,
+        gold: 18,
+        rank: 18,
+        percentage: 0,
+        freeApBcPoint: 3,
+      });
+
+      const townPointsetting = await post(
+        levelUpPort,
+        "/connect/app/town/pointsetting?cyt=1",
+        connectAppBody({ ap: 3, bc: 0 })
+      );
+      assert.equal(townPointsetting.statusCode, 200);
+      const townPointsettingDecoded = decryptAes128EcbBase64(townPointsetting.buffer.toString("base64"), CONNECT_APP_KEY);
+      assert.match(townPointsettingDecoded, /<next_scene>2100<\/next_scene>/);
+      assert.match(townPointsettingDecoded, /<mainmenu>/);
+      assertPlayerHeader(townPointsettingDecoded, {
+        apCurrent: 28,
+        apMax: 28,
+        bcCurrent: 25,
+        bcMax: 25,
+        gold: 18,
+        rank: 18,
+        percentage: 0,
+        freeApBcPoint: 0,
+      });
+      const saveAfterPointsetting = JSON.parse(fs.readFileSync(levelUpSavePath, "utf8"));
+      assert.equal(saveAfterPointsetting.resources.ap.current, 28);
+      assert.equal(saveAfterPointsetting.resources.ap.max, 28);
+      assert.equal(saveAfterPointsetting.resources.bc.current, 25);
+      assert.equal(saveAfterPointsetting.resources.bc.max, 25);
+      assert.equal(saveAfterPointsetting.progression.abilityPoints.unspent, 0);
+      assert.equal(saveAfterPointsetting.progression.abilityPoints.apAllocated, 3);
+      assert.equal(saveAfterPointsetting.progression.abilityPoints.bcAllocated, 0);
+    } finally {
+      await new Promise((resolve, reject) => levelUpServer.close((err) => (err ? reject(err) : resolve())));
+      process.env.KSSMA_PLAYER_SAVE_PATH = tempPlayerSavePath;
+    }
+
+    const weakLevelUpSavePath = path.join(tempDir, "weak-levelup-player-save.json");
+    const weakLevelUpSave = JSON.parse(JSON.stringify(DEFAULT_PLAYER_SAVE));
+    weakLevelUpSave.profile.level = 16;
+    weakLevelUpSave.profile.exp = 1897;
+    weakLevelUpSave.profile.nextExp = 1900;
+    weakLevelUpSave.profile.percentage = 99;
+    weakLevelUpSave.resources.ap.current = 1;
+    weakLevelUpSave.resources.ap.max = 25;
+    weakLevelUpSave.resources.bc.current = 7;
+    weakLevelUpSave.resources.bc.max = 25;
+    weakLevelUpSave.progression.abilityPoints.unspent = 0;
+    weakLevelUpSave.progression.abilityPoints.fromLevels = 0;
+    fs.writeFileSync(weakLevelUpSavePath, JSON.stringify(weakLevelUpSave), "utf8");
+    process.env.KSSMA_PLAYER_SAVE_PATH = weakLevelUpSavePath;
+    delete process.env.KSSMA_EXPLORATION_MOVES_SEED;
+    const weakLevelUpServer = createServer();
+    await new Promise((resolve) => weakLevelUpServer.listen(0, "127.0.0.1", resolve));
+    const weakLevelUpPort = weakLevelUpServer.address().port;
+    try {
+      const weakLevelUpExplore = await post(
+        weakLevelUpPort,
+        "/connect/app/exploration/explore?cyt=1",
+        connectAppBody({ area_id: 0, auto_build: 1, floor_id: 1 })
+      );
+      assert.equal(weakLevelUpExplore.statusCode, 200);
+      const weakLevelUpExploreDecoded = decryptAes128EcbBase64(weakLevelUpExplore.buffer.toString("base64"), CONNECT_APP_KEY);
+      assert.match(weakLevelUpExploreDecoded, /<lvup>1<\/lvup>/);
+      assertPlayerHeader(weakLevelUpExploreDecoded, {
+        apCurrent: 25,
+        apMax: 25,
+        bcCurrent: 25,
+        bcMax: 25,
+        rank: 17,
+        percentage: 0,
+        nextExp: 2000,
+        freeApBcPoint: 3,
+      });
+      const saveAfterWeakLevelUp = JSON.parse(fs.readFileSync(weakLevelUpSavePath, "utf8"));
+      assert.equal(saveAfterWeakLevelUp.profile.level, 17);
+      assert.equal(saveAfterWeakLevelUp.profile.exp, 0);
+      assert.equal(saveAfterWeakLevelUp.profile.nextExp, 2000);
+    } finally {
+      await new Promise((resolve, reject) => weakLevelUpServer.close((err) => (err ? reject(err) : resolve())));
+      process.env.KSSMA_PLAYER_SAVE_PATH = tempPlayerSavePath;
+    }
+
     const previousSeed = process.env.KSSMA_EXPLORATION_MOVES_SEED;
     const seededSavePath = path.join(tempDir, "seeded-player-save.json");
     process.env.KSSMA_PLAYER_SAVE_PATH = seededSavePath;
@@ -940,6 +1363,7 @@ async function main() {
 
     process.stdout.write("bootstrap-server self-check passed\n");
   } finally {
+    process.stdout.write = originalWrite;
     await new Promise((resolve, reject) => server.close((err) => (err ? reject(err) : resolve())));
     if (previousPlayerSavePath === undefined) {
       delete process.env.KSSMA_PLAYER_SAVE_PATH;
