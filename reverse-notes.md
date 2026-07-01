@@ -427,6 +427,29 @@ Archives:
   Screenshots cover each entered page. No fatal/SIGSEGV/resource-miss evidence appeared; the only matched logcat
   noise was a system Binder `RuntimeException`. Return-to-town remains `/connect/app/mainmenu`; player-info back
   returns to `/connect/app/menu/menulist` first.
+- Menu-page route skeletons are in progress, not fully accepted. The old artifact
+  `work/kssma-flow-menu-buttons-route-smoke-menu-full-after-haveparts` showed item and parts-list screenshots, but
+  manual testing exposed that the old flow allowed weak local-page proof and manual `start-server` could keep stale
+  bootstrap code alive. The helper server now tracks a code/data fingerprint, and menu flow local/routed page tests now
+  use screenshot-diff gates: opening item/parts must visibly leave Menu, and back must visibly return. The focused
+  regression is `flow -Scenario menu-item-parts-smoke`; full Menu-page acceptance still needs entry-specific flows,
+  especially WebView-backed update/help pages. The former parts-list blocker was an empty scene skeleton showing the
+  native no-data overlay; `work/menu-haveparts-schema-card-20260630.md` records the parser evidence and the current
+  minimal `<have_parts><lake><parts_list>` payload.
+- Menu item/parts focused runtime accepted: `work/kssma-flow-menu-item-parts-smoke-menu-item-parts-visual-gate` passed
+  on ARM19. It proves item is a client-local page that visibly opens (`open-menu-item-visual-open` diff `91.73`) and
+  returns to Menu (`return-from-open-menu-item-visual-return` diff `0`); parts list emits
+  `/connect/app/menu/haveparts`, visibly opens (`open-menu-parts-list-visual-open` diff `53.09`), then returns through
+  `/connect/app/menu/menulist` with visual diff `0`. `ensure-client-baseline` was already matched, and logcat had no
+  fatal/SIGSEGV/resource-miss evidence. Screenshot logging now records file byte length so empty screenshot files are
+  not marked successful evidence.
+- Main-menu bottom deck/friends runtime accepted: `work/kssma-flow-mainmenu-bottom-buttons-smoke-deck-friends-bottom-scene17100`
+  passed on ARM19. Bottom deck emits `/connect/app/roundtable/edit` with `move=1`, opens scene `10100`, and returns
+  to main menu after two back taps. Bottom friends emits `/connect/app/menu/friendlist` with `move=0`; the accepted
+  response uses `nextScene=17100` plus a minimal `friend_list/user_list/user` body, opens visibly (`diff 91.08`),
+  and returns through `/connect/app/mainmenu`. Do not change this entry back to `22100`: artifact
+  `work/kssma-flow-mainmenu-bottom-buttons-smoke-deck-friends-bottom-final-2` proved `22100` still crashes in
+  `_SceneControl::create(int)` even after the friend-list body exists.
 
 ## Archive Index
 

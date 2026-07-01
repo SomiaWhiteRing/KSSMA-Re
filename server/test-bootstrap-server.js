@@ -18,6 +18,11 @@ const {
   createExplorationGetFloorXml,
   createExplorationLockedXml,
   createGachaSelectSkeletonXml,
+  createMenuCardCollectionSkeletonXml,
+  createMenuFairySelectSkeletonXml,
+  createMenuFriendListSkeletonXml,
+  createMenuHavePartsSkeletonXml,
+  createMenuRankingSkeletonXml,
   createLoginMainmenuXml,
   createMainmenuUpdateXml,
   createMainmenuRouteXml,
@@ -508,12 +513,57 @@ async function main() {
   assert.match(createMainmenuRouteXml("/connect/app/battle/area", DEFAULT_PLAYER_SAVE), /<next_scene>\s*5100\s*<\/next_scene>/);
   assert.match(createMainmenuRouteXml("/connect/app/menu/menulist", DEFAULT_PLAYER_SAVE), /<next_scene>20100<\/next_scene>/);
   assert.match(createMainmenuRouteXml("/connect/app/menu/playerinfo", DEFAULT_PLAYER_SAVE), /<next_scene>26100<\/next_scene>/);
+  assert.match(createMenuRankingSkeletonXml(DEFAULT_PLAYER_SAVE), /<ranking>[\s\S]*<ranktype_id>1<\/ranktype_id>[\s\S]*<ranktype_list>[\s\S]*<ranktype>[\s\S]*<tab_id>1<\/tab_id>[\s\S]*<title>Total<\/title>[\s\S]*<user_list><\/user_list>/);
+  assert.match(createMainmenuRouteXml("/connect/app/ranking/ranking", DEFAULT_PLAYER_SAVE), /<ranking>[\s\S]*<ranking_draw_type>0<\/ranking_draw_type>/);
+  assert.match(createMenuFairySelectSkeletonXml(DEFAULT_PLAYER_SAVE), /<fairy_select>[\s\S]*<fairy_rewards>0<\/fairy_rewards>[\s\S]*<\/fairy_select>/);
+  assert.doesNotMatch(createMenuFairySelectSkeletonXml(DEFAULT_PLAYER_SAVE), /<fairy_list>|<messages>/);
+  assert.match(createMainmenuRouteXml("/connect/app/menu/fairyselect", DEFAULT_PLAYER_SAVE), /<fairy_select>/);
+  assert.match(createMenuCardCollectionSkeletonXml(DEFAULT_PLAYER_SAVE), /<next_scene>23100<\/next_scene>/);
+  assert.match(createMenuCardCollectionSkeletonXml(DEFAULT_PLAYER_SAVE), /<card_collection>[\s\S]*<card_library>22<\/card_library>[\s\S]*<lvmax_library><\/lvmax_library>[\s\S]*<holo_library><\/holo_library>/);
+  assert.equal(
+    createMenuCardCollectionSkeletonXml({ cards: { instances: [{ masterCardId: 22 }, { masterCardId: 37 }, { masterCardId: 22 }] } }).match(/<card_library>([^<]+)<\/card_library>/)[1],
+    "22,37"
+  );
+  assert.match(createMainmenuRouteXml("/connect/app/menu/cardcollection", DEFAULT_PLAYER_SAVE), /<card_collection>/);
+  assert.match(createMenuHavePartsSkeletonXml(DEFAULT_PLAYER_SAVE), /<next_scene>31100<\/next_scene>/);
+  assert.match(createMenuHavePartsSkeletonXml(DEFAULT_PLAYER_SAVE), /<have_parts>[\s\S]*<select_lake_id>2<\/select_lake_id>[\s\S]*<leader_card_id>179<\/leader_card_id>[\s\S]*<select_parts_num>1<\/select_parts_num>/);
+  assert.match(createMenuHavePartsSkeletonXml(DEFAULT_PLAYER_SAVE), /<lake>[\s\S]*<lake_id>2<\/lake_id>[\s\S]*<title>花を愛す者<\/title>[\s\S]*<master_card_id>179<\/master_card_id>[\s\S]*<complete>0<\/complete>/);
+  assert.equal([...createMenuHavePartsSkeletonXml(DEFAULT_PLAYER_SAVE).matchAll(/<parts>/g)].length, 9);
+  assert.match(createMenuHavePartsSkeletonXml(DEFAULT_PLAYER_SAVE), /<parts>[\s\S]*<parts_num>1<\/parts_num>[\s\S]*<parts_have>1<\/parts_have>[\s\S]*<\/parts>/);
+  assert.match(createMenuHavePartsSkeletonXml(DEFAULT_PLAYER_SAVE), /<parts>[\s\S]*<parts_num>9<\/parts_num>[\s\S]*<parts_have>0<\/parts_have>[\s\S]*<\/parts>/);
+  assert.match(createMainmenuRouteXml("/connect/app/menu/haveparts", DEFAULT_PLAYER_SAVE), /<have_parts>/);
   assert.match(createMainmenuRouteXml("/connect/app/shop/shop", DEFAULT_PLAYER_SAVE), /<next_scene>8100<\/next_scene>/);
   assert.match(createMainmenuRouteXml("/connect/app/menu/productlist", DEFAULT_PLAYER_SAVE), /<next_scene>8400<\/next_scene>/);
   assert.match(createMainmenuRouteXml("/connect/app/item/use", DEFAULT_PLAYER_SAVE), /<next_scene>30200<\/next_scene>/);
   assert.match(createMainmenuRouteXml("/connect/app/friend/like_user", DEFAULT_PLAYER_SAVE), /<next_scene>17000<\/next_scene>/);
   assert.match(createMainmenuRouteXml("/connect/app/battle/battle_userlist", DEFAULT_PLAYER_SAVE), /<battle_userlist>/);
+  assert.match(createMainmenuRouteXml("/connect/app/roundtable/edit", DEFAULT_PLAYER_SAVE), /<next_scene>10100<\/next_scene>/);
   assert.match(createMainmenuRouteXml("/connect/app/cardselect/savedeckcard", DEFAULT_PLAYER_SAVE), /<next_scene>83200<\/next_scene>/);
+  assert.match(createMainmenuRouteXml("/connect/app/menu/friendlist", DEFAULT_PLAYER_SAVE), /<next_scene>17100<\/next_scene>/);
+  assert.match(createMenuFriendListSkeletonXml(DEFAULT_PLAYER_SAVE), /<friend_list>[\s\S]*<friends_invitations>0<\/friends_invitations>[\s\S]*<user_list>[\s\S]*<user>/);
+  assert.match(createMenuFriendListSkeletonXml(DEFAULT_PLAYER_SAVE), /<leader_card>[\s\S]*<serial_id>1<\/serial_id>[\s\S]*<master_card_id>22<\/master_card_id>[\s\S]*<\/leader_card>/);
+  assert.match(createMenuFriendListSkeletonXml(DEFAULT_PLAYER_SAVE), /<status_friend>0<\/status_friend>[\s\S]*<status_yell>1<\/status_yell>/);
+  assert.match(createMainmenuRouteXml("/connect/app/menu/friendlist", DEFAULT_PLAYER_SAVE), /<friend_list>[\s\S]*<user_list>[\s\S]*<leader_card>/);
+  for (const [routePath, expectedScene] of [
+    ["/connect/app/menu/other_list", 20100],
+    ["/connect/app/menu/invite_friend", 32100],
+    ["/connect/app/menu/playerinfo", 26100],
+    ["/connect/app/story/getoutline", 3100],
+    ["/connect/app/menu/gettownevent", 28100],
+    ["/connect/app/menu/fairyselect", 29200],
+    ["/connect/app/menu/battlehistory", 25100],
+    ["/connect/app/menu/ranking/ranking_arena", 27100],
+    ["/connect/app/menu/chksnd", 33000],
+    ["/connect/app/item/havelist", 30100],
+    ["/connect/app/menu/cardcollection", 23100],
+    ["/connect/app/menu/haveparts", 31100],
+  ]) {
+    assert.match(
+      createMainmenuRouteXml(routePath, DEFAULT_PLAYER_SAVE),
+      new RegExp(`<next_scene>${expectedScene}<\\/next_scene>`),
+      `missing menu-page route skeleton for ${routePath}`
+    );
+  }
   assert.equal(createMainmenuRouteXml("/connect/app/not/a/mainmenu/route", DEFAULT_PLAYER_SAVE), null);
   delete process.env.LOGIN_RESPONSE;
   assert.deepEqual(

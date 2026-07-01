@@ -676,6 +676,18 @@ function renderUserCardXml(card, indent = "      ") {
   ];
 }
 
+function renderLeaderCardXml(card, indent = "      ") {
+  const rows = renderUserCardXml(card, indent);
+  if (!rows.length) {
+    return [];
+  }
+  return [
+    `${indent}<leader_card>`,
+    ...rows.slice(1, -1),
+    `${indent}</leader_card>`,
+  ];
+}
+
 function renderOwnerCardListXml(cards = {}, indent = "    ") {
   const instances = Array.isArray(cards.instances) ? cards.instances : [];
   return [
@@ -973,6 +985,228 @@ function createGachaSelectSkeletonXml(playerSave = createDefaultPlayerSave()) {
   ].join("");
 }
 
+function createMenuRankingSkeletonXml(playerSave = createDefaultPlayerSave()) {
+  // ponytail: menu smoke only needs one valid picker tab; real ranking rows can come later.
+  return [
+    '<?xml version="1.0" encoding="UTF-8"?>',
+    "<response>",
+    "  <header>",
+    "    <error><code>0</code></error>",
+    "    <session_id>local-ranking</session_id>",
+    ...renderYourDataXml(playerSave),
+    "    <next_scene>27100</next_scene>",
+    "  </header>",
+    "  <body>",
+    "    <ranking>",
+    "      <ranktype_id>1</ranktype_id>",
+    "      <exist_top>0</exist_top>",
+    "      <exist_bottom>0</exist_bottom>",
+    "      <ranking_draw_type>0</ranking_draw_type>",
+    "      <ranktype_list>",
+    "        <ranktype>",
+    "          <tab_id>1</tab_id>",
+    "          <title>Total</title>",
+    "        </ranktype>",
+    "      </ranktype_list>",
+    "      <user_list></user_list>",
+    "    </ranking>",
+    "  </body>",
+    "</response>",
+  ].join("");
+}
+
+function createMenuFairySelectSkeletonXml(playerSave = createDefaultPlayerSave()) {
+  return [
+    '<?xml version="1.0" encoding="UTF-8"?>',
+    "<response>",
+    "  <header>",
+    "    <error><code>0</code></error>",
+    "    <session_id>local-fairy-select</session_id>",
+    ...renderYourDataXml(playerSave),
+    "    <next_scene>29200</next_scene>",
+    "  </header>",
+    "  <body>",
+    "    <fairy_select>",
+    "      <fairy_rewards>0</fairy_rewards>",
+    "    </fairy_select>",
+    "  </body>",
+    "</response>",
+  ].join("");
+}
+
+function getPlayerOwnedMasterCardIds(playerSave = createDefaultPlayerSave()) {
+  const instances = Array.isArray(playerSave.cards?.instances) ? playerSave.cards.instances : [];
+  const ids = instances
+    .map((card) => parseInteger(card?.masterCardId ?? card?.master_card_id, 0))
+    .filter((id) => id > 0);
+  const uniqueIds = [...new Set(ids)];
+  // ponytail: a blank collection crashes the native picker; seed the accepted starter card until card acquisition is real.
+  return uniqueIds.length ? uniqueIds : [22];
+}
+
+function createMenuCardCollectionSkeletonXml(playerSave = createDefaultPlayerSave()) {
+  return [
+    '<?xml version="1.0" encoding="UTF-8"?>',
+    "<response>",
+    "  <header>",
+    "    <error><code>0</code></error>",
+    "    <session_id>local-card-collection</session_id>",
+    ...renderYourDataXml(playerSave),
+    "    <next_scene>23100</next_scene>",
+    "  </header>",
+    "  <body>",
+    "    <card_collection>",
+    `      <card_library>${getPlayerOwnedMasterCardIds(playerSave).join(",")}</card_library>`,
+    "      <lvmax_library></lvmax_library>",
+    "      <holo_library></holo_library>",
+    "    </card_collection>",
+    "  </body>",
+    "</response>",
+  ].join("");
+}
+
+const MENU_HAVE_PARTS_ROWS = [
+  [1, 1],
+  [2, 1],
+  [3, 0],
+  [4, 0],
+  [5, 1],
+  [6, 1],
+  [7, 0],
+  [8, 1],
+  [9, 0],
+];
+
+function renderMenuHavePartsRows(indent = "        ") {
+  return MENU_HAVE_PARTS_ROWS.flatMap(([partsNum, partsHave]) => [
+    `${indent}<parts>`,
+    `${indent}  <parts_num>${partsNum}</parts_num>`,
+    `${indent}  <parts_have>${partsHave}</parts_have>`,
+    `${indent}</parts>`,
+  ]);
+}
+
+function createMenuHavePartsSkeletonXml(playerSave = createDefaultPlayerSave()) {
+  // ponytail: one proven local_battle_area lake is enough to avoid the native no-data modal; real factor progression can replace this later.
+  return [
+    '<?xml version="1.0" encoding="UTF-8"?>',
+    "<response>",
+    "  <header>",
+    "    <error><code>0</code></error>",
+    "    <session_id>local-have-parts</session_id>",
+    ...renderYourDataXml(playerSave),
+    "    <next_scene>31100</next_scene>",
+    "  </header>",
+    "  <body>",
+    "    <have_parts>",
+    "      <select_lake_id>2</select_lake_id>",
+    "      <leader_card_id>179</leader_card_id>",
+    "      <select_parts_num>1</select_parts_num>",
+    "      <lake>",
+    "        <lake_id>2</lake_id>",
+    "        <title>花を愛す者</title>",
+    "        <master_card_id>179</master_card_id>",
+    "        <complete>0</complete>",
+    "        <parts_list>",
+    ...renderMenuHavePartsRows("          "),
+    "        </parts_list>",
+    "      </lake>",
+    "    </have_parts>",
+    "  </body>",
+    "</response>",
+  ].join("");
+}
+
+function getStarterCardForFriendList(playerSave = createDefaultPlayerSave()) {
+  const instances = Array.isArray(playerSave.cards?.instances) ? playerSave.cards.instances : [];
+  return instances.find((card) => parseInteger(card?.serialId ?? card?.serial_id, 0) > 0)
+    || createDefaultPlayerSave().cards.instances[0];
+}
+
+function getMenuFriendRows(playerSave = createDefaultPlayerSave()) {
+  const friends = Array.isArray(playerSave.friends?.list) ? playerSave.friends.list : [];
+  if (friends.length) {
+    return friends;
+  }
+  const profile = playerSave.profile || {};
+  const resources = playerSave.resources || {};
+  const cards = playerSave.cards || {};
+  // ponytail: a one-row local fallback proves the friend-list scene safely; a real friends system can replace it with saved friends later.
+  return [{
+    id: 1,
+    name: "Local Friend",
+    countryId: getPlayerCountryId(playerSave),
+    cost: 61,
+    win: 0,
+    lose: 0,
+    townLevel: Math.max(parseInteger(profile.townLevel, 1), 1),
+    nextExp: Math.max(parseInteger(profile.nextExp, 0), 0),
+    leaderCard: getStarterCardForFriendList(playerSave),
+    rank: Math.max(parseInteger(profile.level, 1), 1),
+    friends: Math.max(parseInteger(playerSave.friends?.count, 0), 0),
+    friendMax: Math.max(parseInteger(playerSave.friends?.max, 30), 0),
+    lastLogin: "今日",
+    exGauge: Math.max(parseInteger(resources.super?.current, 0), 0),
+    maxCardNum: Math.max(parseInteger(cards.max, 0), 0),
+    statusFriend: 0,
+    statusYell: 1,
+    countHunting: 0,
+    deckRank: Math.max(parseInteger(cards.deckRank, 0), 0),
+  }];
+}
+
+function renderMenuFriendRowXml(friend, playerSave = createDefaultPlayerSave(), indent = "        ") {
+  const leaderCard = friend.leaderCard || getStarterCardForFriendList(playerSave);
+  return [
+    `${indent}<user>`,
+    `${indent}  <id>${Math.max(parseInteger(friend.id, 0), 0)}</id>`,
+    `${indent}  <name>${escapeXmlText(friend.name || "Local Friend")}</name>`,
+    `${indent}  <country_id>${VALID_COUNTRY_IDS.has(parseInteger(friend.countryId, 1)) ? parseInteger(friend.countryId, 1) : 1}</country_id>`,
+    `${indent}  <cost>${Math.max(parseInteger(friend.cost, 0), 0)}</cost>`,
+    `${indent}  <results>`,
+    `${indent}    <win>${Math.max(parseInteger(friend.win, 0), 0)}</win>`,
+    `${indent}    <lose>${Math.max(parseInteger(friend.lose, 0), 0)}</lose>`,
+    `${indent}  </results>`,
+    `${indent}  <town_level>${Math.max(parseInteger(friend.townLevel, 1), 1)}</town_level>`,
+    `${indent}  <next_exp>${Math.max(parseInteger(friend.nextExp, 0), 0)}</next_exp>`,
+    ...renderLeaderCardXml(leaderCard, `${indent}  `),
+    `${indent}  <rank>${Math.max(parseInteger(friend.rank, 1), 1)}</rank>`,
+    `${indent}  <friends>${Math.max(parseInteger(friend.friends, 0), 0)}</friends>`,
+    `${indent}  <friend_max>${Math.max(parseInteger(friend.friendMax, 30), 0)}</friend_max>`,
+    `${indent}  <last_login>${escapeXmlText(friend.lastLogin || "今日")}</last_login>`,
+    `${indent}  <ex_gage>${Math.max(parseInteger(friend.exGauge, 0), 0)}</ex_gage>`,
+    `${indent}  <max_card_num>${Math.max(parseInteger(friend.maxCardNum, 0), 0)}</max_card_num>`,
+    `${indent}  <status_friend>${Math.max(parseInteger(friend.statusFriend, 0), 0)}</status_friend>`,
+    `${indent}  <status_yell>${Math.max(parseInteger(friend.statusYell, 0), 0)}</status_yell>`,
+    `${indent}  <count_hunting>${Math.max(parseInteger(friend.countHunting, 0), 0)}</count_hunting>`,
+    `${indent}  <deck_rank>${Math.max(parseInteger(friend.deckRank, 0), 0)}</deck_rank>`,
+    `${indent}</user>`,
+  ];
+}
+
+function createMenuFriendListSkeletonXml(playerSave = createDefaultPlayerSave()) {
+  const friendRows = getMenuFriendRows(playerSave);
+  return [
+    '<?xml version="1.0" encoding="UTF-8"?>',
+    "<response>",
+    "  <header>",
+    "    <error><code>0</code></error>",
+    "    <session_id>local-friend-list</session_id>",
+    ...renderYourDataXml(playerSave),
+    "    <next_scene>17100</next_scene>",
+    "  </header>",
+    "  <body>",
+    "    <friend_list>",
+    "      <friends_invitations>0</friends_invitations>",
+    "      <user_list>",
+    ...friendRows.flatMap((friend) => renderMenuFriendRowXml(friend, playerSave, "        ")),
+    "      </user_list>",
+    "    </friend_list>",
+    "  </body>",
+    "</response>",
+  ].join("");
+}
+
 const MAINMENU_UPDATE_XML = createMainmenuUpdateXml();
 TOWN_POINTSETTING_XML = createTownPointsettingXml();
 const LOGIN_TUTORIAL_XML = readBundledXml("local_forward_tutorial.xml", CHECK_INSPECTION_OK_XML);
@@ -1042,7 +1276,7 @@ const MAINMENU_ROUTE_STUBS = {
   "/connect/app/menu/get_rewards": { command: "get_rewards", nextScene: 90200 },
   "/connect/app/menu/noticelist": { command: "notice", nextScene: 20100 },
   "/connect/app/menu/other_list": { command: "other_list", nextScene: 20100 },
-  "/connect/app/menu/friendlist": { command: "friends", nextScene: 22100 },
+  "/connect/app/menu/friendlist": { command: "friends", nextScene: 17100 },
   "/connect/app/menu/menu_friend_notification": { command: "friend_notice", nextScene: 22200 },
   "/connect/app/menu/friend_notice": { command: "friend_notice", nextScene: 22200 },
   "/connect/app/menu/friend_appstate": { command: "friend_appstate", nextScene: 29300 },
@@ -1088,6 +1322,7 @@ const MAINMENU_ROUTE_STUBS = {
   "/connect/app/compound/evolution/compound": { command: "compound_evolution_commit", nextScene: 7150 },
   "/connect/app/compound/buildup/compound": { command: "compound_buildup_commit", nextScene: 7350 },
   "/connect/app/card/exchange": { command: "card_exchange", nextScene: 7200 },
+  "/connect/app/roundtable/edit": { command: "round_table", nextScene: 10100 },
   "/connect/app/cardselect/savedeckcard": { command: "save_deck", nextScene: 83200 },
 };
 const MASTERDATA_SAMPLES = Object.fromEntries(
@@ -1150,6 +1385,21 @@ function createMainmenuRouteXml(routePath, playerSave = createDefaultPlayerSave(
   }
   if (route.command === "gacha") {
     return createGachaSelectSkeletonXml(playerSave);
+  }
+  if (route.command === "ranking" || route.command === "ranking_next") {
+    return createMenuRankingSkeletonXml(playerSave);
+  }
+  if (route.command === "fairy") {
+    return createMenuFairySelectSkeletonXml(playerSave);
+  }
+  if (route.command === "c_collection") {
+    return createMenuCardCollectionSkeletonXml(playerSave);
+  }
+  if (route.command === "partslist") {
+    return createMenuHavePartsSkeletonXml(playerSave);
+  }
+  if (route.command === "friends") {
+    return createMenuFriendListSkeletonXml(playerSave);
   }
   if (route.sample) {
     const fallback = createSceneForwardXml(route.nextScene, playerSave, `local-${route.command}`);
@@ -1949,6 +2199,11 @@ module.exports = {
   createExplorationGetFloorXml,
   createExplorationLockedXml,
   createGachaSelectSkeletonXml,
+  createMenuCardCollectionSkeletonXml,
+  createMenuFairySelectSkeletonXml,
+  createMenuFriendListSkeletonXml,
+  createMenuHavePartsSkeletonXml,
+  createMenuRankingSkeletonXml,
   createMainmenuUpdateXml,
   createMainmenuRouteXml,
   createLoginMainmenuXml,

@@ -668,6 +668,15 @@ function Test-FlowCrashDialog {
   return $text -match "has stopped|Unfortunately"
 }
 
+function Test-FlowUiShowsGamePackage {
+  param([xml]$Ui)
+
+  if ($null -eq $Ui) {
+    return $false
+  }
+  return $null -ne $Ui.SelectSingleNode("//*[@package='com.square_enix.million_cn']")
+}
+
 function Assert-FlowClientAlive {
   param(
     $Context,
@@ -677,11 +686,46 @@ function Assert-FlowClientAlive {
   if (Test-FlowCrashDialog -Context $Context -Name "crash-$Step") {
     Stop-FlowWithFailure -Context $Context -FailureClass "client-crash" -Step $Step -Message "Android crash dialog is visible."
   }
-  $activityLine = Get-FlowCurrentActivity -Serial $Context.serial
-  $Context.lastActivity = $activityLine
-  if (-not (Test-FlowGameActivity $activityLine)) {
-    Stop-FlowWithFailure -Context $Context -FailureClass "client-crash" -Step $Step -Message "Game activity is no longer resumed: $activityLine"
+  $lastActivityLine = ""
+  $lastUiStatus = "not-run"
+  $lastUiShowsGame = $false
+  for ($attempt = 1; $attempt -le 3; $attempt++) {
+    $activityLine = Get-FlowCurrentActivity -Serial $Context.serial
+    $lastActivityLine = $activityLine
+    $Context.lastActivity = $activityLine
+    if (Test-FlowGameActivity $activityLine) {
+      if ($attempt -gt 1) {
+        Add-FlowEvent -Context $Context -Type "activity-check-recovered" -Data ([ordered]@{
+            step = $Step
+            attempt = $attempt
+            activity = $activityLine
+          })
+      }
+      return
+    }
+
+    # ponytail: old ARM19 sometimes returns an empty/partial dumpsys while the
+    # game surface is still foreground; package-owned UI is enough to keep the
+    # flow moving. If a real crash/launcher is foreground, this remains false.
+    $ui = Get-FlowUiDump -Context $Context -Serial $Context.serial -Name "alive-$Step-$attempt"
+    $lastUiStatus = $Context.lastUiDumpStatus
+    $lastUiShowsGame = Test-FlowUiShowsGamePackage -Ui $ui
+    Add-FlowEvent -Context $Context -Type "activity-check-retry" -Data ([ordered]@{
+        step = $Step
+        attempt = $attempt
+        activity = $activityLine
+        uiDump = $lastUiStatus
+        uiShowsGame = $lastUiShowsGame
+      })
+    if ($lastUiShowsGame) {
+      $Context.lastActivity = "ui:com.square_enix.million_cn"
+      return
+    }
+    if ($attempt -lt 3) {
+      Start-Sleep -Seconds 2
+    }
   }
+  Stop-FlowWithFailure -Context $Context -FailureClass "client-crash" -Step $Step -Message "Game activity is no longer resumed: $lastActivityLine; uiDump=$lastUiStatus; uiShowsGame=$lastUiShowsGame"
 }
 
 function Assert-FlowRuntimeReady {
@@ -783,24 +827,42 @@ function Invoke-FlowTap {
   )
 
   Add-FlowEvent -Context $Context -Type "tap" -Data ([ordered]@{ name = $Name; x = $X; y = $Y })
-  $stage = Invoke-Adb -Arguments @("-s", $Context.serial, "shell", "input", "tap", "$X", "$Y") -TimeoutSeconds 10 -AllowFailure
-  if (-not $stage.ok) {
-    if ($stage.timedOut -or $stage.failureClass -match "adb|transport|offline|device") {
+  $stage = $null
+  for ($attempt = 1; $attempt -le 3; $attempt++) {
+    $stage = Invoke-Adb -Arguments @("-s", $Context.serial, "shell", "input", "tap", "$X", "$Y") -TimeoutSeconds 12 -AllowFailure
+    if ($stage.ok) {
+      Start-Sleep -Milliseconds 800
+      return
+    }
+    if (-not ($stage.timedOut -or $stage.failureClass -match "adb|transport|offline|device")) {
+      break
+    }
+
+    $transportRecovered = $false
+    for ($probeAttempt = 1; $probeAttempt -le 3; $probeAttempt++) {
       $probe = Invoke-Adb -Arguments @("-s", $Context.serial, "shell", "getprop", "sys.boot_completed") -TimeoutSeconds 5 -AllowFailure
       if ($probe.ok -and (($probe.stdout -as [string]).Trim())) {
+        $transportRecovered = $true
         Add-FlowEvent -Context $Context -Type "tap-retry" -Data ([ordered]@{
             name = $Name
-            reason = "first tap failed but transport probe recovered"
+            reason = "tap failed but transport probe recovered"
+            attempt = $attempt
+            probeAttempt = $probeAttempt
             firstTimedOut = $stage.timedOut
             firstFailureClass = $stage.failureClass
           })
-        Start-Sleep -Seconds 1
-        $stage = Invoke-Adb -Arguments @("-s", $Context.serial, "shell", "input", "tap", "$X", "$Y") -TimeoutSeconds 10 -AllowFailure
-        if ($stage.ok) {
-          Start-Sleep -Milliseconds 800
-          return
-        }
+        break
       }
+      Start-Sleep -Seconds 1
+    }
+    if (-not $transportRecovered) {
+      continue
+    }
+    Start-Sleep -Seconds $attempt
+  }
+
+  if (-not $stage.ok) {
+    if ($stage.timedOut -or $stage.failureClass -match "adb|transport|offline|device") {
       Add-FlowEvent -Context $Context -Type "tap-runtime-not-ready" -Data ([ordered]@{
           name = $Name
           failureClass = $stage.failureClass
@@ -870,8 +932,109 @@ function Capture-FlowScreenshot {
   Add-FlowEvent -Context $Context -Type "screenshot-start" -Data ([ordered]@{ name = $Name; path = $local })
   Invoke-Adb -Arguments @("-s", $Context.serial, "shell", "screencap", "-p", $remote) -TimeoutSeconds 20 -AllowFailure | Out-Null
   $pull = Invoke-Adb -Arguments @("-s", $Context.serial, "pull", $remote, $local) -TimeoutSeconds 30 -AllowFailure
-  Add-FlowEvent -Context $Context -Type "screenshot" -Data ([ordered]@{ name = $Name; path = $local; ok = [bool](Test-Path -LiteralPath $local); adbOk = $pull.ok })
+  $size = if (Test-Path -LiteralPath $local) { (Get-Item -LiteralPath $local).Length } else { 0 }
+  Add-FlowEvent -Context $Context -Type "screenshot" -Data ([ordered]@{ name = $Name; path = $local; ok = [bool]($size -gt 0); bytes = $size; adbOk = $pull.ok })
   return $local
+}
+
+function Get-FlowScreenshotDiffScore {
+  param(
+    [string]$ExpectedPath,
+    [string]$ActualPath
+  )
+
+  if (-not (Test-Path -LiteralPath $ExpectedPath) -or -not (Test-Path -LiteralPath $ActualPath)) {
+    return $null
+  }
+  if ((Get-Item -LiteralPath $ExpectedPath).Length -le 0 -or (Get-Item -LiteralPath $ActualPath).Length -le 0) {
+    return $null
+  }
+
+  Add-Type -AssemblyName System.Drawing
+  $expected = $null
+  $actual = $null
+  try {
+    $expected = [System.Drawing.Bitmap]::FromFile((Resolve-Path -LiteralPath $ExpectedPath))
+    $actual = [System.Drawing.Bitmap]::FromFile((Resolve-Path -LiteralPath $ActualPath))
+    $sum = 0.0
+    $count = 0
+    $width = [Math]::Min($expected.Width, $actual.Width)
+    $height = [Math]::Min($expected.Height, $actual.Height)
+    for ($y = 20; $y -lt $height; $y += 30) {
+      for ($x = 20; $x -lt $width; $x += 30) {
+        $left = $expected.GetPixel($x, $y)
+        $right = $actual.GetPixel($x, $y)
+        $sum += [Math]::Abs($left.R - $right.R) + [Math]::Abs($left.G - $right.G) + [Math]::Abs($left.B - $right.B)
+        $count += 3
+      }
+    }
+    if ($count -eq 0) {
+      return $null
+    }
+    return [Math]::Round($sum / $count, 2)
+  } catch {
+    return $null
+  } finally {
+    if ($expected) { $expected.Dispose() }
+    if ($actual) { $actual.Dispose() }
+  }
+}
+
+function Assert-FlowScreenshotDiff {
+  param(
+    $Context,
+    [string]$Step,
+    [string]$ExpectedPath,
+    [string]$ActualPath,
+    [double]$MinDiff = -1,
+    [double]$MaxDiff = -1
+  )
+
+  $score = Get-FlowScreenshotDiffScore -ExpectedPath $ExpectedPath -ActualPath $ActualPath
+  Add-FlowEvent -Context $Context -Type "screenshot-diff" -Data ([ordered]@{
+      step = $Step
+      expected = $ExpectedPath
+      actual = $ActualPath
+      score = $score
+      minDiff = $MinDiff
+      maxDiff = $MaxDiff
+    })
+  if ($null -eq $score) {
+    Stop-FlowWithFailure -Context $Context -FailureClass "visual-state-mismatch" -Step $Step -Message "Could not compare screenshots."
+  }
+  if ($MinDiff -ge 0 -and $score -lt $MinDiff) {
+    Stop-FlowWithFailure -Context $Context -FailureClass "visual-state-mismatch" -Step $Step -Message "Screenshot did not leave the previous page. diff=$score min=$MinDiff"
+  }
+  if ($MaxDiff -ge 0 -and $score -gt $MaxDiff) {
+    Stop-FlowWithFailure -Context $Context -FailureClass "visual-state-mismatch" -Step $Step -Message "Screenshot did not return to expected page. diff=$score max=$MaxDiff"
+  }
+}
+
+function New-FlowSolidPng {
+  param(
+    [string]$Path,
+    [int]$Width,
+    [int]$Height,
+    [int]$Red,
+    [int]$Green,
+    [int]$Blue
+  )
+
+  Add-Type -AssemblyName System.Drawing
+  $bitmap = New-Object System.Drawing.Bitmap $Width, $Height
+  $graphics = [System.Drawing.Graphics]::FromImage($bitmap)
+  try {
+    $brush = New-Object System.Drawing.SolidBrush ([System.Drawing.Color]::FromArgb($Red, $Green, $Blue))
+    try {
+      $graphics.FillRectangle($brush, 0, 0, $Width, $Height)
+    } finally {
+      $brush.Dispose()
+    }
+    $bitmap.Save($Path, [System.Drawing.Imaging.ImageFormat]::Png)
+  } finally {
+    $graphics.Dispose()
+    $bitmap.Dispose()
+  }
 }
 
 function Stop-FlowServerProcesses {
@@ -1310,9 +1473,29 @@ function Get-FlowMainmenuRouteCoords {
     battle = @{ x = 1090; y = 400 }
     compound = @{ x = 1090; y = 555 }
     shop = @{ x = 1090; y = 690 }
+    deck = @{ x = 640; y = 675 }
+    friends = @{ x = 790; y = 675 }
     menu = @{ x = 990; y = 675 }
     menuPlayerInfo = @{ x = 525; y = 115 }
     return = @{ x = 1090; y = 585 }
+  }
+}
+
+function Get-FlowMenuPageCoords {
+  @{
+    invite = @{ x = 300; y = 115 }
+    playerInfo = @{ x = 525; y = 115 }
+    story = @{ x = 755; y = 115 }
+    townEvent = @{ x = 985; y = 115 }
+    fairy = @{ x = 300; y = 300 }
+    battleHistory = @{ x = 525; y = 300 }
+    ranking = @{ x = 755; y = 300 }
+    option = @{ x = 985; y = 300 }
+    item = @{ x = 300; y = 485 }
+    cardCollection = @{ x = 525; y = 485 }
+    partsList = @{ x = 755; y = 485 }
+    help = @{ x = 985; y = 485 }
+    updateHistory = @{ x = 300; y = 635 }
   }
 }
 
@@ -1342,7 +1525,7 @@ function Invoke-FlowReturnToMainmenu {
   }
   Start-Sleep -Seconds 3
   Assert-FlowClientAlive -Context $Context -Step "$Name-after-return"
-  Capture-FlowScreenshot -Context $Context -Name "$Name-mainmenu" | Out-Null
+  return Capture-FlowScreenshot -Context $Context -Name "$Name-mainmenu"
 }
 
 function Invoke-FlowReturnToMenuList {
@@ -1360,6 +1543,40 @@ function Invoke-FlowReturnToMenuList {
   Capture-FlowScreenshot -Context $Context -Name "$Name-menu" | Out-Null
 }
 
+function Invoke-FlowOpenMenuListFromMainmenu {
+  param(
+    $Context,
+    [string]$Name = "open-menu-list"
+  )
+
+  $coords = Get-FlowMainmenuRouteCoords
+  Invoke-FlowOpenMainmenuRoute -Context $Context -Name $Name -X $coords.menu.x -Y $coords.menu.y -Path "/connect/app/menu/menulist" -Fields @{ command = "menu"; nextScene = 20100 }
+  $Context.menuBaselineScreenshot = Join-Path $Context.screenshotsDir "$Name.png"
+}
+
+function Ensure-FlowMenuListVisible {
+  param(
+    $Context,
+    [string]$Name
+  )
+
+  $coords = Get-FlowMainmenuRouteCoords
+  Invoke-FlowTap -Context $Context -Name $Name -X $coords.menu.x -Y $coords.menu.y
+  $probe = Wait-FlowServerEventOptional -Context $Context -Step "$Name-probe" -Tag "connect_app_probe" -Path "" -TimeoutSeconds 6
+  if ($probe) {
+    if ($probe.path -ne "/connect/app/menu/menulist") {
+      Stop-FlowWithFailure -Context $Context -FailureClass "route-param-mismatch" -Step $Name -Message "Expected menu list or no route while ensuring menu visibility, saw $($probe.path)."
+    }
+    Wait-FlowServerEvent -Context $Context -Step "$Name-response" -Tag "connect_app_response" -Path "/connect/app/menu/menulist" -Fields @{ command = "menu"; nextScene = 20100 } -TimeoutSeconds 10 | Out-Null
+  } else {
+    Wait-FlowServerQuiet -Context $Context -Step "$Name-already-menu-settle" -QuietSeconds 2 -TimeoutSeconds 8
+    Move-FlowRequestCursorToEnd -Context $Context
+  }
+  Start-Sleep -Seconds 2
+  Assert-FlowClientAlive -Context $Context -Step "$Name-after"
+  Capture-FlowScreenshot -Context $Context -Name "$Name-menu" | Out-Null
+}
+
 function Invoke-FlowOpenMainmenuRoute {
   param(
     $Context,
@@ -1371,11 +1588,210 @@ function Invoke-FlowOpenMainmenuRoute {
     [hashtable]$Fields
   )
 
-  Invoke-FlowTapThenWaitProbe -Context $Context -Name $Name -X $X -Y $Y -Path $Path -Params $Params -TimeoutSeconds 25 | Out-Null
+  Invoke-FlowTap -Context $Context -Name $Name -X $X -Y $Y
+  $probe = Wait-FlowServerEvent -Context $Context -Step $Name -Tag "connect_app_probe" -Path "" -TimeoutSeconds 25 -NoEventFailureClass "tap-no-effect"
+  if ($probe.path -ne $Path) {
+    Stop-FlowWithFailure -Context $Context -FailureClass "route-param-mismatch" -Step $Name -Message "Unexpected route for ${Name}: $($probe.path). Expected $Path."
+  }
+  if ($Params.Count -gt 0 -and -not (Test-FlowExpectedMap -Actual $probe.decryptedParams -Expected $Params)) {
+    Stop-FlowWithFailure -Context $Context -FailureClass "route-param-mismatch" -Step $Name -Message "Unexpected params for $Name $($probe.path)."
+  }
   Wait-FlowServerEvent -Context $Context -Step "$Name-response" -Tag "connect_app_response" -Path $Path -Fields $Fields -TimeoutSeconds 10 | Out-Null
   Start-Sleep -Seconds 3
   Assert-FlowClientAlive -Context $Context -Step "$Name-after-response"
   Capture-FlowScreenshot -Context $Context -Name $Name | Out-Null
+}
+
+function Invoke-FlowReturnToMainmenuRetry {
+  param(
+    $Context,
+    [string]$Name,
+    [string]$BaselineScreenshot,
+    [int]$MaxAttempts = 3,
+    [double]$MaxDiff = 12,
+    [string[]]$AllowedIntermediatePaths = @()
+  )
+
+  $coords = Get-FlowMainmenuRouteCoords
+  $lastScreenshot = $null
+  for ($attempt = 1; $attempt -le $MaxAttempts; $attempt++) {
+    Invoke-FlowTap -Context $Context -Name "$Name-attempt-$attempt" -X $coords.return.x -Y $coords.return.y
+    $probe = Wait-FlowServerEventOptional -Context $Context -Step "$Name-attempt-$attempt-probe" -Tag "connect_app_probe" -Path "" -TimeoutSeconds 8
+    if ($probe) {
+      if ($probe.path -eq "/connect/app/mainmenu") {
+        Wait-FlowServerEvent -Context $Context -Step "$Name-attempt-$attempt-mainmenu-response" -Tag "connect_app_response" -Path "/connect/app/mainmenu" -TimeoutSeconds 10 | Out-Null
+      } elseif ($probe.path -in $AllowedIntermediatePaths) {
+        Wait-FlowServerEvent -Context $Context -Step "$Name-attempt-$attempt-intermediate-response" -Tag "connect_app_response" -Path $probe.path -TimeoutSeconds 10 | Out-Null
+      } else {
+        Stop-FlowWithFailure -Context $Context -FailureClass "route-param-mismatch" -Step $Name -Message "Unexpected return route from ${Name}: $($probe.path)."
+      }
+    } else {
+      Wait-FlowServerQuiet -Context $Context -Step "$Name-attempt-$attempt-local-back-settle" -QuietSeconds 2 -TimeoutSeconds 10
+      Move-FlowRequestCursorToEnd -Context $Context
+    }
+    Start-Sleep -Seconds 2
+    Assert-FlowClientAlive -Context $Context -Step "$Name-attempt-$attempt-after-return"
+    $lastScreenshot = Capture-FlowScreenshot -Context $Context -Name "$Name-attempt-$attempt-mainmenu"
+    $score = Get-FlowScreenshotDiffScore -ExpectedPath $BaselineScreenshot -ActualPath $lastScreenshot
+    Add-FlowEvent -Context $Context -Type "screenshot-diff" -Data ([ordered]@{
+        step = "$Name-attempt-$attempt-visual-return"
+        expected = $BaselineScreenshot
+        actual = $lastScreenshot
+        score = $score
+        minDiff = -1
+        maxDiff = $MaxDiff
+      })
+    if ($null -ne $score -and $score -le $MaxDiff) {
+      Add-FlowEvent -Context $Context -Type "mainmenu-return-ok" -Data ([ordered]@{ name = $Name; attempts = $attempt; score = $score })
+      return $lastScreenshot
+    }
+  }
+
+  Assert-FlowScreenshotDiff -Context $Context -Step "$Name-visual-return" -ExpectedPath $BaselineScreenshot -ActualPath $lastScreenshot -MaxDiff $MaxDiff
+  return $lastScreenshot
+}
+
+function Invoke-FlowOpenMenuNativeEntry {
+  param(
+    $Context,
+    [hashtable]$Entry
+  )
+
+  $name = $Entry.name
+  $coord = $Entry.coord
+  Assert-FlowClientAlive -Context $Context -Step "$name-before-tap"
+  Invoke-FlowTap -Context $Context -Name $name -X $coord.x -Y $coord.y
+  $allowLocal = $Entry.ContainsKey("allowLocal") -and [bool]$Entry.allowLocal
+  $probe = $null
+  if ($allowLocal) {
+    $probe = Wait-FlowServerEventOptional -Context $Context -Step "$name-probe" -Tag "connect_app_probe" -Path "" -TimeoutSeconds 8
+    if (-not $probe) {
+      Wait-FlowServerQuiet -Context $Context -Step "$name-local-open-settle" -QuietSeconds 2 -TimeoutSeconds 10
+      Move-FlowRequestCursorToEnd -Context $Context
+      Start-Sleep -Seconds 2
+      Assert-FlowClientAlive -Context $Context -Step "$name-after-local-open"
+      $openedScreenshot = Capture-FlowScreenshot -Context $Context -Name $name
+      if ($Context.Contains("menuBaselineScreenshot") -and $Context.menuBaselineScreenshot) {
+        Assert-FlowScreenshotDiff -Context $Context -Step "$name-visual-open" -ExpectedPath $Context.menuBaselineScreenshot -ActualPath $openedScreenshot -MinDiff 20
+      }
+      Add-FlowEvent -Context $Context -Type "menu-native-entry-ok" -Data ([ordered]@{
+          name = $name
+          path = ""
+          mode = "local"
+          expectedPaths = @($Entry.paths)
+        })
+      return ""
+    }
+  } else {
+    $probe = Wait-FlowServerEvent -Context $Context -Step "$name-probe" -Tag "connect_app_probe" -Path "" -TimeoutSeconds 25 -NoEventFailureClass "tap-no-effect"
+  }
+  $allowedPaths = @($Entry.paths)
+  if ($probe.path -notin $allowedPaths) {
+    Stop-FlowWithFailure -Context $Context -FailureClass "route-param-mismatch" -Step $name -Message "Unexpected route for ${name}: $($probe.path). Expected one of: $($allowedPaths -join ', ')."
+  }
+
+  $expectedParams = @{}
+  if ($Entry.ContainsKey("paramsByPath") -and $Entry.paramsByPath.ContainsKey($probe.path)) {
+    $expectedParams = $Entry.paramsByPath[$probe.path]
+  } elseif ($Entry.ContainsKey("params")) {
+    $expectedParams = $Entry.params
+  }
+  if ($expectedParams.Count -gt 0 -and -not (Test-FlowExpectedMap -Actual $probe.decryptedParams -Expected $expectedParams)) {
+    Stop-FlowWithFailure -Context $Context -FailureClass "route-param-mismatch" -Step $name -Message "Unexpected params for $name $($probe.path)."
+  }
+
+  $expectedFields = @{}
+  if ($Entry.ContainsKey("fieldsByPath") -and $Entry.fieldsByPath.ContainsKey($probe.path)) {
+    $expectedFields = $Entry.fieldsByPath[$probe.path]
+  } elseif ($Entry.ContainsKey("fields")) {
+    $expectedFields = $Entry.fields
+  }
+  Wait-FlowServerEvent -Context $Context -Step "$name-response" -Tag "connect_app_response" -Path $probe.path -Fields $expectedFields -TimeoutSeconds 10 | Out-Null
+  Start-Sleep -Seconds 3
+  Assert-FlowClientAlive -Context $Context -Step "$name-after-response"
+  $openedScreenshot = Capture-FlowScreenshot -Context $Context -Name $name
+  if ($Context.Contains("menuBaselineScreenshot") -and $Context.menuBaselineScreenshot -and $name -in @("open-menu-parts-list", "open-menu-card-collection", "open-menu-fairy")) {
+    Assert-FlowScreenshotDiff -Context $Context -Step "$name-visual-open" -ExpectedPath $Context.menuBaselineScreenshot -ActualPath $openedScreenshot -MinDiff 20
+  }
+  Add-FlowEvent -Context $Context -Type "menu-native-entry-ok" -Data ([ordered]@{
+      name = $name
+      path = $probe.path
+      expectedPaths = $allowedPaths
+    })
+  return $probe.path
+}
+
+function Invoke-FlowReturnFromMenuEntry {
+  param(
+    $Context,
+    [string]$Name
+  )
+
+  $coords = Get-FlowMainmenuRouteCoords
+  Invoke-FlowTap -Context $Context -Name $Name -X $coords.return.x -Y $coords.return.y
+  $probe = Wait-FlowServerEventOptional -Context $Context -Step "$Name-probe" -Tag "connect_app_probe" -Path "" -TimeoutSeconds 8
+  $location = "menu"
+  if ($probe) {
+    if ($probe.path -eq "/connect/app/menu/menulist") {
+      Wait-FlowServerEvent -Context $Context -Step "$Name-menu-response" -Tag "connect_app_response" -Path "/connect/app/menu/menulist" -Fields @{ command = "menu"; nextScene = 20100 } -TimeoutSeconds 10 | Out-Null
+      $location = "menu"
+    } elseif ($probe.path -eq "/connect/app/mainmenu") {
+      Wait-FlowServerEvent -Context $Context -Step "$Name-mainmenu-response" -Tag "connect_app_response" -Path "/connect/app/mainmenu" -TimeoutSeconds 10 | Out-Null
+      $location = "mainmenu"
+    } else {
+      Stop-FlowWithFailure -Context $Context -FailureClass "route-param-mismatch" -Step $Name -Message "Unexpected return route from menu entry: $($probe.path)."
+    }
+  } else {
+    Wait-FlowServerQuiet -Context $Context -Step "$Name-local-back-settle" -QuietSeconds 2 -TimeoutSeconds 10
+    Move-FlowRequestCursorToEnd -Context $Context
+  }
+  Start-Sleep -Seconds 2
+  Assert-FlowClientAlive -Context $Context -Step "$Name-after-return"
+  $returnScreenshot = Capture-FlowScreenshot -Context $Context -Name "$Name-$location"
+  if ($location -eq "menu" -and $Context.Contains("menuBaselineScreenshot") -and $Context.menuBaselineScreenshot) {
+    Assert-FlowScreenshotDiff -Context $Context -Step "$Name-visual-return" -ExpectedPath $Context.menuBaselineScreenshot -ActualPath $returnScreenshot -MaxDiff 8
+  }
+  return $location
+}
+
+function Invoke-FlowOpenMenuWebEntry {
+  param(
+    $Context,
+    [hashtable]$Entry
+  )
+
+  $name = $Entry.name
+  $coord = $Entry.coord
+  Assert-FlowClientAlive -Context $Context -Step "$name-before-tap"
+  Invoke-FlowTap -Context $Context -Name $name -X $coord.x -Y $coord.y
+  $web = Wait-FlowServerEvent -Context $Context -Step "$name-web" -Tag "connect_web_stub" -Path "" -TimeoutSeconds 20 -NoEventFailureClass "tap-no-effect"
+  $allowedPaths = @($Entry.paths)
+  if ($web.path -notin $allowedPaths) {
+    Stop-FlowWithFailure -Context $Context -FailureClass "route-param-mismatch" -Step $name -Message "Unexpected web path for ${name}: $($web.path). Expected one of: $($allowedPaths -join ', ')."
+  }
+  Wait-FlowServerQuiet -Context $Context -Step "$name-web-settle" -QuietSeconds 2 -TimeoutSeconds 10
+  Assert-FlowClientAlive -Context $Context -Step "$name-after-web"
+  Capture-FlowScreenshot -Context $Context -Name $name | Out-Null
+  Add-FlowEvent -Context $Context -Type "menu-web-entry-ok" -Data ([ordered]@{
+      name = $name
+      path = $web.path
+    })
+}
+
+function Invoke-FlowReturnFromMenuWebEntry {
+  param(
+    $Context,
+    [string]$Name
+  )
+
+  Add-FlowEvent -Context $Context -Type "keyevent" -Data ([ordered]@{ name = $Name; key = "BACK" })
+  Invoke-Adb -Arguments @("-s", $Context.serial, "shell", "input", "keyevent", "4") -TimeoutSeconds 10 -AllowFailure | Out-Null
+  Start-Sleep -Seconds 2
+  Invoke-FlowCancelExitConfirmIfPresent -Context $Context | Out-Null
+  Wait-FlowServerQuiet -Context $Context -Step "$Name-web-back-settle" -QuietSeconds 2 -TimeoutSeconds 10
+  Move-FlowRequestCursorToEnd -Context $Context
+  Assert-FlowClientAlive -Context $Context -Step "$Name-after-web-return"
+  Capture-FlowScreenshot -Context $Context -Name "$Name-after-web-return" | Out-Null
 }
 
 function Invoke-FlowMainmenuButtonsRouteSmoke {
@@ -1398,6 +1814,82 @@ function Invoke-FlowMainmenuButtonsRouteSmoke {
   Invoke-FlowOpenMainmenuRoute -Context $Context -Name "open-mainmenu-menu" -X $coords.menu.x -Y $coords.menu.y -Path "/connect/app/menu/menulist" -Fields @{ command = "menu"; nextScene = 20100 }
   Invoke-FlowOpenMainmenuRoute -Context $Context -Name "open-menu-playerinfo" -X $coords.menuPlayerInfo.x -Y $coords.menuPlayerInfo.y -Path "/connect/app/menu/playerinfo" -Fields @{ command = "p_info"; nextScene = 26100 }
   Invoke-FlowReturnToMenuList -Context $Context -Name "return-from-open-menu-playerinfo"
+}
+
+function Invoke-FlowMainmenuBottomButtonsSmoke {
+  param($Context)
+
+  $coords = Get-FlowMainmenuRouteCoords
+  Start-Sleep -Seconds 2
+  Assert-FlowClientAlive -Context $Context -Step "mainmenu-bottom-ready"
+  $baseline = Capture-FlowScreenshot -Context $Context -Name "mainmenu-bottom-baseline"
+  Move-FlowRequestCursorToEnd -Context $Context
+
+  $entries = @(
+    @{ name = "open-mainmenu-deck"; coord = $coords.deck; path = "/connect/app/roundtable/edit"; params = @{ move = "1" }; fields = @{ command = "round_table"; nextScene = 10100 } },
+    @{ name = "open-mainmenu-friends"; coord = $coords.friends; path = "/connect/app/menu/friendlist"; fields = @{ command = "friends"; nextScene = 17100 } }
+  )
+
+  foreach ($entry in $entries) {
+    $params = if ($entry.ContainsKey("params")) { $entry.params } else { @{} }
+    Invoke-FlowOpenMainmenuRoute -Context $Context -Name $entry.name -X $entry.coord.x -Y $entry.coord.y -Path $entry.path -Params $params -Fields $entry.fields
+    $opened = Join-Path $Context.screenshotsDir "$($entry.name).png"
+    Assert-FlowScreenshotDiff -Context $Context -Step "$($entry.name)-visual-open" -ExpectedPath $baseline -ActualPath $opened -MinDiff 20
+    Invoke-FlowReturnToMainmenuRetry -Context $Context -Name "return-from-$($entry.name)" -BaselineScreenshot $baseline -AllowedIntermediatePaths @("/connect/app/cardselect/savedeckcard") | Out-Null
+  }
+}
+
+function Invoke-FlowMenuButtonsRouteSmoke {
+  param(
+    $Context,
+    [string[]]$EntryNames = @()
+  )
+
+  $coords = Get-FlowMenuPageCoords
+  Invoke-FlowOpenMenuListFromMainmenu -Context $Context -Name "open-menu-buttons-menu"
+
+  $nativeEntries = @(
+    @{ name = "open-menu-invite"; coord = $coords.invite; paths = @("/connect/app/menu/other_list", "/connect/app/menu/invite_friend", "/connect/app/menu/player_search"); fieldsByPath = @{ "/connect/app/menu/other_list" = @{ command = "other_list"; nextScene = 20100 }; "/connect/app/menu/invite_friend" = @{ command = "invide"; nextScene = 32100 }; "/connect/app/menu/player_search" = @{ command = "friend_search"; nextScene = 22300 } } },
+    @{ name = "open-menu-playerinfo"; coord = $coords.playerInfo; paths = @("/connect/app/menu/playerinfo"); fields = @{ command = "p_info"; nextScene = 26100 } },
+    @{ name = "open-menu-story"; coord = $coords.story; paths = @("/connect/app/story/getoutline"); fields = @{ command = "story"; nextScene = 3100 } },
+    @{ name = "open-menu-town-event"; coord = $coords.townEvent; paths = @("/connect/app/menu/gettownevent", "/connect/app/menu/towneventlist"); fieldsByPath = @{ "/connect/app/menu/gettownevent" = @{ command = "town_event"; nextScene = 28100 }; "/connect/app/menu/towneventlist" = @{ command = "town_event"; nextScene = 28100 } } },
+    @{ name = "open-menu-battle-history"; coord = $coords.battleHistory; paths = @("/connect/app/menu/battlehistory"); fields = @{ command = "b_history"; nextScene = 25100 } },
+    @{ name = "open-menu-ranking"; coord = $coords.ranking; paths = @("/connect/app/menu/ranking/ranking_arena", "/connect/app/menu/ranking/rankingevent", "/connect/app/ranking/ranking"); fieldsByPath = @{ "/connect/app/menu/ranking/ranking_arena" = @{ command = "ranking"; nextScene = 27100 }; "/connect/app/menu/ranking/rankingevent" = @{ command = "ranking"; nextScene = 27100 }; "/connect/app/ranking/ranking" = @{ command = "ranking"; nextScene = 27100 } } },
+    @{ name = "open-menu-option"; coord = $coords.option; paths = @("/connect/app/menu/chksnd"); fields = @{ command = "option"; nextScene = 33000 }; allowLocal = $true },
+    @{ name = "open-menu-item"; coord = $coords.item; paths = @("/connect/app/item/havelist"); fields = @{ command = "item"; nextScene = 30100 }; allowLocal = $true },
+    @{ name = "open-menu-card-collection"; coord = $coords.cardCollection; paths = @("/connect/app/menu/cardcollection"); fields = @{ command = "c_collection"; nextScene = 23100 } },
+    @{ name = "open-menu-parts-list"; coord = $coords.partsList; paths = @("/connect/app/menu/haveparts"); fields = @{ command = "partslist"; nextScene = 31100 } },
+    @{ name = "open-menu-fairy"; coord = $coords.fairy; paths = @("/connect/app/menu/fairyselect"); fields = @{ command = "fairy"; nextScene = 29200 } }
+  )
+
+  $selectedNativeEntries = $nativeEntries
+  if ($EntryNames.Count -gt 0) {
+    $selectedNativeEntries = @($nativeEntries | Where-Object { $_.name -in $EntryNames })
+  }
+
+  foreach ($entry in $selectedNativeEntries) {
+    Invoke-FlowOpenMenuNativeEntry -Context $Context -Entry $entry | Out-Null
+    $location = Invoke-FlowReturnFromMenuEntry -Context $Context -Name "return-from-$($entry.name)"
+    if ($location -eq "mainmenu") {
+      Invoke-FlowOpenMenuListFromMainmenu -Context $Context -Name "reopen-menu-after-$($entry.name)"
+    }
+  }
+
+  $webEntries = @(
+    @{ name = "open-menu-update-history"; coord = $coords.updateHistory; paths = @("/connect/web/") },
+    @{ name = "open-menu-help"; coord = $coords.help; paths = @("/connect/web/help") }
+  )
+
+  $selectedWebEntries = $webEntries
+  if ($EntryNames.Count -gt 0) {
+    $selectedWebEntries = @($webEntries | Where-Object { $_.name -in $EntryNames })
+  }
+
+  foreach ($entry in $selectedWebEntries) {
+    Invoke-FlowOpenMenuWebEntry -Context $Context -Entry $entry
+    Invoke-FlowReturnFromMenuWebEntry -Context $Context -Name "return-from-$($entry.name)"
+    Ensure-FlowMenuListVisible -Context $Context -Name "ensure-menu-after-$($entry.name)"
+  }
 }
 
 function Invoke-FlowFastTapThenWaitProbe {
@@ -1953,6 +2445,26 @@ function Invoke-FlowSelfCheck {
     if (-not (Test-FlowUiHasWebView -Ui $webUi)) {
       throw "WebView notice classifier failed"
     }
+    $gameUi = [xml]"<?xml version='1.0'?><hierarchy><node package='com.square_enix.million_cn' /></hierarchy>"
+    $launcherUi = [xml]"<?xml version='1.0'?><hierarchy><node package='com.android.launcher' /></hierarchy>"
+    if (-not (Test-FlowUiShowsGamePackage -Ui $gameUi)) {
+      throw "game package UI classifier failed"
+    }
+    if (Test-FlowUiShowsGamePackage -Ui $launcherUi) {
+      throw "launcher UI was misclassified as game foreground"
+    }
+    $sameA = Join-Path $ctx.artifactDir "self-diff-a.png"
+    $sameB = Join-Path $ctx.artifactDir "self-diff-b.png"
+    New-FlowSolidPng -Path $sameA -Width 90 -Height 90 -Red 20 -Green 40 -Blue 60
+    New-FlowSolidPng -Path $sameB -Width 90 -Height 90 -Red 220 -Green 80 -Blue 30
+    $sameScore = Get-FlowScreenshotDiffScore -ExpectedPath $sameA -ActualPath $sameA
+    $changedScore = Get-FlowScreenshotDiffScore -ExpectedPath $sameA -ActualPath $sameB
+    if ($sameScore -ne 0) {
+      throw "same screenshot diff should be 0, got $sameScore"
+    }
+    if ($changedScore -lt 50) {
+      throw "changed screenshot diff too small: $changedScore"
+    }
     $elapsed = [int]((Get-Date) - $ctx.startedAt).TotalMilliseconds
     $summary = [ordered]@{
       status = "pass"
@@ -2037,6 +2549,34 @@ function Get-FlowScenarioCatalog {
       startsRuntime = $true
       ownsServer = $true
       description = "Login to main menu, tap representative main/menu entries, verify their first route, screenshot pages, and return to main menu."
+    },
+    [ordered]@{
+      name = "mainmenu-bottom-buttons-smoke"
+      default = $false
+      startsRuntime = $true
+      ownsServer = $true
+      description = "Focused main-menu smoke covering the bottom deck and friends entry/back visual gates."
+    },
+    [ordered]@{
+      name = "menu-buttons-route-smoke"
+      default = $false
+      startsRuntime = $true
+      ownsServer = $true
+      description = "Login to main menu, open the Menu page, tap each visible Menu-page entry, verify its first route or WebView URL, screenshot pages, and return to Menu."
+    },
+    [ordered]@{
+      name = "menu-buttons-tail-smoke"
+      default = $false
+      startsRuntime = $true
+      ownsServer = $true
+      description = "Short menu tail smoke covering option, item, card collection, parts list, fairy, update history, help, and their back paths."
+    },
+    [ordered]@{
+      name = "menu-item-parts-smoke"
+      default = $false
+      startsRuntime = $true
+      ownsServer = $true
+      description = "Focused Menu-page smoke covering item and parts-list entry/back visual gates."
     },
     [ordered]@{
       name = "exploration-smoke"
@@ -2166,7 +2706,7 @@ function Invoke-Flow {
   if ($Scenario -eq "self-check") {
     return Invoke-FlowSelfCheck -Scenario $Scenario -Tag $Tag
   }
-  $supportedRuntimeScenarios = @("mainmenu-faction-smoke", "mainmenu-buttons-route-smoke", "exploration-smoke", "exploration-walk-smoke", "exploration-forward-visual-smoke", "exploration-floor-clear-smoke", "exploration-ap-shortage-smoke", "exploration-levelup-smoke")
+  $supportedRuntimeScenarios = @("mainmenu-faction-smoke", "mainmenu-buttons-route-smoke", "mainmenu-bottom-buttons-smoke", "menu-buttons-route-smoke", "menu-buttons-tail-smoke", "menu-item-parts-smoke", "exploration-smoke", "exploration-walk-smoke", "exploration-forward-visual-smoke", "exploration-floor-clear-smoke", "exploration-ap-shortage-smoke", "exploration-levelup-smoke")
   if ($Scenario -notin $supportedRuntimeScenarios) {
     $ctx = New-FlowContext -Scenario $Scenario -Tag $Tag
     $supported = (@(Get-FlowScenarioCatalog).name -join ", ")
@@ -2198,6 +2738,10 @@ function Invoke-Flow {
     switch ($Scenario) {
       "mainmenu-faction-smoke" { Invoke-FlowMainmenuFactionSmoke -Context $ctx }
       "mainmenu-buttons-route-smoke" { Invoke-FlowMainmenuButtonsRouteSmoke -Context $ctx }
+      "mainmenu-bottom-buttons-smoke" { Invoke-FlowMainmenuBottomButtonsSmoke -Context $ctx }
+      "menu-buttons-route-smoke" { Invoke-FlowMenuButtonsRouteSmoke -Context $ctx }
+      "menu-buttons-tail-smoke" { Invoke-FlowMenuButtonsRouteSmoke -Context $ctx -EntryNames @("open-menu-option", "open-menu-item", "open-menu-card-collection", "open-menu-parts-list", "open-menu-fairy", "open-menu-update-history", "open-menu-help") }
+      "menu-item-parts-smoke" { Invoke-FlowMenuButtonsRouteSmoke -Context $ctx -EntryNames @("open-menu-item", "open-menu-parts-list") }
       "exploration-smoke" { Invoke-FlowExplorationSmoke -Context $ctx }
       "exploration-walk-smoke" { Invoke-FlowExplorationWalkSmoke -Context $ctx }
       "exploration-forward-visual-smoke" { Invoke-FlowExplorationForwardVisualSmoke -Context $ctx }

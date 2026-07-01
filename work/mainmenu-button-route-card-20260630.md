@@ -27,7 +27,11 @@ Confirmed main buttons:
 - `menu` -> `menu/menulist` -> scene `20100` (`menu_select`) skeleton.
 - `reward_box` -> `menu/rewardbox` -> scene `21100` (`menu_reward_box`) skeleton.
 - status buttons:
-  - card/friends/fairy routes are represented by menu/friend/fairy skeleton paths.
+  - bottom `card` -> `roundtable/edit` with `move=1` -> scene `10100` (`round_table_scene`) skeleton.
+  - bottom `friends` -> `menu/friendlist` with `move=0` -> scene `17100` (`friend_list_scene`) with the minimal
+    `friend_list/user_list/user` body. Scene `22100` (`menu_friend_list`) is rejected for this entry because it
+    still crashes in `_SceneControl::create(int)` after the response body is populated.
+  - fairy routes are represented by menu/fairy skeleton paths.
   - AP/BC did not expose an independent static `/connect/app` path from `layout_mainmenu.xml`; AP shortage and CP
     purchase screens remain represented by known scene routes `81100` and `8400` when reached through item/shop flow.
 
@@ -50,7 +54,7 @@ Confirmed second-level paths covered as skeletons:
 - `friend/add_friend`, `friend/approve_friend`, `friend/cancel_apply`, `friend/like_user`,
   `friend/refuse_friend`, `friend/remove_friend` -> friend scene `17000`.
 - `item/use`, `item/use_fakecard` -> item-use-end scene `30200`.
-- `cardselect/savedeckcard` -> deck scene `83200`.
+- `cardselect/savedeckcard` -> deck scene `83200`; this is a deck-save/selection path, not the main-menu bottom card entry.
 - `gacha/getproductinfo`, `gacha/buy`, `shop/buy`, `shop/use`, `story/battle`, compound commit routes,
   battle user-list routes, recycle buy/select, reward get, notice/other list routes are present as explicit route
   skeletons or sample-backed bodies.
@@ -90,3 +94,10 @@ Runtime observable for next round:
 - `mainmenu-buttons-route-smoke` taps main menu/menu overlay buttons, waits for first routes, screenshots entered
   pages, and verifies return routes. Runtime artifact `work/kssma-flow-mainmenu-buttons-route-smoke-20260630-211416`
   passed for gacha, battle, compound/card exchange, shop, menu list, and player info.
+- `mainmenu-bottom-buttons-smoke` is the focused regression for the main-menu bottom card/friends entries. First
+  real run `work/kssma-flow-mainmenu-bottom-buttons-smoke-deck-friends-bottom` proved bottom card emits
+  `/connect/app/roundtable/edit` with `move=1`; the prior `/connect/app/cardselect/savedeckcard` expectation was
+  wrong for this button.
+- Accepted run `work/kssma-flow-mainmenu-bottom-buttons-smoke-deck-friends-bottom-scene17100` proves both bottom
+  entries: deck opens via `/roundtable/edit move=1` and returns after two back taps; friends opens via
+  `/menu/friendlist move=0`, response `nextScene=17100`, visibly leaves main menu, and returns to `/mainmenu`.

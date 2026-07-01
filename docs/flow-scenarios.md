@@ -11,6 +11,10 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\work\kssma-runtime.ps1 flo
 powershell -NoProfile -ExecutionPolicy Bypass -File .\work\kssma-runtime.ps1 flow -Scenario self-check
 powershell -NoProfile -ExecutionPolicy Bypass -File .\work\kssma-runtime.ps1 flow -Scenario mainmenu-faction-smoke
 powershell -NoProfile -ExecutionPolicy Bypass -File .\work\kssma-runtime.ps1 flow -Scenario mainmenu-buttons-route-smoke
+powershell -NoProfile -ExecutionPolicy Bypass -File .\work\kssma-runtime.ps1 flow -Scenario mainmenu-bottom-buttons-smoke
+powershell -NoProfile -ExecutionPolicy Bypass -File .\work\kssma-runtime.ps1 flow -Scenario menu-buttons-route-smoke
+powershell -NoProfile -ExecutionPolicy Bypass -File .\work\kssma-runtime.ps1 flow -Scenario menu-buttons-tail-smoke
+powershell -NoProfile -ExecutionPolicy Bypass -File .\work\kssma-runtime.ps1 flow -Scenario menu-item-parts-smoke
 powershell -NoProfile -ExecutionPolicy Bypass -File .\work\kssma-runtime.ps1 flow -Scenario exploration-smoke
 powershell -NoProfile -ExecutionPolicy Bypass -File .\work\kssma-runtime.ps1 flow -Scenario exploration-walk-smoke
 powershell -NoProfile -ExecutionPolicy Bypass -File .\work\kssma-runtime.ps1 flow -Scenario exploration-forward-visual-smoke
@@ -36,6 +40,24 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\work\kssma-runtime.ps1 flo
   first `/connect/app/*` route and response metadata, screenshots each entered page, then
   returns to main menu before the next entry. It is an entry/back smoke, not a full gacha,
   battle, shop, compound, or profile implementation test.
+- `mainmenu-bottom-buttons-smoke` is the focused regression for bottom status entries:
+  deck/round table (`roundtable/edit`, `move=1`) and friends (`menu/friendlist`). It uses screenshot-diff
+  gates against the main menu, so it fails if either tap does not visibly enter its page or
+  if back does not visibly return to the main menu.
+- `menu-buttons-route-smoke` logs into the main menu, opens the Menu page, taps every
+  visible Menu-page entry currently exposed by `layout_menu.xml`, waits for the first
+  `/connect/app/*` route or `/connect/web/*` WebView URL, screenshots each entered page,
+  and verifies the back path returns to Menu or main menu before continuing. It covers
+  entry/back routing only; full story, ranking, fairy, item, collection, parts, option,
+  help, and notice content remain later page-specific frontiers.
+- `menu-buttons-tail-smoke` is the same validation shape but only for the lower/late Menu
+  entries: option, item, card collection, parts list, fairy, update history, and help.
+  Use it when a full Menu-page run already proved the earlier entries and ARM19/ADB
+  stability is the active bottleneck.
+- `menu-item-parts-smoke` is the focused regression for the currently fragile edges:
+  item page open/back and parts-list open/back. It uses screenshot-diff gates against the
+  Menu page, so it fails if the tap does not leave the Menu page or if back does not
+  visibly return to it.
 - Deep exploration scenarios may use `KSSMA_EXPLORATION_MOVES_SEED`, but the seed is only an
   initial minimum; it must not overwrite higher progress saved during the same run.
 - `exploration-ap-shortage-smoke` writes an artifact-local AP=0 save before starting the server,

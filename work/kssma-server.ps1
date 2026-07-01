@@ -8,6 +8,7 @@ $ErrorActionPreference = "Stop"
 $repo = Split-Path $PSScriptRoot -Parent
 $serverScript = Join-Path $repo "server\bootstrap-server.js"
 $pidFile = Join-Path $PSScriptRoot "kssma-server.pid"
+$fingerprintFile = Join-Path $PSScriptRoot "kssma-server.fingerprint"
 $stdoutLog = Join-Path $PSScriptRoot "kssma-server.out.log"
 $stderrLog = Join-Path $PSScriptRoot "kssma-server.err.log"
 
@@ -42,23 +43,94 @@ function Get-ServerProcess {
   return $process
 }
 
+function Get-BootstrapServerProcesses {
+  @(Get-CimInstance Win32_Process -ErrorAction SilentlyContinue | Where-Object {
+      $_.Name -match "node" -and $_.CommandLine -match "bootstrap-server\.js"
+    })
+}
+
 function Test-Port {
   param([int]$Port)
 
-  $connection = Get-NetTCPConnection -LocalPort $Port -State Listen -ErrorAction SilentlyContinue |
-    Select-Object -First 1
-  return [bool]$connection
+  $client = New-Object System.Net.Sockets.TcpClient
+  try {
+    $async = $client.BeginConnect("127.0.0.1", $Port, $null, $null)
+    if (-not $async.AsyncWaitHandle.WaitOne(500, $false)) {
+      return $false
+    }
+    $client.EndConnect($async)
+    return $true
+  } catch {
+    return $false
+  } finally {
+    $client.Close()
+  }
+}
+
+function Test-Health {
+  try {
+    $request = [System.Net.WebRequest]::Create("http://127.0.0.1:50005/healthz")
+    $request.Timeout = 800
+    $request.ReadWriteTimeout = 800
+    $response = $request.GetResponse()
+    try {
+      return [int]$response.StatusCode -eq 200
+    } finally {
+      $response.Close()
+    }
+  } catch {
+    return $false
+  }
+}
+
+function Get-ServerFingerprint {
+  $paths = @()
+  $paths += Get-Item -LiteralPath $serverScript -ErrorAction Stop
+
+  foreach ($relativeDir in @("server\data\game", "server\data\server")) {
+    $dataDir = Join-Path $repo $relativeDir
+    if (Test-Path -LiteralPath $dataDir) {
+      $paths += Get-ChildItem -LiteralPath $dataDir -Recurse -File -Filter *.json
+    }
+  }
+
+  $defaultSave = Join-Path $repo "server\data\player\default-save.json"
+  if (Test-Path -LiteralPath $defaultSave) {
+    $paths += Get-Item -LiteralPath $defaultSave
+  }
+
+  $lines = foreach ($path in ($paths | Sort-Object FullName)) {
+    $repoFull = [System.IO.Path]::GetFullPath($repo).TrimEnd("\", "/")
+    $pathFull = [System.IO.Path]::GetFullPath($path.FullName)
+    $relative = if ($pathFull.StartsWith($repoFull, [System.StringComparison]::OrdinalIgnoreCase)) {
+      $pathFull.Substring($repoFull.Length).TrimStart("\", "/")
+    } else {
+      $pathFull
+    }
+    $hash = (Get-FileHash -LiteralPath $path.FullName -Algorithm SHA256).Hash
+    "$relative=$hash"
+  }
+  $bytes = [System.Text.Encoding]::UTF8.GetBytes(($lines -join "`n"))
+  $sha = [System.Security.Cryptography.SHA256]::Create()
+  try {
+    return [BitConverter]::ToString($sha.ComputeHash($bytes)).Replace("-", "")
+  } finally {
+    $sha.Dispose()
+  }
+}
+
+function Get-StoredServerFingerprint {
+  if (-not (Test-Path -LiteralPath $fingerprintFile)) {
+    return ""
+  }
+  return (Get-Content -Raw -LiteralPath $fingerprintFile -ErrorAction SilentlyContinue).Trim()
 }
 
 function Show-Status {
   $process = Get-ServerProcess
-  $health = $false
-  try {
-    $response = Invoke-WebRequest -UseBasicParsing -Uri "http://127.0.0.1:50005/healthz" -TimeoutSec 2
-    $health = $response.StatusCode -eq 200
-  } catch {
-    $health = $false
-  }
+  $currentFingerprint = if (Test-Path -LiteralPath $serverScript) { Get-ServerFingerprint } else { "" }
+  $storedFingerprint = Get-StoredServerFingerprint
+  $health = Test-Health
 
   [pscustomobject]@{
     Running      = [bool]$process
@@ -66,20 +138,43 @@ function Show-Status {
     Port50005    = Test-Port 50005
     Port10001    = Test-Port 10001
     Health50005  = $health
+    FingerprintOk = [bool]($process -and $storedFingerprint -and $storedFingerprint -eq $currentFingerprint)
     StdoutLog    = $stdoutLog
     StderrLog    = $stderrLog
   } | Format-List
 }
 
 function Start-Server {
-  if (Get-ServerProcess) {
-    Write-Host "kssma server already running"
-    Show-Status
-    return
-  }
-
   if (-not (Test-Path -LiteralPath $serverScript)) {
     throw "Missing server script: $serverScript"
+  }
+
+  $currentFingerprint = Get-ServerFingerprint
+  $process = Get-ServerProcess
+  $bootstrapProcesses = @(Get-BootstrapServerProcesses)
+  if ($process) {
+    $storedFingerprint = Get-StoredServerFingerprint
+    $orphanProcesses = @($bootstrapProcesses | Where-Object { $_.ProcessId -ne $process.ProcessId })
+    if ($storedFingerprint -and $storedFingerprint -eq $currentFingerprint -and $orphanProcesses.Count -eq 0) {
+      Write-Host "kssma server already running"
+      Show-Status
+      return
+    }
+
+    Write-Host "kssma server code/data changed; restarting"
+  } elseif ($bootstrapProcesses.Count -gt 0) {
+    Write-Host "kssma server process exists without current pid; restarting"
+  }
+
+  if ($process -or $bootstrapProcesses.Count -gt 0) {
+    foreach ($candidate in $bootstrapProcesses) {
+      Stop-Process -Id $candidate.ProcessId -Force -ErrorAction SilentlyContinue
+    }
+    if ($process -and $process.ProcessId -notin @($bootstrapProcesses.ProcessId)) {
+      Stop-Process -Id $process.ProcessId -Force -ErrorAction SilentlyContinue
+    }
+    Remove-Item -LiteralPath $pidFile -ErrorAction SilentlyContinue
+    Start-Sleep -Milliseconds 500
   }
 
   Remove-Item -LiteralPath $stdoutLog, $stderrLog -ErrorAction SilentlyContinue
@@ -99,6 +194,7 @@ function Start-Server {
     -PassThru
 
   Set-Content -LiteralPath $pidFile -Value ([string]$process.Id)
+  Set-Content -LiteralPath $fingerprintFile -Value $currentFingerprint
   Start-Sleep -Seconds 1
   Show-Status
 }
@@ -112,7 +208,7 @@ function Stop-Server {
   }
 
   Stop-Process -Id $process.ProcessId -Force -ErrorAction SilentlyContinue
-  Remove-Item -LiteralPath $pidFile -ErrorAction SilentlyContinue
+  Remove-Item -LiteralPath $pidFile, $fingerprintFile -ErrorAction SilentlyContinue
   Start-Sleep -Milliseconds 300
   Show-Status
 }
