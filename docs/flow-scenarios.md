@@ -12,6 +12,16 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\work\kssma-runtime.ps1 flo
 powershell -NoProfile -ExecutionPolicy Bypass -File .\work\kssma-runtime.ps1 flow -Scenario mainmenu-faction-smoke
 powershell -NoProfile -ExecutionPolicy Bypass -File .\work\kssma-runtime.ps1 flow -Scenario mainmenu-buttons-route-smoke
 powershell -NoProfile -ExecutionPolicy Bypass -File .\work\kssma-runtime.ps1 flow -Scenario mainmenu-bottom-buttons-smoke
+powershell -NoProfile -ExecutionPolicy Bypass -File .\work\kssma-runtime.ps1 flow -Scenario deck-builder-entry-smoke -Tag deck-builder-entry-1
+powershell -NoProfile -ExecutionPolicy Bypass -File .\work\kssma-runtime.ps1 flow -Scenario deck-builder-leader-mode-smoke -Tag deck-builder-leader-mode-1
+powershell -NoProfile -ExecutionPolicy Bypass -File .\work\kssma-runtime.ps1 flow -Scenario deck-builder-edit-smoke -Tag deck-builder-edit-1
+powershell -NoProfile -ExecutionPolicy Bypass -File .\work\kssma-runtime.ps1 flow -Scenario deck-builder-save-smoke -Tag deck-builder-save-1
+powershell -NoProfile -ExecutionPolicy Bypass -File .\work\kssma-runtime.ps1 flow -Scenario gacha-draw-smoke
+powershell -NoProfile -ExecutionPolicy Bypass -File .\work\kssma-runtime.ps1 flow -Scenario gacha-result-smoke
+powershell -NoProfile -ExecutionPolicy Bypass -File .\work\kssma-runtime.ps1 flow -Scenario gacha-result-back-smoke
+powershell -NoProfile -ExecutionPolicy Bypass -File .\work\kssma-runtime.ps1 flow -Scenario gacha-settlement-deck-smoke
+powershell -NoProfile -ExecutionPolicy Bypass -File .\work\kssma-runtime.ps1 flow -Scenario gacha-paid-settlement-deck-smoke
+powershell -NoProfile -ExecutionPolicy Bypass -File .\work\kssma-runtime.ps1 flow -Scenario gacha-paid-retry-smoke
 powershell -NoProfile -ExecutionPolicy Bypass -File .\work\kssma-runtime.ps1 flow -Scenario menu-buttons-route-smoke
 powershell -NoProfile -ExecutionPolicy Bypass -File .\work\kssma-runtime.ps1 flow -Scenario menu-buttons-tail-smoke
 powershell -NoProfile -ExecutionPolicy Bypass -File .\work\kssma-runtime.ps1 flow -Scenario menu-item-parts-smoke
@@ -44,6 +54,71 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\work\kssma-runtime.ps1 flo
   deck/round table (`roundtable/edit`, `move=1`) and friends (`menu/friendlist`). It uses screenshot-diff
   gates against the main menu, so it fails if either tap does not visibly enter its page or
   if back does not visibly return to the main menu.
+- `deck-builder-entry-smoke` is the D1 card-deck entry acceptance. From the shared main-menu
+  baseline it taps `(640,675)`, requires `/connect/app/roundtable/edit` with decrypted
+  `move=1`, requires `command=round_table` and `nextScene=83200`, then waits three seconds,
+  checks that the client is alive, requires the `deck-builder-entry.png` screenshot to differ
+  from `deck-builder-mainmenu.png` by at least 20, and checks the accepted 1280x720 DeckScene
+  color signature for its deck rail plus four right-side controls. The artifact records the next target
+  as the leader control at `(1090,270)`, expected local behavior `change_mode_leader_select`,
+  and no expected route. D1 stops there: it does not tap leader, save a deck, seed a custom
+  player save, or sync additional resources.
+- `deck-builder-leader-mode-smoke` is the bounded D2 acceptance. It reuses the complete D1
+  DeckScene entry, captures `deck-builder-leader-before.png`, moves the request cursor, taps
+  leader at `(1090,270)`, and fails if any `connect_app_probe` appears during the next three
+  seconds. It then requires the client to remain alive and `deck-builder-leader-after.png`
+  to differ by at least 8. A DeckScene-specific leader-mode signature also requires the four
+  right-side controls to be dimmed while the left deck rail remains active, matching
+  `change_mode_leader_select`; the artifact records no expected route. D2 stops without
+  selecting a card, going back, deciding, or saving.
+- `deck-builder-edit-smoke` is the bounded D4 local edit acceptance. It seeds only owned
+  serials `1/22` and `2/9`, while the active deck and leader remain `[1]` and `1`. After the
+  complete D1 entry it follows the statically closed taps `(127,360) -> (226,247) ->
+  (1144,360)` to open card mode, choose the sole serial-2 candidate, and explicitly return.
+  Every action requires a cursor-scoped three-second window without `connect_app_probe`, a
+  live client, and a screenshot. Relational visual checks require the candidate to appear on
+  mode entry and leave its ROI after selection, the mode-1 return tab to stay stable and normal
+  DeckScene controls to remain hidden until explicit return, slot 0 to stay stable, and slot 1
+  to change from `EMPTY`; player-save bytes and SHA-256 captured before deck entry must remain
+  unchanged. D4 never taps `decide` or `/cardselect/savedeckcard`.
+- `deck-builder-save-smoke` is the capture-only D5 edge. It reuses the complete D4 seed and
+  local edit path, verifies a fresh normal DeckScene, then taps decide at `(1090,95)`. The
+  scenario requires exactly one `/connect/app/cardselect/savedeckcard` probe with the
+  case-sensitive key set `C,lr`, exact 12-slot value
+  `C=1,2,empty,empty,empty,empty,empty,empty,empty,empty,empty,empty`, and `lr=1`.
+  A cursor-scoped three-second window and a final count both reject duplicate save probes.
+  The same-path response, client activity, follow-up routes, screenshot diff, and DeckScene
+  classifier result are diagnostic only: the current empty-body response leaves DeckScene unchanged,
+  while runtime acceptance of the statically closed current-model response path and successful persistence remain
+  unproven. Save
+  bytes and SHA-256 must remain equal to their pre-entry values; D5 stops without readback,
+  retry, response-body changes, or disk persistence.
+- `gacha-draw-smoke` logs into the main menu, enters the safe gacha select page, taps the
+  visible one-draw option, waits for the first gacha draw route and response, then verifies
+  that the client stays alive long enough to capture the draw scene screenshot.
+- `gacha-result-smoke` continues the same path, taps the draw-card touch screen, and verifies
+  the local transition to the result page. It is the regression for the accepted
+  `librooneyj-gacha-cardget-inner-touch-nullguard.so` baseline and does not yet prove result-page
+  back/retry commands or persisted ticket/currency spending.
+- `gacha-result-back-smoke` continues to the result page, taps the visible result-page back
+  button, and verifies either a route-backed return or a local page transition away from the result page.
+  Accepted behavior is route-backed return to `/connect/app/gacha/select/getcontents`. The friendship-point
+  result keeps retry hidden; paid retry has its own scenario.
+- `gacha-paid-retry-smoke` seeds an artifact-local save with 600 MC, completes one paid draw,
+  taps the original result-page retry button and confirmation dialog, then verifies the second
+  `/gacha/buy` keeps `product_id=2`, spends the remaining 300 MC, persists serials `2` and `3`,
+  and reaches the second visible result page with the client alive.
+- `gacha-settlement-deck-smoke` seeds an artifact-local save with 400 friendship points, opens the
+  original-style same-page gacha list, taps the visible friendship entry, runs the accepted one-draw/result/back path,
+  verifies `/gacha/buy` persisted one drawn card
+  (`serialId=2`, `masterCardId=9`) and spent 200 friendship points, returns to the main menu,
+  then opens bottom deck/round table and verifies `/roundtable/edit` response metadata still
+  reports the same owned card.
+- `gacha-paid-settlement-deck-smoke` seeds an artifact-local save with 300 MC and no friendship
+  points, opens the same gacha list, taps the paid MC entry, confirms the native purchase dialog,
+  verifies `/gacha/buy` arrives with `product_id=2`, spends
+  300 MC, persists the drawn card, returns to the main menu, then opens bottom deck/round table
+  and verifies the deck response sees the same card.
 - `menu-buttons-route-smoke` logs into the main menu, opens the Menu page, taps every
   visible Menu-page entry currently exposed by `layout_menu.xml`, waits for the first
   `/connect/app/*` route or `/connect/web/*` WebView URL, screenshots each entered page,

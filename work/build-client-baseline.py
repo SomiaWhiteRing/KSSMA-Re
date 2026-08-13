@@ -12,7 +12,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent
 REPO = ROOT.parent
 BASE_APK = REPO / "base" / "com.square_enix.million_cn-1.0.0.100.0712.M330.apk"
-ACCEPTED_LIB = ROOT / "librooneyj-exploration-area-return-rerequest.so"
+ACCEPTED_LIB = ROOT / "librooneyj-gacha-cardget-inner-touch-nullguard.so"
 OUT_DIR = ROOT / "client-baseline"
 OUT_APK = OUT_DIR / "KSSMA-Re-client-baseline.apk"
 MANIFEST = OUT_DIR / "client-baseline.json"
@@ -25,7 +25,7 @@ DEBUG_ALIAS = "androiddebugkey"
 DEBUG_PASSWORD = "android"
 
 EXPECTED_BASE_SHA256 = "4F6A854C49D1AF59BB5500828D2BDDA0767F4D6A9FCFA8D4D6E46EA9257C58A7"
-EXPECTED_LIB_SHA256 = "8D214198BFC69CC9D523BB645B0DA1FF75ABFA109A271E850F4B463FA96DD80D"
+EXPECTED_LIB_SHA256 = "DEC36585CA0129AA19E68CC53898D95DE41067AA5D380B23218F3E88273CD40F"
 
 
 def sha256_file(path: Path) -> str:

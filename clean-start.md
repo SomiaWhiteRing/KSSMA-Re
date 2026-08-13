@@ -17,8 +17,9 @@
 - 旧域名转本地、双端口 server、AES key、资源预载脚本都是有效成果。
 - `work/kssma-runtime.ps1 flow` 是玩法实机验收的默认入口；它负责 server、runtime gate、
   baseline、登录、route 等待、关键截图和 artifact。
-- 主菜单视觉还原已阶段完成：背景、初始角色脸图、信息框、BGM/角色语音、点角色
-  表情变化与同步台词已对照关服前录像验收；点角色台词原版就没有底色/对话框背景。
+- 主菜单已完成当前阶段：背景、初始角色脸图、信息框、BGM/角色语音、点角色
+  表情变化与同步台词、主按钮入口、Menu 页入口、底部卡组/好友入口和返回都已验收；
+  点角色台词原版就没有底色/对话框背景。
 - 探索已初步完成：能从主菜单进入秘境/楼层/关卡，前进消耗 AP，保存进度，按顺序解锁，
   处理 AP 不足、普通升级、完成演出和进入下一区域。深层探索、守护者/战斗、妖精和奖励结算
   先冻结，等玩家数据和主界面资料更完整后再推进。
@@ -57,13 +58,32 @@ world_list.php
 -> masterdata/*/update
 -> mainmenu/update
 -> 主菜单可见
--> 主界面作为当前开发中心
--> 补齐一个主界面入口或玩家资料同步边
+-> 扭蛋或卡组构建入口
+-> 补齐一条从主菜单开始的玩法流程边
 ```
 
-主菜单画面已完成第一轮验收，但当前开发主线回到主界面：不要重开已验收的黑屏、
-face、背景、BGM、语音或点击台词底框；新的主界面工作应围绕玩家资料、资源/HUD 同步、
-菜单入口、通知/信息栏和后续系统入口。玩法阶段的推进单位仍是一条流程边：
+主菜单已完成当前阶段。不要重开已验收的黑屏、face、背景、BGM、语音、点击台词底框、
+主按钮、Menu 页入口、底部卡组/好友入口，除非有新的资源缺失、崩溃或回归截图。
+当前开发主线转入扭蛋和卡组构建系统。玩法阶段的推进单位仍是一条流程边：
+
+付费结果页 retry 已由 `gacha-paid-retry-smoke` 验收。卡组入口 D1 和队长模式 D2 也已验收：主菜单
+底部卡组 -> `/roundtable/edit move=1` -> scene `83200` (`_DeckScene`) -> 点击 `(1090,270)` -> 本地
+`change_mode_leader_select`，server 连续 3 秒 quiet。旧的 scene `10100` 只会进入圆桌查看页；该页没有
+编辑按钮，不要再在里面盲点。D3 静态路径与 D4 实机编辑均已闭合：选卡标签 `(127,360)` -> 唯一候选
+`(226,247)` -> 反向标签 `(1144,360)`，全程停留 scene `83200` 且不发请求；D4 artifact 证明第二槽
+只在内存中变化，磁盘存档仍为 deck `[1]`。D5 已捕获精确 `C/lr` 请求。D5.5 的显式
+`save_deck_card/result=0` 候选响应到达客户端后仍停在同一 DeckScene（截图 diff `0.05`），因此 D6 落盘
+被阻塞。静态复核已证明 `next_scene=83200` 会 push 一个只认 `roundtable_edit` 的新 DeckScene，从而绕过
+旧 model 的 `save_deck_card` update。`next_scene == 0` 到当前 pending model 的静态交付链现已闭合，并由
+accepted exploration 50% -> 55% 同场景更新作差分支持。首个 D5.6 实机回合却在登录前因
+`repair-adb / restart-boot-timeout` 停止，route 为空，未检验产品假设；实验性响应与严格 flow 已撤回，
+当前仍是 D5 capture-only 基线。C2-A 已用 13 项 self-check 淘汰坏 listener/shell probe；单次 C2-B 温重启
+随后测得 `tBoot=102.733s`，helper 在 `104.449s` 成功，稳定样本、唯一进程组及 `5556/5557` owner 均通过。
+因此保留现有 120 秒等待，不改 runtime。下一轮仅重放一次 D5.6 无 `next_scene` current-model response，
+仍不落盘。该唯一重放已得到有效但不合格的 observable：精确 `result=0` 响应后客户端自动请求
+`/connect/app/mainmenu`，违反本轮“三秒内无任何 follow-up route”的停止门；存档仍逐字节不变。实验性
+response/strict flow 已再次撤回，当前仍为 D5 capture-only，D6 落盘冻结。G1 同样停在通用 error model
+缺少可见 dialog push 生产边，禁止实现 G2-G4 或猜失败 XML。
 
 ```text
 用户动作 -> 请求/响应 -> 客户端状态切换 -> 可见 UI 迁移 -> 下一次点击目标/下一条 route

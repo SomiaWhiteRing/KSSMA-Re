@@ -17,12 +17,14 @@ const {
   createExplorationFloorXml,
   createExplorationGetFloorXml,
   createExplorationLockedXml,
+  createGachaBuyXml,
   createGachaSelectSkeletonXml,
   createMenuCardCollectionSkeletonXml,
   createMenuFairySelectSkeletonXml,
   createMenuFriendListSkeletonXml,
   createMenuHavePartsSkeletonXml,
   createMenuRankingSkeletonXml,
+  createRoundtableEditXml,
   createLoginMainmenuXml,
   createMainmenuUpdateXml,
   createMainmenuRouteXml,
@@ -218,6 +220,9 @@ function assertPlayerHeader(xml, expected) {
   if (expected.friendshipPoint !== undefined) {
     assert.match(xml, new RegExp(`<your_data>[\\s\\S]*<friendship_point>${expected.friendshipPoint}</friendship_point>`));
   }
+  if (expected.mc !== undefined) {
+    assert.match(xml, new RegExp(`<your_data>[\\s\\S]*<cp>${expected.mc}</cp>`));
+  }
   if (expected.countryId !== undefined) {
     assert.match(xml, new RegExp(`<your_data>[\\s\\S]*<country_id>${expected.countryId}</country_id>`));
   }
@@ -248,6 +253,24 @@ function assertMainmenuInformation(xml, expected) {
   assert.doesNotMatch(xml, /<event_type>/);
 }
 
+function assertNoJapaneseGachaCopy(xml) {
+  assert.doesNotMatch(xml, /ゴールド|所持|宜しい|で引く/);
+  assert.doesNotMatch(xml, /300MC で引きますが、宜しいですか？/);
+  assert.doesNotMatch(xml, /300MC で引く/);
+  assert.doesNotMatch(xml, /友情ポイントガチャ/);
+  assert.doesNotMatch(xml, /MCガチャ/);
+}
+
+function assertGachaSelectContent(xml) {
+  assert.match(xml, /<gacha_select>[\s\S]*<xml_contents>[\s\S]*<scroll_height>240<\/scroll_height>/);
+  assert.match(xml, /<content>[\s\S]*<action_id>1<\/action_id>[\s\S]*<imagefile>gacha_free_0<\/imagefile>[\s\S]*<x>8<\/x>[\s\S]*<y>8<\/y>[\s\S]*<behavior>1,1,1,0<\/behavior>/);
+  assert.match(xml, /<content>[\s\S]*<action_id>2<\/action_id>[\s\S]*<imagefile>gacha_cp_button<\/imagefile>[\s\S]*<x>8<\/x>[\s\S]*<y>112<\/y>[\s\S]*<message>消耗300MC进行扭蛋，确定吗？<\/message>[\s\S]*<behavior>2,0,0,0<\/behavior>/);
+  assert.match(xml, /<text>使用300MC进行扭蛋<\/text>/);
+  assert.doesNotMatch(xml, /gac_event_0|gac_free_0|gac_cp_0|ae_gacha_compsheet|gacha_event_button|gacha_compsheet|gacha_paid_banner|gacha_free_blank|gacha_free_0_1204|gacha_cp_2|gacha_banner|11_gacha_banner|gacha_button(?:<|$)|gacha_free_button/);
+  assert.doesNotMatch(xml, /<scale_w>|<scale_h>/);
+  assertNoJapaneseGachaCopy(xml);
+}
+
 function saveWithFaction(faction) {
   const save = JSON.parse(JSON.stringify(DEFAULT_PLAYER_SAVE));
   save.profile.faction = faction;
@@ -263,6 +286,7 @@ async function main() {
 
   for (const relativePath of [
     "server/data/game/exploration.json",
+    "server/data/game/gacha.json",
     "server/data/game/mainmenu.json",
     "server/data/game/player-level-exp-table.json",
     "server/data/player/default-save.json",
@@ -310,6 +334,16 @@ async function main() {
   assert.equal(level17Row.nextExp, 2000);
   assert.equal(level18Row.nextExp, 2100);
   assert.equal(level10Row.nextExp, 1300);
+  const gachaLayoutCheck = require("node:child_process").spawnSync(
+    "python",
+    [path.join(__dirname, "..", "work", "render-gacha-select-layout-html.py"), "--check"],
+    { encoding: "utf8" }
+  );
+  assert.equal(
+    gachaLayoutCheck.status,
+    0,
+    `gacha layout check failed\nstdout:\n${gachaLayoutCheck.stdout}\nstderr:\n${gachaLayoutCheck.stderr}`
+  );
   for (const row of GAME_PLAYER_LEVEL_EXP_TABLE.levels) {
     for (const key of Object.keys(row)) {
       assert.ok(["friendMax", "level", "nextExp", "statPointsOnLevelUp"].includes(key), `unexpected level table key: ${key}`);
@@ -501,8 +535,18 @@ async function main() {
   assert.doesNotMatch(loginOkSampleXml, /<resource_rev>[\s\S]*?<revision>[1-9]/);
   assert.equal(MAINMENU_ROUTE_STUBS["/connect/app/gacha/select/getcontents"].nextScene, 9100);
   assert.match(createMainmenuRouteXml("/connect/app/gacha/select/getcontents", DEFAULT_PLAYER_SAVE), /<next_scene>9100<\/next_scene>/);
-  assert.match(createMainmenuRouteXml("/connect/app/gacha/select/getcontents", DEFAULT_PLAYER_SAVE), /<gacha_select>[\s\S]*<xml_contents>[\s\S]*<scroll_height>0<\/scroll_height>/);
-  assert.doesNotMatch(createGachaSelectSkeletonXml(DEFAULT_PLAYER_SAVE), /gac_event_0|gac_free_0|gac_cp_0|<imagefile>/);
+  assertGachaSelectContent(createMainmenuRouteXml("/connect/app/gacha/select/getcontents", DEFAULT_PLAYER_SAVE));
+  assertGachaSelectContent(createGachaSelectSkeletonXml(DEFAULT_PLAYER_SAVE));
+  assertGachaSelectContent(createGachaSelectSkeletonXml(DEFAULT_PLAYER_SAVE, "missing-page-falls-back-to-main"));
+  assert.match(createGachaBuyXml(DEFAULT_PLAYER_SAVE), /<next_scene>9200<\/next_scene>/);
+  assertPlayerHeader(createGachaBuyXml(DEFAULT_PLAYER_SAVE), {
+    ownerCardSerialId: 2,
+    ownerCardMasterCardId: 9,
+  });
+  assert.match(createMainmenuRouteXml("/connect/app/gacha/buy", DEFAULT_PLAYER_SAVE), /<gacha_buy>[\s\S]*<final_result>[\s\S]*<ex_user_card>[\s\S]*<serial_id>2<\/serial_id>[\s\S]*<master_card_id>9<\/master_card_id>/);
+  assert.match(createMainmenuRouteXml("/connect/app/gacha/buy", DEFAULT_PLAYER_SAVE), /<is_new_card>1<\/is_new_card>/);
+  assert.match(createMainmenuRouteXml("/connect/app/gacha/buy", DEFAULT_PLAYER_SAVE), /<gacha_type>1<\/gacha_type>[\s\S]*<telop_message>友情点扭蛋<\/telop_message>/);
+  assert.match(createMainmenuRouteXml("/connect/app/gacha/buy", DEFAULT_PLAYER_SAVE), /<complete_list>[\s\S]*<cmpsheet_index>0<\/cmpsheet_index>[\s\S]*<is_get>0<\/is_get>[\s\S]*<is_new>0<\/is_new>/);
   assertPlayerHeader(createMainmenuRouteXml("/connect/app/gacha/select/getcontents", DEFAULT_PLAYER_SAVE), {
     apCurrent: DEFAULT_PLAYER_SAVE.resources.ap.current,
     apMax: DEFAULT_PLAYER_SAVE.resources.ap.max,
@@ -537,7 +581,43 @@ async function main() {
   assert.match(createMainmenuRouteXml("/connect/app/item/use", DEFAULT_PLAYER_SAVE), /<next_scene>30200<\/next_scene>/);
   assert.match(createMainmenuRouteXml("/connect/app/friend/like_user", DEFAULT_PLAYER_SAVE), /<next_scene>17000<\/next_scene>/);
   assert.match(createMainmenuRouteXml("/connect/app/battle/battle_userlist", DEFAULT_PLAYER_SAVE), /<battle_userlist>/);
-  assert.match(createMainmenuRouteXml("/connect/app/roundtable/edit", DEFAULT_PLAYER_SAVE), /<next_scene>10100<\/next_scene>/);
+  const defaultRoundtableXml = createRoundtableEditXml(DEFAULT_PLAYER_SAVE);
+  assert.match(defaultRoundtableXml, /<next_scene>83200<\/next_scene>/);
+  assert.match(defaultRoundtableXml, /<body>\s*<roundtable_edit>\s*<ex_gauge>0<\/ex_gauge>\s*<leader_card>1<\/leader_card>\s*<deck_cards>1,empty,empty,empty,empty,empty,empty,empty,empty,empty,empty,empty<\/deck_cards>\s*<\/roundtable_edit>\s*<\/body>/);
+  assert.equal(createMainmenuRouteXml("/connect/app/roundtable/edit", DEFAULT_PLAYER_SAVE), defaultRoundtableXml);
+
+  const normalizedDeckSave = JSON.parse(JSON.stringify(DEFAULT_PLAYER_SAVE));
+  normalizedDeckSave.cards.instances = [
+    { serialId: 1 },
+    { serialId: 2 },
+    { serial_id: "3" },
+    { serialId: Number.MAX_SAFE_INTEGER },
+    { serialId: Number.MAX_SAFE_INTEGER + 1 },
+    { serialId: -4 },
+  ];
+  normalizedDeckSave.cards.decks = [
+    { id: "main", cardInstanceIds: [1] },
+    {
+      id: "selected",
+      cardInstanceIds: [2, 999, "3", 2, Number.MAX_SAFE_INTEGER, -1, 0, "1.0", null, 3, 2, 3, 1],
+    },
+  ];
+  normalizedDeckSave.cards.activeDeckId = "selected";
+  normalizedDeckSave.profile.leaderSerialId = 1;
+  const normalizedDeckBefore = JSON.stringify(normalizedDeckSave);
+  const normalizedRoundtableXml = createRoundtableEditXml(normalizedDeckSave);
+  assert.match(normalizedRoundtableXml, /<leader_card>2<\/leader_card>/);
+  assert.match(
+    normalizedRoundtableXml,
+    new RegExp(`<deck_cards>2,empty,3,2,${Number.MAX_SAFE_INTEGER},empty,empty,empty,empty,3,2,3<\\/deck_cards>`)
+  );
+  assert.equal(JSON.stringify(normalizedDeckSave), normalizedDeckBefore, "roundtable builder must not mutate its input");
+
+  const missingActiveDeckSave = JSON.parse(JSON.stringify(DEFAULT_PLAYER_SAVE));
+  missingActiveDeckSave.cards.activeDeckId = "missing";
+  const missingActiveDeckXml = createRoundtableEditXml(missingActiveDeckSave);
+  assert.match(missingActiveDeckXml, /<leader_card><\/leader_card>/);
+  assert.match(missingActiveDeckXml, /<deck_cards>empty,empty,empty,empty,empty,empty,empty,empty,empty,empty,empty,empty<\/deck_cards>/);
   assert.match(createMainmenuRouteXml("/connect/app/cardselect/savedeckcard", DEFAULT_PLAYER_SAVE), /<next_scene>83200<\/next_scene>/);
   assert.match(createMainmenuRouteXml("/connect/app/menu/friendlist", DEFAULT_PLAYER_SAVE), /<next_scene>17100<\/next_scene>/);
   assert.match(createMenuFriendListSkeletonXml(DEFAULT_PLAYER_SAVE), /<friend_list>[\s\S]*<friends_invitations>0<\/friends_invitations>[\s\S]*<user_list>[\s\S]*<user>/);
@@ -597,7 +677,8 @@ async function main() {
   syncedSave.resources.bc.current = 12;
   syncedSave.resources.bc.max = 33;
   syncedSave.currencies.gold = 4567;
-  syncedSave.currencies.friendshipPoint = 88;
+  syncedSave.currencies.friendshipPoint = 400;
+  syncedSave.currencies.mc = 300;
   syncedSave.cards.max = 222;
   fs.writeFileSync(tempPlayerSavePath, JSON.stringify(syncedSave), "utf8");
   const serverLogs = [];
@@ -666,7 +747,7 @@ async function main() {
       rank: 10,
       percentage: 44,
       maxCardNum: 222,
-      friendshipPoint: 88,
+      friendshipPoint: 400,
     });
     assertMainmenuInformation(loginDecoded, { fairyPose: 1, fairyFace: 8 });
     const loginResponseLog = serverLogs.find((line) => line.includes('"path":"/connect/app/login"') && line.includes("connect_app_response"));
@@ -694,7 +775,7 @@ async function main() {
       rank: 10,
       percentage: 44,
       maxCardNum: 222,
-      friendshipPoint: 88,
+      friendshipPoint: 400,
     });
     assertMainmenuInformation(mainmenuUpdateDecoded, { fairyPose: 1, fairyFace: 8 });
     const mainmenuUpdateResponseLog = serverLogs.find((line) => line.includes('"path":"/connect/app/mainmenu/update"') && line.includes("connect_app_response"));
@@ -717,7 +798,7 @@ async function main() {
       rank: 10,
       percentage: 44,
       maxCardNum: 222,
-      friendshipPoint: 88,
+      friendshipPoint: 400,
     });
     assertMainmenuInformation(mainmenuDecoded, { fairyPose: 1, fairyFace: 8 });
     const mainmenuResponseLog = serverLogs.find((line) => line.includes('"path":"/connect/app/mainmenu"') && line.includes("connect_app_response"));
@@ -727,18 +808,109 @@ async function main() {
     assert.equal(gachaSelect.statusCode, 200);
     const gachaSelectDecoded = decryptAes128EcbBase64(gachaSelect.buffer.toString("base64"), "rBwj1MIAivVN222b");
     assert.match(gachaSelectDecoded, /<next_scene>9100<\/next_scene>/);
-    assert.match(gachaSelectDecoded, /<gacha_select>[\s\S]*<xml_contents>[\s\S]*<scroll_height>0<\/scroll_height>/);
-    assert.doesNotMatch(gachaSelectDecoded, /gac_event_0|gac_free_0|gac_cp_0|<imagefile>/);
+    assertGachaSelectContent(gachaSelectDecoded);
     assertPlayerHeader(gachaSelectDecoded, {
       apCurrent: 19,
       apMax: 31,
       bcCurrent: 12,
       bcMax: 33,
       rank: 10,
+      friendshipPoint: 400,
+      mc: 300,
     });
     const gachaResponseLog = serverLogs.find((line) => line.includes('"path":"/connect/app/gacha/select/getcontents"') && line.includes("connect_app_response"));
     assert.match(gachaResponseLog, /"command":"gacha"/);
     assert.match(gachaResponseLog, /"nextScene":9100/);
+    assert.match(gachaResponseLog, /"gachaPage":"main"/);
+
+    const gachaBuy = await post(port, "/connect/app/gacha/buy?cyt=1", connectAppBody({ product_id: 1, bulk: 1, auto_build: 1 }));
+    assert.equal(gachaBuy.statusCode, 200);
+    const gachaBuyDecoded = decryptAes128EcbBase64(gachaBuy.buffer.toString("base64"), "rBwj1MIAivVN222b");
+    assert.match(gachaBuyDecoded, /<next_scene>9200<\/next_scene>/);
+    assertPlayerHeader(gachaBuyDecoded, {
+      ownerCardSerialId: 2,
+      ownerCardMasterCardId: 9,
+      friendshipPoint: 200,
+      mc: 300,
+    });
+    assert.match(gachaBuyDecoded, /<gacha_buy>[\s\S]*<final_result>[\s\S]*<ex_user_card>[\s\S]*<master_card_id>9<\/master_card_id>/);
+    assert.match(gachaBuyDecoded, /<gacha_type>1<\/gacha_type>[\s\S]*<telop_message>友情点扭蛋<\/telop_message>/);
+    const gachaBuyResponseLog = serverLogs.find((line) => line.includes('"path":"/connect/app/gacha/buy"') && line.includes("connect_app_response"));
+    assert.match(gachaBuyResponseLog, /"command":"gacha_buy"/);
+    assert.match(gachaBuyResponseLog, /"nextScene":9200/);
+    assert.match(gachaBuyResponseLog, /"source":"gacha buy settlement"/);
+    assert.match(gachaBuyResponseLog, /"friendshipBefore":400/);
+    assert.match(gachaBuyResponseLog, /"friendshipCost":200/);
+    assert.match(gachaBuyResponseLog, /"friendshipAfter":200/);
+    assert.match(gachaBuyResponseLog, /"mcBefore":300/);
+    assert.match(gachaBuyResponseLog, /"mcCost":0/);
+    assert.match(gachaBuyResponseLog, /"mcAfter":300/);
+    assert.match(gachaBuyResponseLog, /"drawnSerialId":2/);
+    assert.match(gachaBuyResponseLog, /"drawnMasterCardId":9/);
+    assert.match(gachaBuyResponseLog, /"ownerCardCount":2/);
+    assert.match(gachaBuyResponseLog, /"cardsDrawn":1/);
+    const saveAfterGachaBuy = JSON.parse(fs.readFileSync(tempPlayerSavePath, "utf8"));
+    assert.equal(saveAfterGachaBuy.currencies.friendshipPoint, 200);
+    assert.equal(saveAfterGachaBuy.cards.count, 2);
+    assert.equal(saveAfterGachaBuy.cards.instances.length, 2);
+    assert.equal(saveAfterGachaBuy.cards.instances[1].serialId, 2);
+    assert.equal(saveAfterGachaBuy.cards.instances[1].masterCardId, 9);
+    assert.equal(saveAfterGachaBuy.stats.cardsDrawn, 1);
+    assert.equal(saveAfterGachaBuy.gacha.history.length, 1);
+    assert.equal(saveAfterGachaBuy.gacha.history[0].serialId, 2);
+
+    const paidGachaBuy = await post(port, "/connect/app/gacha/buy?cyt=1", connectAppBody({ product_id: 2, bulk: 0, auto_build: 0 }));
+    assert.equal(paidGachaBuy.statusCode, 200);
+    const paidGachaBuyDecoded = decryptAes128EcbBase64(paidGachaBuy.buffer.toString("base64"), "rBwj1MIAivVN222b");
+    assert.match(paidGachaBuyDecoded, /<next_scene>9200<\/next_scene>/);
+    assert.match(paidGachaBuyDecoded, /<gacha_type>2<\/gacha_type>[\s\S]*<telop_message>付费扭蛋<\/telop_message>/);
+    assertPlayerHeader(paidGachaBuyDecoded, {
+      ownerCardSerialId: 3,
+      ownerCardMasterCardId: 9,
+      friendshipPoint: 200,
+      mc: 0,
+    });
+    const paidGachaBuyResponseLog = serverLogs.filter((line) => line.includes('"path":"/connect/app/gacha/buy"') && line.includes("connect_app_response")).at(-1);
+    assert.match(paidGachaBuyResponseLog, /"productId":2/);
+    assert.match(paidGachaBuyResponseLog, /"friendshipBefore":200/);
+    assert.match(paidGachaBuyResponseLog, /"friendshipCost":0/);
+    assert.match(paidGachaBuyResponseLog, /"friendshipAfter":200/);
+    assert.match(paidGachaBuyResponseLog, /"mcBefore":300/);
+    assert.match(paidGachaBuyResponseLog, /"mcCost":300/);
+    assert.match(paidGachaBuyResponseLog, /"mcAfter":0/);
+    assert.match(paidGachaBuyResponseLog, /"drawnSerialId":3/);
+    assert.match(paidGachaBuyResponseLog, /"ownerCardCount":3/);
+    assert.match(paidGachaBuyResponseLog, /"cardsDrawn":2/);
+    const saveAfterPaidGachaBuy = JSON.parse(fs.readFileSync(tempPlayerSavePath, "utf8"));
+    assert.equal(saveAfterPaidGachaBuy.currencies.friendshipPoint, 200);
+    assert.equal(saveAfterPaidGachaBuy.currencies.mc, 0);
+    assert.equal(saveAfterPaidGachaBuy.cards.count, 3);
+    assert.equal(saveAfterPaidGachaBuy.cards.instances.length, 3);
+    assert.equal(saveAfterPaidGachaBuy.cards.instances[2].serialId, 3);
+    assert.equal(saveAfterPaidGachaBuy.cards.instances[2].masterCardId, 9);
+    assert.equal(saveAfterPaidGachaBuy.stats.cardsDrawn, 2);
+    assert.equal(saveAfterPaidGachaBuy.gacha.history.length, 2);
+    assert.equal(saveAfterPaidGachaBuy.gacha.history[1].productId, 2);
+    assert.equal(saveAfterPaidGachaBuy.gacha.history[1].serialId, 3);
+
+    const roundtableAfterGacha = await post(port, "/connect/app/roundtable/edit?cyt=1", "move=1");
+    assert.equal(roundtableAfterGacha.statusCode, 200);
+    const roundtableAfterGachaDecoded = decryptAes128EcbBase64(roundtableAfterGacha.buffer.toString("base64"), "rBwj1MIAivVN222b");
+    assert.match(roundtableAfterGachaDecoded, /<next_scene>83200<\/next_scene>/);
+    assert.match(roundtableAfterGachaDecoded, /<body>\s*<roundtable_edit>\s*<ex_gauge>0<\/ex_gauge>\s*<leader_card>1<\/leader_card>\s*<deck_cards>1,empty,empty,empty,empty,empty,empty,empty,empty,empty,empty,empty<\/deck_cards>\s*<\/roundtable_edit>\s*<\/body>/);
+    assertPlayerHeader(roundtableAfterGachaDecoded, {
+      ownerCardSerialId: 2,
+      ownerCardMasterCardId: 9,
+      friendshipPoint: 200,
+      mc: 0,
+    });
+    const roundtableResponseLog = serverLogs.find((line) => line.includes('"path":"/connect/app/roundtable/edit"') && line.includes("connect_app_response"));
+    assert.match(roundtableResponseLog, /"command":"round_table"/);
+    assert.match(roundtableResponseLog, /"nextScene":83200/);
+    assert.match(roundtableResponseLog, /"ownerCardCount":3/);
+    assert.match(roundtableResponseLog, /"ownerCardSerialIds":\[1,2,3\]/);
+    assert.match(roundtableResponseLog, /"ownerCardMasterCardIds":\[22,9,9\]/);
+    assert.deepEqual(JSON.parse(fs.readFileSync(tempPlayerSavePath, "utf8")), saveAfterPaidGachaBuy);
 
     const battleArea = await post(port, "/connect/app/battle/area?cyt=1", "");
     assert.equal(battleArea.statusCode, 200);
@@ -799,7 +971,7 @@ async function main() {
       rank: 10,
       percentage: 44,
       maxCardNum: 222,
-      friendshipPoint: 88,
+      friendshipPoint: 200,
     });
     assert.match(explorationAreaDecoded, /<area_info>/);
     assert.doesNotMatch(explorationAreaDecoded, /<floor_info_list>/);
@@ -825,7 +997,7 @@ async function main() {
       rank: 10,
       percentage: 44,
       maxCardNum: 222,
-      friendshipPoint: 88,
+      friendshipPoint: 200,
     });
 
     const explorationGetFloor = await post(
@@ -848,7 +1020,7 @@ async function main() {
       rank: 10,
       percentage: 44,
       maxCardNum: 222,
-      friendshipPoint: 88,
+      friendshipPoint: 200,
       nextExp: 321,
     });
 
@@ -930,7 +1102,7 @@ async function main() {
       rank: 10,
       percentage: 0,
       maxCardNum: 222,
-      friendshipPoint: 88,
+      friendshipPoint: 200,
       nextExp: 1300,
     });
     const saveAfterExplore = JSON.parse(fs.readFileSync(tempPlayerSavePath, "utf8"));
@@ -972,7 +1144,7 @@ async function main() {
       rank: 10,
       percentage: 0,
       maxCardNum: 222,
-      friendshipPoint: 88,
+      friendshipPoint: 200,
       nextExp: 1300,
     });
     const saveAfterExploreAgain = JSON.parse(fs.readFileSync(tempPlayerSavePath, "utf8"));

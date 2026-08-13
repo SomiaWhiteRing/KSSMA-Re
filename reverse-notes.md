@@ -9,6 +9,12 @@ notes are archived at
 - Source APK: `base/com.square_enix.million_cn-1.0.0.100.0712.M330.apk`.
 - Unique installable client baseline: `work/client-baseline/KSSMA-Re-client-baseline.apk`.
 - Client baseline manifest: `work/client-baseline/client-baseline.json`.
+- Current accepted native lib inside the client baseline:
+  `work/librooneyj-gacha-cardget-inner-touch-nullguard.so`
+  (`DEC36585CA0129AA19E68CC53898D95DE41067AA5D380B23218F3E88273CD40F`). It contains the accepted
+  exploration hierarchy fixes plus the accepted gacha result-page card-get touch guard.
+- Current baseline APK SHA-256:
+  `503EF202CAEDABE8D34C44765D4E8FA448964CDDA4D95900F740B8C64C9138C7`.
 - Resource dump: `base/com.square_enix.million_cn-140330.zip`.
 - Decompiled output and working assets: `work/million_cn/`.
 - Runtime target: Android `4.4.2` / API 19 / `armeabi-v7a` classic ARM emulator.
@@ -53,6 +59,9 @@ notes are archived at
     `sword -> 117/1/4`, `technique -> 120/1/8`, `magic -> 111/2/4`;
   - BGM/voice runtime baseline is accepted;
   - user footage confirmed tapped character subtitles originally had no backing dialogue box.
+- Main menu / home hub is marked complete for the current phase as of 2026-07-01. Accepted coverage now includes
+  right-side main buttons, Menu page entries/returns, and bottom deck/friends entries/returns. Human validation
+  confirmed the Menu page after the flow fixes.
 - Mainmenu faction mapping evidence:
   `work/mainmenu-faction-fairy-card-20260630.md`; `server/test-bootstrap-server.js`
   covers all three login and mainmenu-update XML paths, and runtime artifact
@@ -130,6 +139,14 @@ Accepted native patches/builders:
     `work/kssma-runtime-exploration-area-return-rerequest-floor-*`,
     `work/kssma-runtime-exploration-area-return-rerequest-return-*`,
     `work/kssma-runtime-exploration-area-return-rerequest-refloor-*`.
+- Gacha card-get result-page touch guard accepted:
+  - builder: `work/build-gacha-cardget-inner-touch-nullguard.py`
+  - source baseline: `work/librooneyj-exploration-area-return-rerequest.so`
+  - output/current client-baseline lib: `work/librooneyj-gacha-cardget-inner-touch-nullguard.so`
+  - SHA-256: `DEC36585CA0129AA19E68CC53898D95DE41067AA5D380B23218F3E88273CD40F`
+  - branch map: `_AnmCmnCardGetWindow::getSelected` entry `0x00258b68 -> 0x003e7f60`
+  - scope: only the card-get/bonus-card window touch child is null-guarded; the broader
+    `_AnmTouchScreen::getSelected` global guard is not accepted into the baseline.
 
 Accepted server handlers:
 
@@ -169,16 +186,67 @@ Archives:
 
 - Flow-first runtime acceptance is now the default project path. Use:
   `powershell -NoProfile -ExecutionPolicy Bypass -File .\work\kssma-runtime.ps1 flow -Scenario exploration-smoke`.
-- Active product frontier is back to the main menu / home hub. Do not reopen the accepted main-menu black-screen,
-  face, background, BGM, voice, or tapped subtitle visual work without new regression evidence. The next main-menu
-  work should improve user-data-backed hub behavior: shared player save fields, visible AP/BC/card/friend/currency
-  consistency, main-menu entry routes, information/notification data, and reusable flow scenarios for those menu
-  edges.
+- Active product frontier is now gacha and deck builder. Do not reopen accepted main-menu black-screen, face,
+  background, BGM, voice, tapped subtitle, main-button, Menu-page, bottom deck, or bottom friends work without
+  new resource-miss, crash, route regression, or screenshot regression evidence.
+- Shared prerequisite for both new systems: player owned-card data, card master data, deck slots, card resources,
+  and currency/ticket save fields must stay coherent. Frontier cards:
+  `work/gacha-system-frontier-card-20260701.md` and `work/deck-builder-system-frontier-card-20260701.md`.
+- Gacha first edge is accepted: `flow -Scenario gacha-draw-smoke -Tag gacha-buy-owner-card-1` reached
+  `/connect/app/gacha/buy` with `product_id=1`, `bulk=1`, `auto_build=1`, returned a minimal `gacha_buy`
+  body, and kept the client alive on the draw scene. Artifact:
+  `work/kssma-flow-gacha-draw-smoke-gacha-buy-owner-card-1`; schema card:
+  `work/gacha-buy-schema-card-20260701.md`.
+- Gacha result edge is accepted: `flow -Scenario gacha-result-smoke -Tag gacha-result-baseline-accepted-1`
+  passed using the unique client baseline, without `-ExperimentLibPath`. It proves login -> gacha select ->
+  `/connect/app/gacha/buy product_id=1 bulk=1 auto_build=1` -> draw scene -> tap TOUCH SCREEN -> result page
+  local transition, with screenshot `screenshots/gacha-result-after-touch.png` and no fatal/resource-miss logcat.
+- Gacha rejected result-edge directions:
+  - `gacha-result-touch-4` exposed the original crash at `_AnmTouchScreen::getSelected(bool)` through
+    `_AnmCmnCardGetWindow::getSelected` (`pc 0x0022c64e`, caller `0x00258b79`).
+  - `gacha-result-isnew0-1` and `gacha-result-no-complete-list-2` produced the same crash, so more
+    `/gacha/buy` XML field guessing is not the next move.
+  - `work/build-gacha-cardget-touch-nullguard.py` guarded only the outer smart pointer and did not fix the crash.
+  - `work/build-gacha-touchscreen-nullthis-guard.py` passed once, but it is a broad global guard and is not
+    accepted into the baseline.
+- Gacha result-page back, paid retry, card persistence, and friendship-point/MC spending are accepted. Remaining
+  gacha work is original select-list/page evidence and explicit rejection of invalid product, insufficient balance,
+  and unsupported bulk requests; keep random pools, 11-pull, comp rewards, and album completion out of scope.
+- Gacha result-page back is accepted: `flow -Scenario gacha-result-back-smoke -Tag gacha-result-back-4` passed on
+  ARM19. Route sequence proved `/connect/app/gacha/select/getcontents -> /connect/app/gacha/buy product_id=1
+  bulk=1 auto_build=1 -> /connect/app/gacha/select/getcontents` after tapping the visible result-page back button.
+  `screenshots/gacha-result-after-back.png` matches the gacha select page and visual diff from the result page was
+  `59.76`. Friendship-point results keep retry hidden; paid `gachaType=2` exposes it and is covered by the paid-retry
+  acceptance below.
+- Flow screenshot reliability fix: `Capture-FlowScreenshot` now retries zero-byte screenshot pulls up to three
+  attempts and records `screenshot-attempt` events. This fixes the false `visual-state-mismatch` seen in
+  `gacha-result-back-2`, where the draw-scene screenshot was zero bytes but the result-page screenshot was valid.
+- Deck-builder D1 entry, D2 leader mode, D4 one-card in-memory edit, and D5 save-request capture edges are accepted.
+  D3's native path is
+  statically closed in
+  `work/deck-builder-edit-native-path-card-20260809.md`: normal DeckScene -> card-select tab `(127,360)` -> sole
+  candidate `(226,247)` -> reverse tab `(1144,360)` -> normal DeckScene. The path remains in scene `83200`, sends no
+  request, and inserts the selected card into the first empty slot. Artifact
+  `work/kssma-flow-deck-builder-edit-smoke-deck-builder-edit-2` proves the runtime edge and unchanged save. D5 artifact
+  `work/kssma-flow-deck-builder-save-smoke-deck-builder-save-1` captures the exact `C/lr` request and proves the
+  current placeholder response does not write. D5.5 then falsified the candidate explicit
+  `<save_deck_card><result>0</result>...` response: artifact
+  `work/kssma-flow-deck-builder-save-smoke-deck-builder-save-result0-1` received that exact parser-visible body but
+  remained on the populated DeckScene (`diff=0.05`). Static postmortem found the missing gate: header
+  `next_scene=83200` is consumed by `_Main::connect` and pushes a new DeckScene whose `initModel` ignores
+  `save_deck_card`, so the old model's result branch is never reached. The `next_scene == 0` current-model path is
+  now statically closed and supported by the accepted exploration 50% -> 55% same-scene differential. The only D5.6
+  runtime invocation stopped at `repair-adb / restart-boot-timeout` before login with an empty route sequence, so it
+  did not test that product hypothesis. Its experimental response/strict-flow code was removed, restoring D5
+  capture-only. C2-A retired the bad listener/shell probes, and the single C2-B warm restart measured
+  `tBoot=102.733s` with stable identity/boot samples, a successful restart helper, one process group, and both
+  ports owned by its `emulator-arm.exe`. Keep the existing 120-second restart wait. The next bounded product round
+  is D5.6 current-model response acceptance; D6 persistence remains blocked until that runtime edge passes.
 - Exploration is marked initially complete for now. Keep its smoke/walk/floor-clear/AP-shortage/level-up flows as
   regression tests, but pause cross-region completion, guardian/battle, event, fairy, and reward branches until the
   player data model is stronger.
-- Current accepted exploration smoke artifact:
-  `work/kssma-flow-exploration-smoke-dev21-area1-two-step-smoke`.
+- Current accepted exploration regression artifact after the gacha native baseline promotion:
+  `work/kssma-flow-exploration-smoke-gacha-baseline-regression-exploration-1`.
 - Flow-first reset regression artifact:
   `work/kssma-flow-exploration-smoke-flow-first-reset-smoke`; it passed with
   `/exploration/area -> /exploration/floor area_id=0 -> /exploration/get_floor area_id=0 floor_id=7 ->
@@ -444,12 +512,288 @@ Archives:
   fatal/SIGSEGV/resource-miss evidence. Screenshot logging now records file byte length so empty screenshot files are
   not marked successful evidence.
 - Main-menu bottom deck/friends runtime accepted: `work/kssma-flow-mainmenu-bottom-buttons-smoke-deck-friends-bottom-scene17100`
-  passed on ARM19. Bottom deck emits `/connect/app/roundtable/edit` with `move=1`, opens scene `10100`, and returns
+  passed on ARM19. Under the historical response, bottom deck emitted `/connect/app/roundtable/edit` with `move=1`,
+  opened scene `10100` as a round-table viewer (not the deck editor), and returned
   to main menu after two back taps. Bottom friends emits `/connect/app/menu/friendlist` with `move=0`; the accepted
   response uses `nextScene=17100` plus a minimal `friend_list/user_list/user` body, opens visibly (`diff 91.08`),
   and returns through `/connect/app/mainmenu`. Do not change this entry back to `22100`: artifact
   `work/kssma-flow-mainmenu-bottom-buttons-smoke-deck-friends-bottom-final-2` proved `22100` still crashes in
   `_SceneControl::create(int)` even after the friend-list body exists.
+- Gacha dynamic frontier accepted: `work/kssma-flow-gacha-draw-smoke-gacha-buy-owner-card-1` passed on ARM19.
+  It proves safe select entry -> `/connect/app/gacha/buy` with decrypted `product_id=1`, `bulk=1`, `auto_build=1`
+  -> minimal `gacha_buy` response -> client still alive on draw scene. Rejected intermediate:
+  `work/kssma-flow-gacha-draw-smoke-gacha-buy-minxml-1` added `final_result/ex_user_card` only and still crashed
+  in `_AnmGachaLakeBall::setPropertyValues`, with stack evidence through `_CPlayer::getUserCard(...)`; conclusion:
+  the drawn card serial must also be present in response `your_data.owner_card_list`.
+- Gacha result-page acceptance: built `work/librooneyj-gacha-cardget-inner-touch-nullguard.so` from the accepted
+  exploration lib and promoted it into the unique client baseline. `flow -Scenario gacha-result-smoke -Tag
+  gacha-result-baseline-accepted-1` passed without experiment parameters; `summary.json` reports pass, route sequence
+  reaches `/connect/app/gacha/select/getcontents -> /connect/app/gacha/buy`, and `screenshots/gacha-result-after-touch.png`
+  proves the local result-page transition after tapping the draw-card touch screen. The earlier broad
+  `work/librooneyj-gacha-touchscreen-nullthis-guard.so` is not accepted despite passing because it guards every
+  `_AnmTouchScreen::getSelected` call.
+- Gacha result-page back acceptance: `work/kssma-flow-gacha-result-back-smoke-gacha-result-back-4` passed. It reuses
+  the accepted draw/result path, taps the visible back button on `layout_gacha_drawresult`, receives
+  `/connect/app/gacha/select/getcontents`, and screenshots the select page after return. Prior failed runs were
+  runtime/tooling noise, not gameplay evidence: `gacha-result-back-1` stopped at `restart-boot-timeout`, and
+  `gacha-result-back-2` stopped because `gacha-draw-after-route.png` was zero bytes before screenshot retry was added.
+- Gacha baseline exploration regression: after rebuilding `work/client-baseline/KSSMA-Re-client-baseline.apk` with
+  native lib SHA `DEC36585CA0129AA19E68CC53898D95DE41067AA5D380B23218F3E88273CD40F`, `flow -Scenario
+  exploration-smoke -Tag gacha-baseline-regression-exploration-1` passed. It proves the new client baseline did not
+  regress accepted exploration hierarchy: `/exploration/area -> /exploration/floor area_id=0 ->
+  /exploration/get_floor area_id=0 floor_id=2 -> /exploration/area -> /exploration/floor area_id=0 ->
+  /exploration/get_floor area_id=0 floor_id=2`, with no fatal/resource-miss logcat.
+- Gacha real settlement and deck readback accepted: `flow -Scenario gacha-settlement-deck-smoke -Tag
+  gacha-settlement-deck-1` passed on ARM19. The artifact-local save starts with 400 friendship points, then
+  `/connect/app/gacha/buy product_id=1 bulk=1 auto_build=1` logs `source="gacha buy settlement"`,
+  spends 200 friendship points, persists card `serialId=2/masterCardId=9`, increments `stats.cardsDrawn` to 1,
+  and appends one `gacha.history` entry. The same run returns to main menu and enters
+  `/connect/app/roundtable/edit move=1`; response metadata reports `ownerCardSerialIds=[1,2]` and
+  `ownerCardMasterCardIds=[22,9]`, proving the deck/roundtable entry reads the settled player card data.
+  Artifact: `work/kssma-flow-gacha-settlement-deck-smoke-gacha-settlement-deck-1`.
+- Gacha select real-pack ratio page accepted as the current direction: the previous generated `gac_*` alias resources
+  and inpainted blank-banner attempt were rejected after visual review because they were self-made and did not respect
+  the page regions. `server/data/game/gacha.json` now follows bundled `local_gachaselect.xml` y anchors and uses only
+  original resources decoded from `work/million_cn/apktool/assets/pack/161/gacha/gacha0_1.pack`:
+  `gacha_event_button`, `gacha_compsheet`, `gacha_free_0`, and `gacha_cp_button`. `work/extract-gacha-pack-resources.py`
+  only decrypts/re-encrypts original PNG chunks; it does not draw or repaint assets. The `gacha_free_0_1204` /
+  `gacha_cp_2` page version was functionally runnable but visually rejected because it made the entry page look
+  crowded and poster-like. Evidence card: `work/gacha-select-resource-ratio-card-20260702.md`.
+- Gacha button-ratio runtime accepted: `flow -Scenario gacha-paid-settlement-deck-smoke -Tag
+  gacha-button-ratio-fix-5` passed on ARM19. Artifact:
+  `work/kssma-flow-gacha-paid-settlement-deck-smoke-gacha-button-ratio-fix-5`. The run pushed
+  `gacha_event_button`, `gacha_compsheet`, `gacha_free_0`, and `gacha_cp_button`, opened the same-page select,
+  scrolled to the paid slot, reached `/connect/app/gacha/buy product_id=2
+  bulk=0 auto_build=0`, spent 300 MC, persisted card `serialId=2/masterCardId=9`, returned to main menu, and
+  `/roundtable/edit move=1` read owner cards `[1,2]` / master cards `[22,9]`.
+- Gacha select layout HTML check accepted: `work/render-gacha-select-layout-html.py --check` translates the
+  current `server/data/game/gacha.json` and bundled `local_gachaselect.xml` into
+  `work/gacha-layout-html-check/gacha-select-layout.html`, copies the real PNG assets into that artifact, and
+  fails on missing images, overflow, or image overlap. It found the previous raw-anchor mapping was objectively
+  broken: `gacha_compsheet @ y=128` overlapped `gacha_free_0 @ y=168` by `504x48`, and `gacha_free_0 @ y=168`
+  overlapped `gacha_cp_button @ y=288` by `624x40`. Current mapping keeps the same original pack images but moves
+  `gacha_free_0` to `y=220` and `gacha_cp_button` to `y=396`; static/browser check reports `current_overlaps=0`.
+  Browser screenshot: `work/gacha-layout-html-check/browser-layout-fixed-assets.png`. Server self-check now runs
+  this layout check. Runtime artifact `work/kssma-flow-gacha-paid-settlement-deck-smoke-gacha-layout-html-fix-2`
+  reached the core paid route, result/back, mainmenu return, and `/roundtable/edit move=1` readback, but the outer
+  command timed out during final deck screenshot capture, so it is route evidence rather than a clean pass summary.
+- Gacha select manual layout editor added after human visual rejection of the automatic layout direction:
+  `python .\work\render-gacha-select-layout-html.py --editor` writes
+  `work/gacha-layout-html-check/gacha-select-layout-editor.html`. Correction: `layout_gacha_select.xml` is the outer
+  select-box/page layout, not the per-entry image content; it supplies the `xml_viewer frame_w=400` client logical
+  viewport. Slots and coordinates are locked to `local_gachaselect.xml`, and the decoded 2x PNG candidates are previewed
+  at inferred display scale `0.500`. The editor supports fixed-slot image replacement and export only; no coordinate
+  dragging/nudging and no product data mutation until a human-approved export is applied. Browser verification loaded 4
+  slots at 400px logical width, 6 placements, 25 candidates, and the export kept XML coordinates such as ticket
+  `x=8,y=8`, ticket text `x=30,y=12`, paid image `x=8,y=288`, and paid text `x=140,y=292`. The strict XML preview
+  currently exposes a 4px overlap between selected `gacha_compsheet` and `gacha_free_0` candidates, so the remaining
+  work is manual candidate choice rather than moving slots. Screenshot:
+  `work/gacha-layout-html-check/gacha-select-layout-editor-scaled.png`.
+- Gacha rest decryption supersedes the manual-fit direction as the next evidence frontier:
+  `python .\work\decrypt-gacha-rest-evidence.py` now decrypts and classifies the first-party rest files. `ae_gacha`
+  and `ae_gacha02` decrypt with `k1` to PNGs; `rja_ae_gacha.load` lists `ae_gacha.png`, `cmn_bg_01.png`,
+  `ae_gacha02.png`; `rja_ae_gacha` parses as `.AE` with 29 records and 27 atlas sprites. `rja_ae_gacha_slot`
+  parses as a small `1000_common_button_.png` slot animation and is not the select-list layout. `rule_resource.xml`
+  plus `layout_gacha_select.xml` show the select page has scene-owned `ae_gacha` chrome and a server-driven
+  `xml_viewer y=50 frame_w=400`; the scrolling product list still needs server XML evidence. Evidence card:
+  `work/gacha-rest-layout-evidence-card-20260706.md`; preview sheet:
+  `work/gacha-rest-decrypt/rja_ae_gacha_sprites_sheet.png`.
+- Gacha rest-select trial accepted as the current runnable page shape: `server/data/game/gacha.json` now keeps the
+  select XML to two original-resource entries, `gacha_free_0` for friendship and `gacha_cp_button` for paid MC, and
+  `work/kssma-runtime-flow.ps1` syncs the scene-owned rest resources `ae_gacha`, `ae_gacha02`, `rja_ae_gacha`, and
+  `rja_ae_gacha.load` before gacha flows. `node .\server\test-bootstrap-server.js`,
+  `flow -Scenario gacha-draw-smoke -Tag gacha-rest-select-trial-2`, and
+  `flow -Scenario gacha-paid-settlement-deck-smoke -Tag gacha-rest-select-paid-2` passed. Key artifact:
+  `work/kssma-flow-gacha-paid-settlement-deck-smoke-gacha-rest-select-paid-2`; screenshots
+  `open-gacha-select.png` and `gacha-paid-confirm.png` show the restored `ae_gacha` chrome, real friendship banner,
+  MC button, and Chinese confirmation dialog. The first paid trial failed only because the flow tap landed above the
+  visible button; moving the paid tap to the button center fixed it. This does not prove separate friendship/paid pages;
+  no client page-switch route has been recovered yet.
+- Paid gacha retry accepted: `flow -Scenario gacha-paid-retry-smoke -Tag paid-retry-2` passed on ARM19 with artifact
+  `work/kssma-flow-gacha-paid-retry-smoke-paid-retry-2`. The artifact-local save starts at 600 MC. Route order is
+  `/gacha/select/getcontents -> /gacha/buy product_id=2 bulk=0 auto_build=0 -> /gacha/buy product_id=2 bulk=0
+  auto_build=0`; the retry confirmation visual diff is `86.3`. The second response reports `mcBefore=300`,
+  `mcAfter=0`, `drawnSerialId=3`, `ownerCardCount=3`, and `cardsDrawn=2`. The draw-to-result edge emitted no route,
+  `gacha-paid-retry-result.png` visibly shows the second result page (`diff 65.62`), the client stayed alive, and the
+  final save is `MC=0`, card serials `[1,2,3]`, two product-2 history entries, and `cardsDrawn=2`. The first attempt,
+  artifact `work/kssma-flow-gacha-paid-retry-smoke-paid-retry-1`, stopped before gameplay with
+  `wrong-runtime-only`; `start-runtime` restored the absent ARM19 AVD and `fast-health` reconfirmed
+  `armeabi-v7a / 4.4.2 / boot=1`. It is runtime evidence only, not a failed retry hypothesis.
+- Deck-builder entry path statically recovered in `work/roundtable-edit-native-schema-card-20260809.md`.
+  `_TownModel::card -> _CircleTableModel::edit -> connect(72)` emits `/roundtable/edit move=1`; the response parent
+  is `roundtable_edit`, not `round_table`. Its direct fields are `ex_gauge:int`, `leader_card:<single owned serial>`,
+  and `deck_cards:<12 comma-separated owned serial/empty slots>`. `_DeckScene::initModel` consumes this body; scene
+  `10100` only opens
+  `_RoundTableScene`, whose update handles back and card detail but no edit action. Existing save state is the only
+  value source: `cards.activeDeckId`, matching `cardInstanceIds`, and `profile.leaderSerialId`, padding to 12 with
+  `empty`. Save is a later edge: connect id 74 maps to `/cardselect/savedeckcard` with request keys `C` and `lr`.
+- Deck-builder D1 runtime accepted: hypothesis was that the statically recovered `<roundtable_edit>` contract would
+  drive the original editor without a native or resource change. Command: `powershell -NoProfile
+  -ExecutionPolicy Bypass -File .\work\kssma-runtime.ps1 flow -Scenario deck-builder-entry-smoke -Tag
+  deck-builder-entry-1`. Artifact
+  `work/kssma-flow-deck-builder-entry-smoke-deck-builder-entry-1` passed on `emulator-5556`: request params are exactly
+  `move=1`, response metadata is `command=round_table / nextScene=83200`, screenshot diff from main menu is `68.86`,
+  and `deck-builder-entry.png` visibly shows the 12-slot deck rail plus `decide/leader/create_deck/back` controls.
+  The RooneyJ activity stayed alive with no fatal or resource-miss evidence. The flow now also requires a fixed
+  1280x720 DeckScene color signature; the accepted screenshot passes it and the main-menu screenshot is rejected.
+  Conclusion: D1 is closed and the `scene 10100` editor assumption is deprecated. Next frontier is D2's local leader
+  mode transition only; no save request or persistence was attempted.
+- Deck-builder D2 first invocation stopped before gameplay: `flow -Scenario deck-builder-leader-mode-smoke -Tag
+  deck-builder-leader-mode-1` produced artifact
+  `work/kssma-flow-deck-builder-leader-mode-smoke-deck-builder-leader-mode-1` with
+  `failureClass=runtime-not-ready`, `failureStep=repair-adb`, and `restart-boot-timeout`. The event log contains no
+  login or gameplay route and no leader tap; it shows a detached ARM19 classification followed by the permitted warm
+  restart. A failure screenshot became available after the timeout, so ADB was returning while cleanup ran. This is
+  runtime-only evidence, not a failed D2 leader-mode hypothesis; check `fast-health` once before any gameplay retry.
+- Deck-builder D2 runtime accepted after that one health recovery: `fast-health` confirmed `emulator-5556` as
+  `armeabi-v7a / 4.4.2 / boot=1`, then `flow -Scenario deck-builder-leader-mode-smoke -Tag
+  deck-builder-leader-mode-2` passed. Artifact
+  `work/kssma-flow-deck-builder-leader-mode-smoke-deck-builder-leader-mode-2` contains only the login chain and
+  `/roundtable/edit move=1`; the cursor-scoped three-second window after tapping `(1090,270)` contains no
+  `connect_app_probe`. `deck-builder-leader-before.png -> deck-builder-leader-after.png` has diff `37.89`; the after
+  image visibly keeps the left card rail active while dimming the status panel and all four right controls, exactly
+  matching layout behavior `change_mode_leader_select` plus disabled `grp_button`. The client stayed alive. A fixed
+  1280x720 leader-mode signature accepts this after image and rejects both the normal DeckScene and main menu.
+  Conclusion: D2 is closed without selecting a card or touching save; D3 is static-only path recovery.
+- Deck-builder D3 static path accepted: raw Thumb mode table bytes at `0x002b5950` are `52 29 02 91`, mapping mode 0
+  to the clip-37 entry button and mode 1 to the card-list/reverse-button path. Clip 37 returns code 5; DeckScene maps
+  it to `slider_right` and `change_mode_card_sel`. With owned `[1,2]` and active deck `[1]`,
+  `_DeckCardList::checkDeck` removes serial 1, leaving serial 2 as the sole index-0 candidate. Its exact device-center
+  tap is `(226,247)`. `_DeckStage::setCardAtBlankOnDeck` writes it into the first empty slot and stays in card mode.
+  Decrypted clip-38 geometry yields reverse tap `(1144,360)`; it returns code 6, which DeckScene maps to `slider_left`
+  and normal deck mode. Generic slider action/task tracing proves no persistent 230/480 offset. Clicking an empty slot
+  as entry, automatic return after selection, and scene `83100` are explicitly rejected. No runtime or save mutation
+  was performed in D3. Next frontier: D4 one-card in-memory edit flow.
+- Deck-builder D4 first invocation stopped before gameplay: `flow -Scenario deck-builder-edit-smoke -Tag
+  deck-builder-edit-1` produced artifact
+  `work/kssma-flow-deck-builder-edit-smoke-deck-builder-edit-1` with `failureClass=runtime-not-ready`,
+  `failureStep=repair-adb`, and `restart-boot-timeout`. `fast-health` first reported `adb-transport`; the permitted
+  detached-ARM19 warm restart then missed its boot window. The route sequence is empty and no deck tap or screenshot
+  was produced, so this is runtime-only evidence rather than a failed D4 edit hypothesis. Run `fast-health` once and
+  replay the same scenario only if `emulator-5556` has reached the accepted ARM19 baseline.
+- Deck-builder D4 runtime accepted after short-link ADB recovery: `repair-adb` restored the same AVD by reconnect and
+  confirmed `emulator-5556 / armeabi-v7a / 4.4.2 / boot=1`; no second restart was needed. `flow -Scenario
+  deck-builder-edit-smoke -Tag deck-builder-edit-2` then passed with artifact
+  `work/kssma-flow-deck-builder-edit-smoke-deck-builder-edit-2`. The route sequence contains only login and
+  `/roundtable/edit move=1`; each of `(127,360)`, `(226,247)`, and `(1144,360)` had a cursor-scoped three-second
+  window with no `connect_app_probe`. Screenshots prove serial 2 appears as the sole candidate, disappears after
+  selection while mode 1 remains visible, and then occupies normal DeckScene slot 1 after the explicit reverse tap.
+  Relational scores were `candidateEnter=102.42`, `candidateLeave=80.52`, `returnTab=0`, `slot0=0`, and
+  `slot1=91.5`. The final artifact save SHA-256 remained
+  `8A3B41FE46F94B4147A1FAF74EA3BD4FF42C4DBCFFAE0BA1FDFA6D7A4007C68F`, with persisted deck `[1]`, leader `1`,
+  owner serials `[1,2]`, and empty gacha history. D4 is closed; D5 may capture the decide request but must not persist
+  or guess a success response before the native/request value domains are closed.
+- Deck-builder D5 capture accepted: `flow -Scenario deck-builder-save-smoke -Tag deck-builder-save-1` passed with
+  artifact `work/kssma-flow-deck-builder-save-smoke-deck-builder-save-1`. After the complete accepted D4 edit, decide
+  `(1090,95)` emitted exactly one `/connect/app/cardselect/savedeckcard` request with case-sensitive parameter set
+  `{C,lr}`: `C=1,2,empty,empty,empty,empty,empty,empty,empty,empty,empty,empty` and `lr=1`. No duplicate or follow-up
+  request appeared. The server returned only the existing generic `save_deck / nextScene=83200` empty-body
+  placeholder. Twenty-eight seconds after that response the client was alive on the same populated DeckScene;
+  decide-before/response screenshot diff was only `0.05`, so the static default-zero `back()` possibility did not
+  become a visible return in this run. The artifact save remained byte-identical at SHA-256
+  `8A3B41FE46F94B4147A1FAF74EA3BD4FF42C4DBCFFAE0BA1FDFA6D7A4007C68F`, still persisted deck `[1]` / leader `1`.
+  Native recovery proves explicit `result=0` is the only return branch and any nonzero result stays/unlocks, but no
+  repository sample supplies an original `<save_deck_card>` success body, a nonzero code/message pairing, or a
+  reachable app-level error dialog. D5 closes request capture only; D6 must not invent those semantics.
+- Deck-builder D5.5 explicit-success candidate rejected: `flow -Scenario deck-builder-save-smoke -Tag
+  deck-builder-save-result0-1` produced artifact
+  `work/kssma-flow-deck-builder-save-smoke-deck-builder-save-result0-1`. The exact D4 path passed first, then decide
+  emitted one `/connect/app/cardselect/savedeckcard` with the accepted `C/lr` values. The server returned a formed
+  `<save_deck_card>` parent with explicit `<result>0</result>`, echoed leader/deck, and log marker
+  `source="deck save response-only" / saved=false`; no duplicate or follow-up route appeared and the RooneyJ activity
+  stayed alive. Nevertheless `deck-builder-save-before.png` and `deck-builder-save-response.png` are visibly the same
+  populated DeckScene and score only `0.05`, so the candidate did not exercise the predicted local `back()` edge.
+  The artifact save stayed SHA-256
+  `8A3B41FE46F94B4147A1FAF74EA3BD4FF42C4DBCFFAE0BA1FDFA6D7A4007C68F`, persisted deck `[1]`, leader `1`, and
+  owner serials `[1,2]`. This is a product-hypothesis failure, not a threshold or runtime failure. The experimental
+  response was removed from the baseline. Static postmortem corrected the missing dispatch condition:
+  `_Main::connect` parses header `next_scene` at `0x001c35c4..0x001c35d0`, takes the nonzero branch at
+  `0x001c3710`, and calls `_SceneControl::push(nextScene, parser)` at `0x001c3888`. The resulting new
+  `_DeckScene::initModel` at `0x0033c6c8` recognizes only `roundtable_edit`, not `save_deck_card`, so this response
+  never reaches `_CircleTableModel::update`; only a response retained by the current scene can reach the proven
+  state-3/result-zero `back()` tail.
+- Deck-builder D5.6 static gate closed before the response experiment: `_HeaderTagParser::parse` initializes
+  `HeaderTagData+8` to zero and only overwrites it for an explicit `next_scene`; `_Main::connect`'s zero branch skips
+  scene push and returns the response body through `_Main::update` to the pre-connect current `LayoutScene`.
+  `_DeckScene::ConnectSave::exec` has already installed the save-state `_CircleTableModel` as that scene's pending
+  model; `LayoutScene::task` dispatches the body to `_CircleTableModel::update`, after which DeckScene state 3 reads
+  result zero and calls `LayoutScene::back()`. Accepted artifact
+  `work/kssma-flow-exploration-forward-visual-smoke-no-next-scene-visual` independently exercises the same generic
+  no-`next_scene` current-model path: the existing exploration scene visibly changed from 50% to 55% and rendered
+  its reward overlay. The old "zero-scene delivery is unclosed" frontier is retired. The only authorized D5.6
+  product variable is to replay the unchanged explicit `save_deck_card/result=0` body and echo while omitting
+  `next_scene`; the server must remain response-only and the artifact save byte-identical. This is a local client
+  compatibility probe, not evidence of the original server's success/error contract and not authorization for D6.
+- Deck-builder D5.6 first and only runtime invocation stopped before gameplay: `flow -Scenario
+  deck-builder-save-smoke -Tag deck-builder-save-current-model-1` produced artifact
+  `work/kssma-flow-deck-builder-save-smoke-deck-builder-save-current-model-1` with
+  `failureClass=runtime-not-ready`, `failureStep=repair-adb`, and `restart-boot-timeout`. Initial fast-health failed
+  as `adb-transport`; the permitted detached-ARM19 warm restart did not reach the boot deadline. The route sequence
+  is empty, the activity service was unavailable, and the only screenshot is a black cleanup-time failure frame.
+  No login, D4 action, save request, response marker, or current-model UI observable occurred. The seeded artifact
+  save remained SHA-256 `8A3B41FE46F94B4147A1FAF74EA3BD4FF42C4DBCFFAE0BA1FDFA6D7A4007C68F`.
+  This run neither accepts nor rejects the no-`next_scene` hypothesis. In accordance with the one-run stop rule,
+  the D5.6 response-only server/test and strict flow/docs experiment was removed, restoring the D5 capture-only
+  product baseline. The next round is runtime health recovery only; do not vary XML or implement persistence.
+- ARM19 calibration C1 accepted: the single `fast-health` invocation wrote
+  `work/kssma-runtime-calibration-health-1/summary.json` and returned `ok=true`, `command=fast-health`,
+  `serial=emulator-5556`, `abi=armeabi-v7a`, `release=4.4.2`, and `bootCompleted=1`; all three `getprop` stages
+  succeeded. No connect, repair, restart, server, flow, login, baseline, APK, or product action ran. This accepts the
+  current live runtime only. C2 is the next bounded round; D5.6 and D6 remain frozen.
+- ARM19 calibration C2 stopped on an invalid sampler: the one authorized `restart-runtime -Force -Reason
+  "calibrate ARM19 warm boot readiness after 120s timeout"` invocation created the new process group
+  `emulator.exe 10620 -> emulator-arm.exe 24456`, but artifact
+  `work/kssma-runtime-calibration-warm-boot-1` ended with `decisionClass=calibration-error`,
+  `measurementOk=false`, and `caughtError="Bounded netstat listener query failed or timed out."`. Only the first
+  sample completed (`0.953s..4.789s`); the second bounded listener query exceeded its two-second cap, so the observer
+  stopped and terminated only its helper PowerShell process. It did not run a second restart or repair and did not
+  start server, flow, login, baseline, APK, or product work. `oldDeadlineCrossed=false`; no `tIdentity`, `tBoot`, or
+  stable confirmation was measured, so this artifact cannot classify the boot as within/after 120 seconds and cannot
+  justify any timeout change. The recorded `tShell=4.789` is also invalid: ADB returned exit code zero with empty
+  stdout and `device 'emulator-5556' not found` on stderr. Retire both bad probes before any future C2 measurement:
+  listener acquisition needs a bounded method that tolerates host boot load, and shell success must reject ADB error
+  stderr/empty values. The next round is static calibration-tooling correction only; D5.6 and D6 remain frozen.
+- ARM19 calibration C2-A/C2-B accepted and supersedes the invalid warm-boot-1 measurement. The corrected one-shot
+  sampler in `work/kssma-runtime-calibration-warm-boot-2/run-calibration.ps1` uses an eight-second bounded listener
+  query and accepts ADB/getprop output only when the child did not time out, exited zero, emitted nonempty exact
+  stdout, and emitted no ADB-error stderr. Its `-SelfCheck` passed 13 cases without starting or querying an emulator.
+  The single authorized C2-B command then produced ignored artifact
+  `work/kssma-runtime-calibration-warm-boot-2`: `decisionClass=healthy-within-120`, `measurementOk=true`,
+  `tShell=tIdentity=43.013s`, first complete boot sample `tBoot=102.733s`, and stable confirmation at `122.529s`.
+  The helper itself returned `ok=true` after `104.449s`; the new process group was uniquely
+  `emulator.exe 44176 -> emulator-arm.exe 55020`, both ports `5556/5557` were bound to PID 55020, and no restart,
+  repair, flow, server, login, baseline, APK, or product action followed. Conclusion: retain the existing 120-second
+  restart wait and unfreeze exactly one D5.6 current-model response run; warm-boot-1 remains rejected evidence.
+- Deck-builder D6-S native/data gate is closed in
+  `work/deck-builder-save-capture-native-path-card-20260809.md`. `_DeckStage::sortDeck` moves only wholly empty
+  three-slot groups to the suffix and preserves holes inside partial groups. `DeckUtil::checkDeck` requires a
+  non-empty owned leader in `C`, rejects repeated character ids, and requires total card cost `<= CPlayer::getMaxBc`.
+  The accepted `master_card` SHA-256 `7B121D...B3A56BDF` parses exactly as 480 records; every
+  `characterId == masterCardId`, character ids are unique, and costs are positive `[2,99]` (master 22 cost 10;
+  master 9 cost 3). `work/generate-card-master-data.js --check` pins that schema/hash and verifies the clean
+  `server/data/game/card-master.json` byte-for-byte. The max-BC native chain ends at the same
+  `<your_data><bc><max>` value emitted from `playerSave.resources.bc.max`. D6 must resolve every owned serial through
+  this table, reject unknown/repeated-character/over-cost input with zero mutation, and persist accepted slot positions
+  exactly; no bootstrap loader or persistence behavior was added in D6-S.
+- Deck-builder D5.6 second and only product invocation for the corrected runtime round failed its explicit
+  route-quiet contract. `flow -Scenario deck-builder-save-smoke -Tag deck-builder-save-current-model-2` produced
+  artifact `work/kssma-flow-deck-builder-save-smoke-deck-builder-save-current-model-2`. The accepted D4 replay
+  completed first with unchanged save; decide then emitted exactly the captured
+  `C=1,2,empty,empty,empty,empty,empty,empty,empty,empty,empty,empty / lr=1` request. The server returned the exact
+  no-`next_scene` `save_deck_card/result=0` probe at event 25 with `saved=false`, but 165ms later the client emitted
+  `/connect/app/mainmenu` at event 26. The flow stopped at `deck-builder-save-response-route-quiet` with
+  `failureClass=unexpected-route` before accepting any screenshot claim. The artifact save remained byte-identical
+  at SHA-256 `8A3B41FE46F94B4147A1FAF74EA3BD4FF42C4DBCFFAE0BA1FDFA6D7A4007C68F`. This is a real current-model
+  observable, but the bounded hypothesis required zero follow-up routes, so it is rejected rather than
+  reinterpreted. The response-only server/strict-flow experiment is removed again, D5 capture-only remains the
+  product baseline, and D6 persistence is frozen. Do not relax the gate or try another XML in this round.
+- Gacha G1 stopped at its required native evidence gate; details are in
+  `work/gacha-buy-failure-schema-card-20260810.md`. Parser-minimum header error data and `code=1` reaching the generic
+  `_Main::connect` type-2 DialogModel branch are closed, as are the dialog scene's eventual tap/pop semantics once
+  such a scene exists. The missing production edge is the call from that generic error branch to
+  `LayoutScene::showDialog` or `_SceneControl::push(90100)`. Without it, no evidence proves a visible rejection
+  dialog, return to `GachaDrawResult`, or route quiet. The candidate XML is not implemented; G2 product, mode, and
+  balance rejection remain frozen rather than guessing a wire error contract.
 
 ## Archive Index
 

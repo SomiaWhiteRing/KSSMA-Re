@@ -53,6 +53,7 @@ const GAME_DATA_DIR = path.join(DATA_ROOT, "game");
 const PLAYER_DATA_DIR = path.join(DATA_ROOT, "player");
 const SERVER_DATA_DIR = path.join(DATA_ROOT, "server");
 const EXPLORATION_DATA_PATH = path.join(GAME_DATA_DIR, "exploration.json");
+const GACHA_DATA_PATH = path.join(GAME_DATA_DIR, "gacha.json");
 const MAINMENU_DATA_PATH = path.join(GAME_DATA_DIR, "mainmenu.json");
 const PLAYER_LEVEL_EXP_TABLE_PATH = path.join(GAME_DATA_DIR, "player-level-exp-table.json");
 const DEFAULT_SAVE_DATA_PATH = path.join(PLAYER_DATA_DIR, "default-save.json");
@@ -285,6 +286,7 @@ const CHECK_INSPECTION_OK_XML = [
 ].join("\n");
 const POST_DEVICE_TOKEN_OK_XML = CHECK_INSPECTION_OK_XML;
 const GAME_EXPLORATION_DATA = readRequiredJsonFile(EXPLORATION_DATA_PATH);
+const GAME_GACHA_DATA = readRequiredJsonFile(GACHA_DATA_PATH);
 const GAME_MAINMENU_DATA = readRequiredJsonFile(MAINMENU_DATA_PATH);
 const GAME_PLAYER_LEVEL_EXP_TABLE = readRequiredJsonFile(PLAYER_LEVEL_EXP_TABLE_PATH);
 const DEFAULT_PLAYER_SAVE = readRequiredJsonFile(DEFAULT_SAVE_DATA_PATH);
@@ -964,7 +966,66 @@ function createSceneForwardXml(nextScene, playerSave = createDefaultPlayerSave()
   ].join("");
 }
 
-function createGachaSelectSkeletonXml(playerSave = createDefaultPlayerSave()) {
+function createRoundtableEditXml(playerSave = createDefaultPlayerSave()) {
+  const save = playerSave && typeof playerSave === "object" ? playerSave : {};
+  const cards = save.cards && typeof save.cards === "object" ? save.cards : {};
+  const normalizeSerial = (value) => {
+    const serial = typeof value === "string" && /^[1-9]\d*$/.test(value) ? Number(value) : value;
+    return Number.isSafeInteger(serial) && serial > 0 ? serial : null;
+  };
+  const ownedSerials = new Set(
+    (Array.isArray(cards.instances) ? cards.instances : [])
+      .map((card) => normalizeSerial(card?.serialId ?? card?.serial_id))
+      .filter((serial) => serial !== null)
+  );
+  const activeDeck = (Array.isArray(cards.decks) ? cards.decks : [])
+    .find((deck) => deck?.id === cards.activeDeckId);
+  const activeSlots = Array.isArray(activeDeck?.cardInstanceIds) ? activeDeck.cardInstanceIds : [];
+  const deckCards = Array.from({ length: 12 }, (_, index) => {
+    const serial = normalizeSerial(activeSlots[index]);
+    return serial !== null && ownedSerials.has(serial) ? String(serial) : "empty";
+  });
+  const requestedLeader = normalizeSerial(save.profile?.leaderSerialId);
+  const leaderCard = requestedLeader !== null
+    && ownedSerials.has(requestedLeader)
+    && deckCards.includes(String(requestedLeader))
+    ? String(requestedLeader)
+    : deckCards.find((slot) => slot !== "empty") || "";
+  // ponytail: the parser proves ex_gauge exists, but no accepted source beyond the zero baseline exists yet.
+  const exGauge = 0;
+
+  return [
+    '<?xml version="1.0" encoding="UTF-8"?>',
+    "<response>",
+    "  <header>",
+    "    <error><code>0</code></error>",
+    "    <session_id>local-round-table</session_id>",
+    ...renderYourDataXml(save),
+    "    <next_scene>83200</next_scene>",
+    "  </header>",
+    "  <body>",
+    "    <roundtable_edit>",
+    `      <ex_gauge>${exGauge}</ex_gauge>`,
+    `      <leader_card>${leaderCard}</leader_card>`,
+    `      <deck_cards>${deckCards.join(",")}</deck_cards>`,
+    "    </roundtable_edit>",
+    "  </body>",
+    "</response>",
+  ].join("");
+}
+
+function getGachaSelectPage(pageName = "") {
+  const pages = GAME_GACHA_DATA.pages || {};
+  const defaultPage = GAME_GACHA_DATA.defaultPage || "main";
+  const wanted = (pageName || defaultPage).trim();
+  const pageKey = pages[wanted] ? wanted : defaultPage;
+  return { pageKey, select: pages[pageKey] || {} };
+}
+
+function createGachaSelectSkeletonXml(playerSave = createDefaultPlayerSave(), pageName = "") {
+  const { select } = getGachaSelectPage(pageName);
+  const contents = Array.isArray(select.contents) ? select.contents : [];
+  const scrollHeight = Math.max(parseInteger(select.scrollHeight, 0), 0);
   return [
     '<?xml version="1.0" encoding="UTF-8"?>',
     "<response>",
@@ -977,12 +1038,217 @@ function createGachaSelectSkeletonXml(playerSave = createDefaultPlayerSave()) {
     "  <body>",
     "    <gacha_select>",
     "      <xml_contents>",
-    "        <scroll_height>0</scroll_height>",
+    `        <scroll_height>${scrollHeight}</scroll_height>`,
+    ...contents.flatMap((content) => renderGachaSelectContentXml(content, "        ")),
     "      </xml_contents>",
     "    </gacha_select>",
     "  </body>",
     "</response>",
   ].join("");
+}
+
+function renderGachaSelectContentXml(content, indent = "        ") {
+  const rows = [
+    `${indent}<content>`,
+    `${indent}  <action_id>${Math.max(parseInteger(content.actionId, 0), 0)}</action_id>`,
+  ];
+  if (content.imagefile) {
+    rows.push(`${indent}  <imagefile>${escapeXmlText(content.imagefile)}</imagefile>`);
+  }
+  if (content.anmfile) {
+    rows.push(`${indent}  <anmfile>${escapeXmlText(content.anmfile)}</anmfile>`);
+  }
+  if (content.se) {
+    rows.push(`${indent}  <se>${escapeXmlText(content.se)}</se>`);
+  }
+  rows.push(`${indent}  <x>${parseInteger(content.x, 0)}</x>`);
+  rows.push(`${indent}  <y>${parseInteger(content.y, 0)}</y>`);
+  if (content.message) {
+    rows.push(`${indent}  <message>${escapeXmlText(content.message)}</message>`);
+  }
+  if (content.scaleW !== undefined) {
+    rows.push(`${indent}  <scale_w>${escapeXmlText(content.scaleW)}</scale_w>`);
+  }
+  if (content.scaleH !== undefined) {
+    rows.push(`${indent}  <scale_h>${escapeXmlText(content.scaleH)}</scale_h>`);
+  }
+  if (Array.isArray(content.textMessages) && content.textMessages.length) {
+    rows.push(`${indent}  <textdata>`);
+    for (const message of content.textMessages) {
+      rows.push(`${indent}    <message>`);
+      rows.push(`${indent}      <text>${escapeXmlText(message.text || "")}</text>`);
+      if (message.color) {
+        rows.push(`${indent}      <color>${escapeXmlText(message.color)}</color>`);
+      }
+      if (message.size !== undefined) {
+        rows.push(`${indent}      <size>${Math.max(parseInteger(message.size, 18), 1)}</size>`);
+      }
+      rows.push(`${indent}    </message>`);
+    }
+    rows.push(`${indent}  </textdata>`);
+  }
+  if (content.behavior) {
+    rows.push(`${indent}  <behavior>${escapeXmlText(content.behavior)}</behavior>`);
+  }
+  rows.push(`${indent}</content>`);
+  return rows;
+}
+
+function createGachaBuyXml(playerSave = createDefaultPlayerSave(), resultCard = null, productId = 1) {
+  const buy = GAME_GACHA_DATA.buy || {};
+  const drawCard = buy.drawCard || {};
+  const fallbackDrawResult = resultCard ? null : addGachaDrawCardToPlayerSave(playerSave, drawCard);
+  const responseSave = resultCard ? playerSave : fallbackDrawResult.save;
+  const responseCard = resultCard
+    ? { ...drawCard, serialId: resultCard.serialId, masterCardId: resultCard.masterCardId }
+    : drawCard;
+  const completeList = buy.completeList || {};
+  const usePaid = parseInteger(productId, 1) === 2;
+  const gachaType = usePaid ? parseInteger(buy.paidGachaType, 2) : parseInteger(buy.gachaType, 1);
+  const telopMessage = usePaid ? (buy.paidTelopMessage || buy.telopMessage || "") : (buy.telopMessage || "");
+  return [
+    '<?xml version="1.0" encoding="UTF-8"?>',
+    "<response>",
+    "  <header>",
+    "    <error><code>0</code></error>",
+    "    <session_id>local-gacha-buy</session_id>",
+    ...renderYourDataXml(responseSave),
+    "    <next_scene>9200</next_scene>",
+    "  </header>",
+    "  <body>",
+    "    <gacha_buy>",
+    "      <final_result>",
+    ...renderGachaExUserCardXml(responseCard, "        "),
+    "      </final_result>",
+    `      <gacha_type>${Math.max(gachaType, 0)}</gacha_type>`,
+    `      <telop_message>${escapeXmlText(telopMessage)}</telop_message>`,
+    "      <complete_list>",
+    `        <cmpsheet_index>${Math.max(parseInteger(completeList.cmpsheetIndex, 0), 0)}</cmpsheet_index>`,
+    `        <is_get>${Math.max(parseInteger(completeList.isGet, 0), 0)}</is_get>`,
+    `        <is_new>${Math.max(parseInteger(completeList.isNew, 0), 0)}</is_new>`,
+    "      </complete_list>",
+    "    </gacha_buy>",
+    "  </body>",
+    "</response>",
+  ].join("");
+}
+
+function createPlayerCardFromGachaDraw(drawCard, serialId) {
+  const masterCardId = Math.max(parseInteger(drawCard.masterCardId, 0), 0);
+  if (!serialId || !masterCardId) {
+    return null;
+  }
+  return {
+    serialId: Math.max(parseInteger(serialId, 0), 0),
+    masterCardId,
+    holography: Math.max(parseInteger(drawCard.holography ?? drawCard.holoFlag, 0), 0),
+    hp: Math.max(parseInteger(drawCard.hp, 0), 0),
+    power: Math.max(parseInteger(drawCard.power, 0), 0),
+    critical: Math.max(parseInteger(drawCard.critical, 0), 0),
+    level: Math.max(parseInteger(drawCard.buildLevel, 1), 1),
+    maxLevel: Math.max(parseInteger(drawCard.maxLevel, 1), 1),
+    exp: Math.max(parseInteger(drawCard.buildExp, 0), 0),
+    maxExp: Math.max(parseInteger(drawCard.maxExp, 0), 0),
+    nextExp: Math.max(parseInteger(drawCard.nextExp, 0), 0),
+    expDiff: Math.max(parseInteger(drawCard.expDiff, 0), 0),
+    expPercent: Math.max(parseInteger(drawCard.expPercent, 0), 0),
+    salePrice: Math.max(parseInteger(drawCard.salePrice, 0), 0),
+    materialPrice: Math.max(parseInteger(drawCard.materialPrice, 0), 0),
+    evolutionPrice: Math.max(parseInteger(drawCard.evolutionPrice, 0), 0),
+    plusLimitCount: Math.max(parseInteger(drawCard.plusLimitCount, 0), 0),
+    limitOver: Math.max(parseInteger(drawCard.limitOver, 0), 0),
+  };
+}
+
+function getNextPlayerCardSerialId(instances, preferredSerialId = 0) {
+  const used = new Set(instances.map((card) => parseInteger(card?.serialId ?? card?.serial_id, 0)).filter((id) => id > 0));
+  const preferred = Math.max(parseInteger(preferredSerialId, 0), 0);
+  if (preferred && !used.has(preferred)) {
+    return preferred;
+  }
+  return Math.max(0, ...used) + 1;
+}
+
+function addGachaDrawCardToPlayerSave(playerSave, drawCard) {
+  const save = mergeJsonObject(createDefaultPlayerSave(), playerSave || {});
+  const cards = save.cards || {};
+  const instances = Array.isArray(cards.instances) ? cards.instances : [];
+  const serialId = getNextPlayerCardSerialId(instances, drawCard.serialId);
+  const newCard = createPlayerCardFromGachaDraw(drawCard, serialId);
+  if (!newCard) {
+    return { save, card: null, added: false };
+  }
+  save.cards = {
+    ...cards,
+    instances: [...instances, newCard],
+    count: instances.length + 1,
+  };
+  return { save, card: newCard, added: true };
+}
+
+function applyGachaBuySettlement(playerSave, params = {}) {
+  const save = mergeJsonObject(createDefaultPlayerSave(), playerSave || {});
+  const productId = parseInteger(params.product_id, 1);
+  const bulk = Math.max(parseInteger(params.bulk, 1), 1);
+  const buy = GAME_GACHA_DATA.buy || {};
+  const drawCard = buy.drawCard || {};
+  const currencies = save.currencies || {};
+  const friendshipBefore = Math.max(parseInteger(save.currencies?.friendshipPoint, 0), 0);
+  const friendshipCost = Math.max(parseInteger(save.gacha?.friendshipCost, 0), 0) * bulk;
+  const useFriendship = productId === 1;
+  const mcBefore = Math.max(parseInteger(currencies.mc, 0), 0);
+  const paidCostMc = Math.max(parseInteger(save.gacha?.paidCostMc, 0), 0) * bulk;
+  const usePaid = productId === 2;
+  if (useFriendship && friendshipCost > 0) {
+    save.currencies = save.currencies || {};
+    save.currencies.friendshipPoint = Math.max(friendshipBefore - friendshipCost, 0);
+  }
+  if (usePaid && paidCostMc > 0) {
+    save.currencies = save.currencies || {};
+    save.currencies.mc = Math.max(mcBefore - paidCostMc, 0);
+  }
+  const drawResult = addGachaDrawCardToPlayerSave(save, drawCard);
+  const settledSave = drawResult.save;
+  settledSave.gacha = settledSave.gacha || {};
+  settledSave.gacha.history = Array.isArray(settledSave.gacha.history) ? settledSave.gacha.history : [];
+  if (drawResult.card) {
+    settledSave.gacha.history.push({
+      productId,
+      bulk,
+      serialId: drawResult.card.serialId,
+      masterCardId: drawResult.card.masterCardId,
+    });
+  }
+  settledSave.stats = settledSave.stats || {};
+  settledSave.stats.cardsDrawn = parseInteger(settledSave.stats.cardsDrawn, 0) + (drawResult.card ? 1 : 0);
+  return {
+    playerSave: settledSave,
+    drawCard: drawResult.card,
+    friendshipBefore,
+    friendshipAfter: Math.max(parseInteger(settledSave.currencies?.friendshipPoint, 0), 0),
+    friendshipCost: useFriendship ? friendshipCost : 0,
+    mcBefore,
+    mcAfter: Math.max(parseInteger(settledSave.currencies?.mc, 0), 0),
+    mcCost: usePaid ? paidCostMc : 0,
+    productId,
+    bulk,
+    ownerCardCount: Array.isArray(settledSave.cards?.instances) ? settledSave.cards.instances.length : 0,
+    cardsDrawn: parseInteger(settledSave.stats?.cardsDrawn, 0),
+  };
+}
+
+function renderGachaExUserCardXml(card, indent = "        ") {
+  return [
+    `${indent}<ex_user_card>`,
+    `${indent}  <serial_id>${Math.max(parseInteger(card.serialId, 0), 0)}</serial_id>`,
+    `${indent}  <master_card_id>${Math.max(parseInteger(card.masterCardId, 0), 0)}</master_card_id>`,
+    `${indent}  <holo_flag>${Math.max(parseInteger(card.holoFlag, 0), 0)}</holo_flag>`,
+    `${indent}  <build_exp>${Math.max(parseInteger(card.buildExp, 0), 0)}</build_exp>`,
+    `${indent}  <build_lv>${Math.max(parseInteger(card.buildLevel, 1), 1)}</build_lv>`,
+    `${indent}  <build_cnt>${Math.max(parseInteger(card.buildCount, 0), 0)}</build_cnt>`,
+    `${indent}  <is_new_card>${Math.max(parseInteger(card.isNewCard, 0), 0)}</is_new_card>`,
+    `${indent}</ex_user_card>`,
+  ];
 }
 
 function createMenuRankingSkeletonXml(playerSave = createDefaultPlayerSave()) {
@@ -1322,7 +1588,7 @@ const MAINMENU_ROUTE_STUBS = {
   "/connect/app/compound/evolution/compound": { command: "compound_evolution_commit", nextScene: 7150 },
   "/connect/app/compound/buildup/compound": { command: "compound_buildup_commit", nextScene: 7350 },
   "/connect/app/card/exchange": { command: "card_exchange", nextScene: 7200 },
-  "/connect/app/roundtable/edit": { command: "round_table", nextScene: 10100 },
+  "/connect/app/roundtable/edit": { command: "round_table", nextScene: 83200 },
   "/connect/app/cardselect/savedeckcard": { command: "save_deck", nextScene: 83200 },
 };
 const MASTERDATA_SAMPLES = Object.fromEntries(
@@ -1386,6 +1652,9 @@ function createMainmenuRouteXml(routePath, playerSave = createDefaultPlayerSave(
   if (route.command === "gacha") {
     return createGachaSelectSkeletonXml(playerSave);
   }
+  if (route.command === "gacha_buy") {
+    return createGachaBuyXml(playerSave);
+  }
   if (route.command === "ranking" || route.command === "ranking_next") {
     return createMenuRankingSkeletonXml(playerSave);
   }
@@ -1400,6 +1669,9 @@ function createMainmenuRouteXml(routePath, playerSave = createDefaultPlayerSave(
   }
   if (route.command === "friends") {
     return createMenuFriendListSkeletonXml(playerSave);
+  }
+  if (route.command === "round_table") {
+    return createRoundtableEditXml(playerSave);
   }
   if (route.sample) {
     const fallback = createSceneForwardXml(route.nextScene, playerSave, `local-${route.command}`);
@@ -2110,9 +2382,44 @@ function createServer() {
         return;
       }
 
-      const mainmenuRouteXml = req.method === "POST" ? createMainmenuRouteXml(url.pathname, readPlayerSave(playerSavePath)) : null;
+      if (req.method === "POST" && url.pathname === "/connect/app/gacha/buy") {
+        const settlement = applyGachaBuySettlement(readPlayerSave(playerSavePath), params.decrypted);
+        writeJsonFileAtomic(playerSavePath, settlement.playerSave);
+        const xml = createGachaBuyXml(settlement.playerSave, settlement.drawCard, settlement.productId);
+        const encrypted = encryptAes128Ecb(xml, connectAppKey);
+        logRequest("connect_app_response", {
+          path: url.pathname,
+          mode: "aes-128-ecb",
+          key: connectAppKey,
+          bytes: encrypted.length,
+          source: "gacha buy settlement",
+          command: "gacha_buy",
+          nextScene: 9200,
+          productId: settlement.productId,
+          bulk: settlement.bulk,
+          friendshipBefore: settlement.friendshipBefore,
+          friendshipCost: settlement.friendshipCost,
+          friendshipAfter: settlement.friendshipAfter,
+          mcBefore: settlement.mcBefore,
+          mcCost: settlement.mcCost,
+          mcAfter: settlement.mcAfter,
+          drawnSerialId: settlement.drawCard ? settlement.drawCard.serialId : 0,
+          drawnMasterCardId: settlement.drawCard ? settlement.drawCard.masterCardId : 0,
+          ownerCardCount: settlement.ownerCardCount,
+          cardsDrawn: settlement.cardsDrawn,
+          saved: true,
+          savePath: getLogSafePath(playerSavePath),
+        });
+        sendBinary(res, 200, encrypted);
+        return;
+      }
+
+      const routePlayerSave = req.method === "POST" ? readPlayerSave(playerSavePath) : null;
+      const mainmenuRouteXml = routePlayerSave ? createMainmenuRouteXml(url.pathname, routePlayerSave) : null;
       if (mainmenuRouteXml) {
         const route = MAINMENU_ROUTE_STUBS[url.pathname];
+        const ownedCards = Array.isArray(routePlayerSave.cards?.instances) ? routePlayerSave.cards.instances : [];
+        const gachaPage = route.command === "gacha" ? getGachaSelectPage().pageKey : undefined;
         const encrypted = encryptAes128Ecb(mainmenuRouteXml, connectAppKey);
         logRequest("connect_app_response", {
           path: url.pathname,
@@ -2122,6 +2429,10 @@ function createServer() {
           source: route.sample ? `assets/bundle/${route.sample}` : "mainmenu route skeleton",
           command: route.command,
           nextScene: route.nextScene,
+          ...(gachaPage ? { gachaPage } : {}),
+          ownerCardCount: ownedCards.length,
+          ownerCardSerialIds: ownedCards.map((card) => parseInteger(card?.serialId ?? card?.serial_id, 0)).filter((id) => id > 0),
+          ownerCardMasterCardIds: ownedCards.map((card) => parseInteger(card?.masterCardId ?? card?.master_card_id, 0)).filter((id) => id > 0),
         });
         sendBinary(res, 200, encrypted);
         return;
@@ -2198,12 +2509,14 @@ module.exports = {
   createExplorationFloorXml,
   createExplorationGetFloorXml,
   createExplorationLockedXml,
+  createGachaBuyXml,
   createGachaSelectSkeletonXml,
   createMenuCardCollectionSkeletonXml,
   createMenuFairySelectSkeletonXml,
   createMenuFriendListSkeletonXml,
   createMenuHavePartsSkeletonXml,
   createMenuRankingSkeletonXml,
+  createRoundtableEditXml,
   createMainmenuUpdateXml,
   createMainmenuRouteXml,
   createLoginMainmenuXml,

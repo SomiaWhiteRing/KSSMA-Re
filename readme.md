@@ -29,7 +29,7 @@ artifact 目录里的临时 `player-save.json`，避免自动测试污染真实�
 
 ## 直接游玩
 
-1. 双击 `start-runtime.cmd` 启动 ARM19 模拟器并准备 hosts、显示、存档挂载、音频、包基线和探索补丁。
+1. 双击 `start-runtime.cmd` 启动 ARM19 模拟器并准备 hosts、显示、存档挂载、音频和客户端基线。
 2. 双击 `start-server.cmd` 启动本地服务器，然后在模拟器里打开游戏。
 3. 玩完双击 `stop.cmd` 关闭本地服务器；模拟器可以手动关，也可以留着下次更快启动。
 
@@ -47,13 +47,25 @@ cmd /c play.cmd self-test
 cmd /c stop.cmd self-test
 ```
 
-当前可体验内容：主菜单、角色点击互动/BGM/语音、探索秘境列表、楼层列表、进入关卡、
-关卡前进、AP 消耗、进度保存、按顺序开放下一区域、完成演出、AP 不足页、普通升级与
-AP/BC 分配、返回秘境列表。探索已标记为初步完成；探索深层、战斗、妖精、奖励结算先冻结，
-等玩家数据和主界面资料更完整后再推进。
+当前可体验内容：主菜单、角色点击互动/BGM/语音、主按钮入口、Menu 页入口、底部卡组/好友入口、
+探索秘境列表、楼层列表、进入关卡、关卡前进、AP 消耗、进度保存、按顺序开放下一区域、
+完成演出、AP 不足页、普通升级与 AP/BC 分配、返回秘境列表，以及友情点/付费单抽、结果页返回与
+付费再抽、持卡落盘、友情点/MC 消耗和可见卡组编辑入口。探索已标记为初步完成；探索深层、战斗、
+妖精、奖励结算先冻结。
 
-当前开发主线回到主界面：不要重开已验收的主菜单黑屏、face、背景、BGM、语音或点击台词底框；
-下一步应补齐主界面依赖的玩家资料、资源/HUD 同步、入口路由、通知/信息栏和对应 flow 验收。
+卡组入口 D1、队长模式 D2 和单卡内存编辑 D4 已验收：`/roundtable/edit move=1` 进入 scene `83200` 的 DeckScene，点击
+队长控件会在 server quiet 状态下进入本地 `change_mode_leader_select`；scene `10100` 只是圆桌查看页。
+D3 native 路径已闭合：`(127,360)` 进入选卡、`(226,247)` 选择唯一候选、`(1144,360)` 显式返回，
+全程停留 scene `83200`；D4 artifact 证明第二槽出现且存档不变，D5 已捕获精确 `C/lr` 请求。显式
+`save_deck_card/result=0` 的 D5.5 候选响应未使客户端离开 DeckScene：header 的 `next_scene=83200` 会
+push 一个不识别 `save_deck_card` 的新 DeckScene。`next_scene == 0` 到当前 model 的静态交付链现已闭合，
+但首个 D5.6 实机回合在登录前因 ARM19 `restart-boot-timeout` 停止，未产生任何玩法 route 或产品证据；
+实验响应已撤回，当前仍为 D5 capture-only。修正版 C2 sampler 的 13 项 self-check 通过；单次温启动测得
+`tBoot=102.733s`，restart helper 在 `104.449s` 成功，连续健康样本、唯一 ARM19 进程组和两个端口 owner
+均一致。因此保留 120 秒等待，不改 runtime；下一轮只恢复一次 D5.6 无 `next_scene` response-only 实验，
+不落盘。该唯一重放的精确响应在 165ms 后触发了 `/connect/app/mainmenu`，违反计划要求的三秒 route
+quiet；artifact save 仍逐字节不变。实验已撤回，当前保持 D5 capture-only 并冻结 D6。扭蛋失败契约 G1
+也因 generic error model 到可见 dialog scene 的 push 边未闭合而停止，G2-G4 未实现。
 
 ## 开发验收入口
 

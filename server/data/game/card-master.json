@@ -1,0 +1,2405 @@
+{
+  "schemaVersion": 1,
+  "cards": [
+    {
+      "masterCardId": 1,
+      "characterId": 1,
+      "cost": 19
+    },
+    {
+      "masterCardId": 2,
+      "characterId": 2,
+      "cost": 10
+    },
+    {
+      "masterCardId": 3,
+      "characterId": 3,
+      "cost": 9
+    },
+    {
+      "masterCardId": 4,
+      "characterId": 4,
+      "cost": 5
+    },
+    {
+      "masterCardId": 5,
+      "characterId": 5,
+      "cost": 7
+    },
+    {
+      "masterCardId": 6,
+      "characterId": 6,
+      "cost": 19
+    },
+    {
+      "masterCardId": 7,
+      "characterId": 7,
+      "cost": 10
+    },
+    {
+      "masterCardId": 8,
+      "characterId": 8,
+      "cost": 3
+    },
+    {
+      "masterCardId": 9,
+      "characterId": 9,
+      "cost": 3
+    },
+    {
+      "masterCardId": 10,
+      "characterId": 10,
+      "cost": 8
+    },
+    {
+      "masterCardId": 11,
+      "characterId": 11,
+      "cost": 7
+    },
+    {
+      "masterCardId": 12,
+      "characterId": 12,
+      "cost": 5
+    },
+    {
+      "masterCardId": 13,
+      "characterId": 13,
+      "cost": 5
+    },
+    {
+      "masterCardId": 15,
+      "characterId": 15,
+      "cost": 4
+    },
+    {
+      "masterCardId": 16,
+      "characterId": 16,
+      "cost": 10
+    },
+    {
+      "masterCardId": 17,
+      "characterId": 17,
+      "cost": 5
+    },
+    {
+      "masterCardId": 18,
+      "characterId": 18,
+      "cost": 5
+    },
+    {
+      "masterCardId": 19,
+      "characterId": 19,
+      "cost": 5
+    },
+    {
+      "masterCardId": 20,
+      "characterId": 20,
+      "cost": 16
+    },
+    {
+      "masterCardId": 21,
+      "characterId": 21,
+      "cost": 7
+    },
+    {
+      "masterCardId": 22,
+      "characterId": 22,
+      "cost": 10
+    },
+    {
+      "masterCardId": 23,
+      "characterId": 23,
+      "cost": 17
+    },
+    {
+      "masterCardId": 24,
+      "characterId": 24,
+      "cost": 16
+    },
+    {
+      "masterCardId": 25,
+      "characterId": 25,
+      "cost": 13
+    },
+    {
+      "masterCardId": 26,
+      "characterId": 26,
+      "cost": 10
+    },
+    {
+      "masterCardId": 27,
+      "characterId": 27,
+      "cost": 13
+    },
+    {
+      "masterCardId": 28,
+      "characterId": 28,
+      "cost": 15
+    },
+    {
+      "masterCardId": 29,
+      "characterId": 29,
+      "cost": 16
+    },
+    {
+      "masterCardId": 30,
+      "characterId": 30,
+      "cost": 10
+    },
+    {
+      "masterCardId": 31,
+      "characterId": 31,
+      "cost": 13
+    },
+    {
+      "masterCardId": 32,
+      "characterId": 32,
+      "cost": 14
+    },
+    {
+      "masterCardId": 33,
+      "characterId": 33,
+      "cost": 9
+    },
+    {
+      "masterCardId": 34,
+      "characterId": 34,
+      "cost": 7
+    },
+    {
+      "masterCardId": 35,
+      "characterId": 35,
+      "cost": 6
+    },
+    {
+      "masterCardId": 36,
+      "characterId": 36,
+      "cost": 8
+    },
+    {
+      "masterCardId": 37,
+      "characterId": 37,
+      "cost": 9
+    },
+    {
+      "masterCardId": 38,
+      "characterId": 38,
+      "cost": 16
+    },
+    {
+      "masterCardId": 39,
+      "characterId": 39,
+      "cost": 19
+    },
+    {
+      "masterCardId": 40,
+      "characterId": 40,
+      "cost": 3
+    },
+    {
+      "masterCardId": 41,
+      "characterId": 41,
+      "cost": 5
+    },
+    {
+      "masterCardId": 42,
+      "characterId": 42,
+      "cost": 11
+    },
+    {
+      "masterCardId": 43,
+      "characterId": 43,
+      "cost": 12
+    },
+    {
+      "masterCardId": 44,
+      "characterId": 44,
+      "cost": 10
+    },
+    {
+      "masterCardId": 45,
+      "characterId": 45,
+      "cost": 7
+    },
+    {
+      "masterCardId": 46,
+      "characterId": 46,
+      "cost": 6
+    },
+    {
+      "masterCardId": 47,
+      "characterId": 47,
+      "cost": 6
+    },
+    {
+      "masterCardId": 48,
+      "characterId": 48,
+      "cost": 14
+    },
+    {
+      "masterCardId": 49,
+      "characterId": 49,
+      "cost": 5
+    },
+    {
+      "masterCardId": 50,
+      "characterId": 50,
+      "cost": 13
+    },
+    {
+      "masterCardId": 51,
+      "characterId": 51,
+      "cost": 6
+    },
+    {
+      "masterCardId": 52,
+      "characterId": 52,
+      "cost": 11
+    },
+    {
+      "masterCardId": 53,
+      "characterId": 53,
+      "cost": 5
+    },
+    {
+      "masterCardId": 54,
+      "characterId": 54,
+      "cost": 9
+    },
+    {
+      "masterCardId": 56,
+      "characterId": 56,
+      "cost": 10
+    },
+    {
+      "masterCardId": 57,
+      "characterId": 57,
+      "cost": 13
+    },
+    {
+      "masterCardId": 58,
+      "characterId": 58,
+      "cost": 10
+    },
+    {
+      "masterCardId": 59,
+      "characterId": 59,
+      "cost": 18
+    },
+    {
+      "masterCardId": 60,
+      "characterId": 60,
+      "cost": 8
+    },
+    {
+      "masterCardId": 61,
+      "characterId": 61,
+      "cost": 12
+    },
+    {
+      "masterCardId": 62,
+      "characterId": 62,
+      "cost": 8
+    },
+    {
+      "masterCardId": 63,
+      "characterId": 63,
+      "cost": 17
+    },
+    {
+      "masterCardId": 64,
+      "characterId": 64,
+      "cost": 10
+    },
+    {
+      "masterCardId": 65,
+      "characterId": 65,
+      "cost": 3
+    },
+    {
+      "masterCardId": 66,
+      "characterId": 66,
+      "cost": 5
+    },
+    {
+      "masterCardId": 67,
+      "characterId": 67,
+      "cost": 8
+    },
+    {
+      "masterCardId": 68,
+      "characterId": 68,
+      "cost": 4
+    },
+    {
+      "masterCardId": 69,
+      "characterId": 69,
+      "cost": 4
+    },
+    {
+      "masterCardId": 70,
+      "characterId": 70,
+      "cost": 8
+    },
+    {
+      "masterCardId": 71,
+      "characterId": 71,
+      "cost": 20
+    },
+    {
+      "masterCardId": 72,
+      "characterId": 72,
+      "cost": 15
+    },
+    {
+      "masterCardId": 73,
+      "characterId": 73,
+      "cost": 7
+    },
+    {
+      "masterCardId": 75,
+      "characterId": 75,
+      "cost": 6
+    },
+    {
+      "masterCardId": 76,
+      "characterId": 76,
+      "cost": 12
+    },
+    {
+      "masterCardId": 77,
+      "characterId": 77,
+      "cost": 14
+    },
+    {
+      "masterCardId": 78,
+      "characterId": 78,
+      "cost": 4
+    },
+    {
+      "masterCardId": 79,
+      "characterId": 79,
+      "cost": 6
+    },
+    {
+      "masterCardId": 80,
+      "characterId": 80,
+      "cost": 12
+    },
+    {
+      "masterCardId": 81,
+      "characterId": 81,
+      "cost": 7
+    },
+    {
+      "masterCardId": 82,
+      "characterId": 82,
+      "cost": 6
+    },
+    {
+      "masterCardId": 83,
+      "characterId": 83,
+      "cost": 3
+    },
+    {
+      "masterCardId": 84,
+      "characterId": 84,
+      "cost": 7
+    },
+    {
+      "masterCardId": 85,
+      "characterId": 85,
+      "cost": 4
+    },
+    {
+      "masterCardId": 86,
+      "characterId": 86,
+      "cost": 11
+    },
+    {
+      "masterCardId": 87,
+      "characterId": 87,
+      "cost": 7
+    },
+    {
+      "masterCardId": 88,
+      "characterId": 88,
+      "cost": 8
+    },
+    {
+      "masterCardId": 89,
+      "characterId": 89,
+      "cost": 4
+    },
+    {
+      "masterCardId": 90,
+      "characterId": 90,
+      "cost": 9
+    },
+    {
+      "masterCardId": 91,
+      "characterId": 91,
+      "cost": 13
+    },
+    {
+      "masterCardId": 92,
+      "characterId": 92,
+      "cost": 11
+    },
+    {
+      "masterCardId": 93,
+      "characterId": 93,
+      "cost": 7
+    },
+    {
+      "masterCardId": 94,
+      "characterId": 94,
+      "cost": 9
+    },
+    {
+      "masterCardId": 95,
+      "characterId": 95,
+      "cost": 7
+    },
+    {
+      "masterCardId": 96,
+      "characterId": 96,
+      "cost": 16
+    },
+    {
+      "masterCardId": 97,
+      "characterId": 97,
+      "cost": 20
+    },
+    {
+      "masterCardId": 98,
+      "characterId": 98,
+      "cost": 14
+    },
+    {
+      "masterCardId": 99,
+      "characterId": 99,
+      "cost": 10
+    },
+    {
+      "masterCardId": 100,
+      "characterId": 100,
+      "cost": 9
+    },
+    {
+      "masterCardId": 101,
+      "characterId": 101,
+      "cost": 14
+    },
+    {
+      "masterCardId": 102,
+      "characterId": 102,
+      "cost": 9
+    },
+    {
+      "masterCardId": 103,
+      "characterId": 103,
+      "cost": 6
+    },
+    {
+      "masterCardId": 104,
+      "characterId": 104,
+      "cost": 4
+    },
+    {
+      "masterCardId": 105,
+      "characterId": 105,
+      "cost": 6
+    },
+    {
+      "masterCardId": 106,
+      "characterId": 106,
+      "cost": 7
+    },
+    {
+      "masterCardId": 107,
+      "characterId": 107,
+      "cost": 13
+    },
+    {
+      "masterCardId": 108,
+      "characterId": 108,
+      "cost": 3
+    },
+    {
+      "masterCardId": 109,
+      "characterId": 109,
+      "cost": 9
+    },
+    {
+      "masterCardId": 110,
+      "characterId": 110,
+      "cost": 20
+    },
+    {
+      "masterCardId": 111,
+      "characterId": 111,
+      "cost": 9
+    },
+    {
+      "masterCardId": 112,
+      "characterId": 112,
+      "cost": 14
+    },
+    {
+      "masterCardId": 115,
+      "characterId": 115,
+      "cost": 11
+    },
+    {
+      "masterCardId": 117,
+      "characterId": 117,
+      "cost": 10
+    },
+    {
+      "masterCardId": 118,
+      "characterId": 118,
+      "cost": 14
+    },
+    {
+      "masterCardId": 119,
+      "characterId": 119,
+      "cost": 10
+    },
+    {
+      "masterCardId": 120,
+      "characterId": 120,
+      "cost": 11
+    },
+    {
+      "masterCardId": 122,
+      "characterId": 122,
+      "cost": 9
+    },
+    {
+      "masterCardId": 123,
+      "characterId": 123,
+      "cost": 12
+    },
+    {
+      "masterCardId": 124,
+      "characterId": 124,
+      "cost": 2
+    },
+    {
+      "masterCardId": 125,
+      "characterId": 125,
+      "cost": 14
+    },
+    {
+      "masterCardId": 126,
+      "characterId": 126,
+      "cost": 6
+    },
+    {
+      "masterCardId": 127,
+      "characterId": 127,
+      "cost": 6
+    },
+    {
+      "masterCardId": 128,
+      "characterId": 128,
+      "cost": 14
+    },
+    {
+      "masterCardId": 129,
+      "characterId": 129,
+      "cost": 5
+    },
+    {
+      "masterCardId": 130,
+      "characterId": 130,
+      "cost": 3
+    },
+    {
+      "masterCardId": 131,
+      "characterId": 131,
+      "cost": 5
+    },
+    {
+      "masterCardId": 132,
+      "characterId": 132,
+      "cost": 3
+    },
+    {
+      "masterCardId": 134,
+      "characterId": 134,
+      "cost": 12
+    },
+    {
+      "masterCardId": 135,
+      "characterId": 135,
+      "cost": 4
+    },
+    {
+      "masterCardId": 136,
+      "characterId": 136,
+      "cost": 10
+    },
+    {
+      "masterCardId": 137,
+      "characterId": 137,
+      "cost": 11
+    },
+    {
+      "masterCardId": 138,
+      "characterId": 138,
+      "cost": 7
+    },
+    {
+      "masterCardId": 139,
+      "characterId": 139,
+      "cost": 3
+    },
+    {
+      "masterCardId": 140,
+      "characterId": 140,
+      "cost": 11
+    },
+    {
+      "masterCardId": 141,
+      "characterId": 141,
+      "cost": 5
+    },
+    {
+      "masterCardId": 142,
+      "characterId": 142,
+      "cost": 3
+    },
+    {
+      "masterCardId": 143,
+      "characterId": 143,
+      "cost": 6
+    },
+    {
+      "masterCardId": 144,
+      "characterId": 144,
+      "cost": 4
+    },
+    {
+      "masterCardId": 145,
+      "characterId": 145,
+      "cost": 5
+    },
+    {
+      "masterCardId": 146,
+      "characterId": 146,
+      "cost": 19
+    },
+    {
+      "masterCardId": 147,
+      "characterId": 147,
+      "cost": 11
+    },
+    {
+      "masterCardId": 150,
+      "characterId": 150,
+      "cost": 12
+    },
+    {
+      "masterCardId": 151,
+      "characterId": 151,
+      "cost": 10
+    },
+    {
+      "masterCardId": 154,
+      "characterId": 154,
+      "cost": 9
+    },
+    {
+      "masterCardId": 155,
+      "characterId": 155,
+      "cost": 17
+    },
+    {
+      "masterCardId": 156,
+      "characterId": 156,
+      "cost": 18
+    },
+    {
+      "masterCardId": 157,
+      "characterId": 157,
+      "cost": 15
+    },
+    {
+      "masterCardId": 158,
+      "characterId": 158,
+      "cost": 11
+    },
+    {
+      "masterCardId": 159,
+      "characterId": 159,
+      "cost": 14
+    },
+    {
+      "masterCardId": 160,
+      "characterId": 160,
+      "cost": 8
+    },
+    {
+      "masterCardId": 161,
+      "characterId": 161,
+      "cost": 4
+    },
+    {
+      "masterCardId": 162,
+      "characterId": 162,
+      "cost": 4
+    },
+    {
+      "masterCardId": 163,
+      "characterId": 163,
+      "cost": 17
+    },
+    {
+      "masterCardId": 164,
+      "characterId": 164,
+      "cost": 17
+    },
+    {
+      "masterCardId": 165,
+      "characterId": 165,
+      "cost": 4
+    },
+    {
+      "masterCardId": 166,
+      "characterId": 166,
+      "cost": 4
+    },
+    {
+      "masterCardId": 167,
+      "characterId": 167,
+      "cost": 4
+    },
+    {
+      "masterCardId": 168,
+      "characterId": 168,
+      "cost": 4
+    },
+    {
+      "masterCardId": 169,
+      "characterId": 169,
+      "cost": 4
+    },
+    {
+      "masterCardId": 170,
+      "characterId": 170,
+      "cost": 4
+    },
+    {
+      "masterCardId": 175,
+      "characterId": 175,
+      "cost": 15
+    },
+    {
+      "masterCardId": 176,
+      "characterId": 176,
+      "cost": 9
+    },
+    {
+      "masterCardId": 177,
+      "characterId": 177,
+      "cost": 13
+    },
+    {
+      "masterCardId": 178,
+      "characterId": 178,
+      "cost": 13
+    },
+    {
+      "masterCardId": 179,
+      "characterId": 179,
+      "cost": 11
+    },
+    {
+      "masterCardId": 180,
+      "characterId": 180,
+      "cost": 14
+    },
+    {
+      "masterCardId": 181,
+      "characterId": 181,
+      "cost": 9
+    },
+    {
+      "masterCardId": 182,
+      "characterId": 182,
+      "cost": 7
+    },
+    {
+      "masterCardId": 188,
+      "characterId": 188,
+      "cost": 10
+    },
+    {
+      "masterCardId": 190,
+      "characterId": 190,
+      "cost": 8
+    },
+    {
+      "masterCardId": 191,
+      "characterId": 191,
+      "cost": 10
+    },
+    {
+      "masterCardId": 197,
+      "characterId": 197,
+      "cost": 16
+    },
+    {
+      "masterCardId": 198,
+      "characterId": 198,
+      "cost": 11
+    },
+    {
+      "masterCardId": 199,
+      "characterId": 199,
+      "cost": 14
+    },
+    {
+      "masterCardId": 200,
+      "characterId": 200,
+      "cost": 11
+    },
+    {
+      "masterCardId": 201,
+      "characterId": 201,
+      "cost": 14
+    },
+    {
+      "masterCardId": 205,
+      "characterId": 205,
+      "cost": 10
+    },
+    {
+      "masterCardId": 206,
+      "characterId": 206,
+      "cost": 11
+    },
+    {
+      "masterCardId": 207,
+      "characterId": 207,
+      "cost": 13
+    },
+    {
+      "masterCardId": 208,
+      "characterId": 208,
+      "cost": 8
+    },
+    {
+      "masterCardId": 209,
+      "characterId": 209,
+      "cost": 26
+    },
+    {
+      "masterCardId": 213,
+      "characterId": 213,
+      "cost": 18
+    },
+    {
+      "masterCardId": 215,
+      "characterId": 215,
+      "cost": 9
+    },
+    {
+      "masterCardId": 216,
+      "characterId": 216,
+      "cost": 16
+    },
+    {
+      "masterCardId": 217,
+      "characterId": 217,
+      "cost": 13
+    },
+    {
+      "masterCardId": 218,
+      "characterId": 218,
+      "cost": 15
+    },
+    {
+      "masterCardId": 219,
+      "characterId": 219,
+      "cost": 14
+    },
+    {
+      "masterCardId": 223,
+      "characterId": 223,
+      "cost": 16
+    },
+    {
+      "masterCardId": 224,
+      "characterId": 224,
+      "cost": 13
+    },
+    {
+      "masterCardId": 227,
+      "characterId": 227,
+      "cost": 13
+    },
+    {
+      "masterCardId": 255,
+      "characterId": 255,
+      "cost": 19
+    },
+    {
+      "masterCardId": 256,
+      "characterId": 256,
+      "cost": 16
+    },
+    {
+      "masterCardId": 257,
+      "characterId": 257,
+      "cost": 18
+    },
+    {
+      "masterCardId": 259,
+      "characterId": 259,
+      "cost": 26
+    },
+    {
+      "masterCardId": 260,
+      "characterId": 260,
+      "cost": 6
+    },
+    {
+      "masterCardId": 262,
+      "characterId": 262,
+      "cost": 14
+    },
+    {
+      "masterCardId": 263,
+      "characterId": 263,
+      "cost": 6
+    },
+    {
+      "masterCardId": 264,
+      "characterId": 264,
+      "cost": 12
+    },
+    {
+      "masterCardId": 265,
+      "characterId": 265,
+      "cost": 16
+    },
+    {
+      "masterCardId": 266,
+      "characterId": 266,
+      "cost": 11
+    },
+    {
+      "masterCardId": 267,
+      "characterId": 267,
+      "cost": 27
+    },
+    {
+      "masterCardId": 268,
+      "characterId": 268,
+      "cost": 11
+    },
+    {
+      "masterCardId": 269,
+      "characterId": 269,
+      "cost": 15
+    },
+    {
+      "masterCardId": 270,
+      "characterId": 270,
+      "cost": 11
+    },
+    {
+      "masterCardId": 271,
+      "characterId": 271,
+      "cost": 11
+    },
+    {
+      "masterCardId": 275,
+      "characterId": 275,
+      "cost": 15
+    },
+    {
+      "masterCardId": 276,
+      "characterId": 276,
+      "cost": 16
+    },
+    {
+      "masterCardId": 277,
+      "characterId": 277,
+      "cost": 13
+    },
+    {
+      "masterCardId": 278,
+      "characterId": 278,
+      "cost": 17
+    },
+    {
+      "masterCardId": 279,
+      "characterId": 279,
+      "cost": 9
+    },
+    {
+      "masterCardId": 280,
+      "characterId": 280,
+      "cost": 16
+    },
+    {
+      "masterCardId": 281,
+      "characterId": 281,
+      "cost": 12
+    },
+    {
+      "masterCardId": 282,
+      "characterId": 282,
+      "cost": 5
+    },
+    {
+      "masterCardId": 283,
+      "characterId": 283,
+      "cost": 3
+    },
+    {
+      "masterCardId": 287,
+      "characterId": 287,
+      "cost": 16
+    },
+    {
+      "masterCardId": 288,
+      "characterId": 288,
+      "cost": 24
+    },
+    {
+      "masterCardId": 289,
+      "characterId": 289,
+      "cost": 16
+    },
+    {
+      "masterCardId": 290,
+      "characterId": 290,
+      "cost": 11
+    },
+    {
+      "masterCardId": 298,
+      "characterId": 298,
+      "cost": 25
+    },
+    {
+      "masterCardId": 299,
+      "characterId": 299,
+      "cost": 22
+    },
+    {
+      "masterCardId": 300,
+      "characterId": 300,
+      "cost": 18
+    },
+    {
+      "masterCardId": 306,
+      "characterId": 306,
+      "cost": 20
+    },
+    {
+      "masterCardId": 307,
+      "characterId": 307,
+      "cost": 21
+    },
+    {
+      "masterCardId": 308,
+      "characterId": 308,
+      "cost": 19
+    },
+    {
+      "masterCardId": 309,
+      "characterId": 309,
+      "cost": 17
+    },
+    {
+      "masterCardId": 310,
+      "characterId": 310,
+      "cost": 23
+    },
+    {
+      "masterCardId": 311,
+      "characterId": 311,
+      "cost": 20
+    },
+    {
+      "masterCardId": 319,
+      "characterId": 319,
+      "cost": 20
+    },
+    {
+      "masterCardId": 320,
+      "characterId": 320,
+      "cost": 17
+    },
+    {
+      "masterCardId": 321,
+      "characterId": 321,
+      "cost": 25
+    },
+    {
+      "masterCardId": 323,
+      "characterId": 323,
+      "cost": 8
+    },
+    {
+      "masterCardId": 327,
+      "characterId": 327,
+      "cost": 9
+    },
+    {
+      "masterCardId": 329,
+      "characterId": 329,
+      "cost": 16
+    },
+    {
+      "masterCardId": 330,
+      "characterId": 330,
+      "cost": 23
+    },
+    {
+      "masterCardId": 339,
+      "characterId": 339,
+      "cost": 23
+    },
+    {
+      "masterCardId": 340,
+      "characterId": 340,
+      "cost": 21
+    },
+    {
+      "masterCardId": 341,
+      "characterId": 341,
+      "cost": 11
+    },
+    {
+      "masterCardId": 351,
+      "characterId": 351,
+      "cost": 16
+    },
+    {
+      "masterCardId": 352,
+      "characterId": 352,
+      "cost": 25
+    },
+    {
+      "masterCardId": 353,
+      "characterId": 353,
+      "cost": 16
+    },
+    {
+      "masterCardId": 354,
+      "characterId": 354,
+      "cost": 24
+    },
+    {
+      "masterCardId": 355,
+      "characterId": 355,
+      "cost": 20
+    },
+    {
+      "masterCardId": 362,
+      "characterId": 362,
+      "cost": 12
+    },
+    {
+      "masterCardId": 363,
+      "characterId": 363,
+      "cost": 20
+    },
+    {
+      "masterCardId": 364,
+      "characterId": 364,
+      "cost": 23
+    },
+    {
+      "masterCardId": 367,
+      "characterId": 367,
+      "cost": 18
+    },
+    {
+      "masterCardId": 372,
+      "characterId": 372,
+      "cost": 22
+    },
+    {
+      "masterCardId": 373,
+      "characterId": 373,
+      "cost": 16
+    },
+    {
+      "masterCardId": 374,
+      "characterId": 374,
+      "cost": 16
+    },
+    {
+      "masterCardId": 390,
+      "characterId": 390,
+      "cost": 99
+    },
+    {
+      "masterCardId": 391,
+      "characterId": 391,
+      "cost": 99
+    },
+    {
+      "masterCardId": 392,
+      "characterId": 392,
+      "cost": 99
+    },
+    {
+      "masterCardId": 393,
+      "characterId": 393,
+      "cost": 14
+    },
+    {
+      "masterCardId": 395,
+      "characterId": 395,
+      "cost": 22
+    },
+    {
+      "masterCardId": 399,
+      "characterId": 399,
+      "cost": 17
+    },
+    {
+      "masterCardId": 404,
+      "characterId": 404,
+      "cost": 99
+    },
+    {
+      "masterCardId": 405,
+      "characterId": 405,
+      "cost": 16
+    },
+    {
+      "masterCardId": 407,
+      "characterId": 407,
+      "cost": 13
+    },
+    {
+      "masterCardId": 410,
+      "characterId": 410,
+      "cost": 17
+    },
+    {
+      "masterCardId": 411,
+      "characterId": 411,
+      "cost": 12
+    },
+    {
+      "masterCardId": 412,
+      "characterId": 412,
+      "cost": 13
+    },
+    {
+      "masterCardId": 413,
+      "characterId": 413,
+      "cost": 17
+    },
+    {
+      "masterCardId": 415,
+      "characterId": 415,
+      "cost": 18
+    },
+    {
+      "masterCardId": 420,
+      "characterId": 420,
+      "cost": 17
+    },
+    {
+      "masterCardId": 421,
+      "characterId": 421,
+      "cost": 19
+    },
+    {
+      "masterCardId": 422,
+      "characterId": 422,
+      "cost": 25
+    },
+    {
+      "masterCardId": 423,
+      "characterId": 423,
+      "cost": 17
+    },
+    {
+      "masterCardId": 426,
+      "characterId": 426,
+      "cost": 18
+    },
+    {
+      "masterCardId": 430,
+      "characterId": 430,
+      "cost": 25
+    },
+    {
+      "masterCardId": 432,
+      "characterId": 432,
+      "cost": 19
+    },
+    {
+      "masterCardId": 443,
+      "characterId": 443,
+      "cost": 16
+    },
+    {
+      "masterCardId": 444,
+      "characterId": 444,
+      "cost": 12
+    },
+    {
+      "masterCardId": 445,
+      "characterId": 445,
+      "cost": 27
+    },
+    {
+      "masterCardId": 460,
+      "characterId": 460,
+      "cost": 18
+    },
+    {
+      "masterCardId": 480,
+      "characterId": 480,
+      "cost": 27
+    },
+    {
+      "masterCardId": 481,
+      "characterId": 481,
+      "cost": 18
+    },
+    {
+      "masterCardId": 482,
+      "characterId": 482,
+      "cost": 16
+    },
+    {
+      "masterCardId": 483,
+      "characterId": 483,
+      "cost": 17
+    },
+    {
+      "masterCardId": 490,
+      "characterId": 490,
+      "cost": 23
+    },
+    {
+      "masterCardId": 491,
+      "characterId": 491,
+      "cost": 20
+    },
+    {
+      "masterCardId": 492,
+      "characterId": 492,
+      "cost": 19
+    },
+    {
+      "masterCardId": 500,
+      "characterId": 500,
+      "cost": 25
+    },
+    {
+      "masterCardId": 501,
+      "characterId": 501,
+      "cost": 25
+    },
+    {
+      "masterCardId": 502,
+      "characterId": 502,
+      "cost": 18
+    },
+    {
+      "masterCardId": 548,
+      "characterId": 548,
+      "cost": 14
+    },
+    {
+      "masterCardId": 549,
+      "characterId": 549,
+      "cost": 7
+    },
+    {
+      "masterCardId": 551,
+      "characterId": 551,
+      "cost": 17
+    },
+    {
+      "masterCardId": 552,
+      "characterId": 552,
+      "cost": 16
+    },
+    {
+      "masterCardId": 554,
+      "characterId": 554,
+      "cost": 24
+    },
+    {
+      "masterCardId": 555,
+      "characterId": 555,
+      "cost": 15
+    },
+    {
+      "masterCardId": 556,
+      "characterId": 556,
+      "cost": 10
+    },
+    {
+      "masterCardId": 557,
+      "characterId": 557,
+      "cost": 13
+    },
+    {
+      "masterCardId": 558,
+      "characterId": 558,
+      "cost": 18
+    },
+    {
+      "masterCardId": 559,
+      "characterId": 559,
+      "cost": 20
+    },
+    {
+      "masterCardId": 560,
+      "characterId": 560,
+      "cost": 17
+    },
+    {
+      "masterCardId": 561,
+      "characterId": 561,
+      "cost": 20
+    },
+    {
+      "masterCardId": 577,
+      "characterId": 577,
+      "cost": 24
+    },
+    {
+      "masterCardId": 578,
+      "characterId": 578,
+      "cost": 26
+    },
+    {
+      "masterCardId": 600,
+      "characterId": 600,
+      "cost": 14
+    },
+    {
+      "masterCardId": 601,
+      "characterId": 601,
+      "cost": 15
+    },
+    {
+      "masterCardId": 602,
+      "characterId": 602,
+      "cost": 18
+    },
+    {
+      "masterCardId": 603,
+      "characterId": 603,
+      "cost": 16
+    },
+    {
+      "masterCardId": 604,
+      "characterId": 604,
+      "cost": 17
+    },
+    {
+      "masterCardId": 605,
+      "characterId": 605,
+      "cost": 14
+    },
+    {
+      "masterCardId": 606,
+      "characterId": 606,
+      "cost": 18
+    },
+    {
+      "masterCardId": 607,
+      "characterId": 607,
+      "cost": 16
+    },
+    {
+      "masterCardId": 608,
+      "characterId": 608,
+      "cost": 19
+    },
+    {
+      "masterCardId": 609,
+      "characterId": 609,
+      "cost": 17
+    },
+    {
+      "masterCardId": 610,
+      "characterId": 610,
+      "cost": 19
+    },
+    {
+      "masterCardId": 611,
+      "characterId": 611,
+      "cost": 15
+    },
+    {
+      "masterCardId": 612,
+      "characterId": 612,
+      "cost": 18
+    },
+    {
+      "masterCardId": 613,
+      "characterId": 613,
+      "cost": 16
+    },
+    {
+      "masterCardId": 614,
+      "characterId": 614,
+      "cost": 25
+    },
+    {
+      "masterCardId": 615,
+      "characterId": 615,
+      "cost": 14
+    },
+    {
+      "masterCardId": 616,
+      "characterId": 616,
+      "cost": 14
+    },
+    {
+      "masterCardId": 617,
+      "characterId": 617,
+      "cost": 18
+    },
+    {
+      "masterCardId": 618,
+      "characterId": 618,
+      "cost": 16
+    },
+    {
+      "masterCardId": 619,
+      "characterId": 619,
+      "cost": 20
+    },
+    {
+      "masterCardId": 620,
+      "characterId": 620,
+      "cost": 17
+    },
+    {
+      "masterCardId": 621,
+      "characterId": 621,
+      "cost": 15
+    },
+    {
+      "masterCardId": 622,
+      "characterId": 622,
+      "cost": 14
+    },
+    {
+      "masterCardId": 623,
+      "characterId": 623,
+      "cost": 18
+    },
+    {
+      "masterCardId": 624,
+      "characterId": 624,
+      "cost": 17
+    },
+    {
+      "masterCardId": 625,
+      "characterId": 625,
+      "cost": 18
+    },
+    {
+      "masterCardId": 626,
+      "characterId": 626,
+      "cost": 18
+    },
+    {
+      "masterCardId": 627,
+      "characterId": 627,
+      "cost": 18
+    },
+    {
+      "masterCardId": 628,
+      "characterId": 628,
+      "cost": 21
+    },
+    {
+      "masterCardId": 629,
+      "characterId": 629,
+      "cost": 22
+    },
+    {
+      "masterCardId": 630,
+      "characterId": 630,
+      "cost": 22
+    },
+    {
+      "masterCardId": 631,
+      "characterId": 631,
+      "cost": 20
+    },
+    {
+      "masterCardId": 632,
+      "characterId": 632,
+      "cost": 16
+    },
+    {
+      "masterCardId": 633,
+      "characterId": 633,
+      "cost": 19
+    },
+    {
+      "masterCardId": 634,
+      "characterId": 634,
+      "cost": 16
+    },
+    {
+      "masterCardId": 635,
+      "characterId": 635,
+      "cost": 12
+    },
+    {
+      "masterCardId": 636,
+      "characterId": 636,
+      "cost": 17
+    },
+    {
+      "masterCardId": 638,
+      "characterId": 638,
+      "cost": 15
+    },
+    {
+      "masterCardId": 639,
+      "characterId": 639,
+      "cost": 18
+    },
+    {
+      "masterCardId": 640,
+      "characterId": 640,
+      "cost": 17
+    },
+    {
+      "masterCardId": 641,
+      "characterId": 641,
+      "cost": 17
+    },
+    {
+      "masterCardId": 642,
+      "characterId": 642,
+      "cost": 16
+    },
+    {
+      "masterCardId": 643,
+      "characterId": 643,
+      "cost": 16
+    },
+    {
+      "masterCardId": 644,
+      "characterId": 644,
+      "cost": 16
+    },
+    {
+      "masterCardId": 645,
+      "characterId": 645,
+      "cost": 26
+    },
+    {
+      "masterCardId": 646,
+      "characterId": 646,
+      "cost": 25
+    },
+    {
+      "masterCardId": 647,
+      "characterId": 647,
+      "cost": 24
+    },
+    {
+      "masterCardId": 648,
+      "characterId": 648,
+      "cost": 19
+    },
+    {
+      "masterCardId": 649,
+      "characterId": 649,
+      "cost": 19
+    },
+    {
+      "masterCardId": 650,
+      "characterId": 650,
+      "cost": 18
+    },
+    {
+      "masterCardId": 653,
+      "characterId": 653,
+      "cost": 16
+    },
+    {
+      "masterCardId": 654,
+      "characterId": 654,
+      "cost": 16
+    },
+    {
+      "masterCardId": 656,
+      "characterId": 656,
+      "cost": 17
+    },
+    {
+      "masterCardId": 657,
+      "characterId": 657,
+      "cost": 17
+    },
+    {
+      "masterCardId": 658,
+      "characterId": 658,
+      "cost": 17
+    },
+    {
+      "masterCardId": 659,
+      "characterId": 659,
+      "cost": 25
+    },
+    {
+      "masterCardId": 660,
+      "characterId": 660,
+      "cost": 19
+    },
+    {
+      "masterCardId": 661,
+      "characterId": 661,
+      "cost": 26
+    },
+    {
+      "masterCardId": 662,
+      "characterId": 662,
+      "cost": 20
+    },
+    {
+      "masterCardId": 663,
+      "characterId": 663,
+      "cost": 16
+    },
+    {
+      "masterCardId": 664,
+      "characterId": 664,
+      "cost": 16
+    },
+    {
+      "masterCardId": 665,
+      "characterId": 665,
+      "cost": 18
+    },
+    {
+      "masterCardId": 666,
+      "characterId": 666,
+      "cost": 18
+    },
+    {
+      "masterCardId": 667,
+      "characterId": 667,
+      "cost": 17
+    },
+    {
+      "masterCardId": 668,
+      "characterId": 668,
+      "cost": 19
+    },
+    {
+      "masterCardId": 669,
+      "characterId": 669,
+      "cost": 20
+    },
+    {
+      "masterCardId": 670,
+      "characterId": 670,
+      "cost": 15
+    },
+    {
+      "masterCardId": 671,
+      "characterId": 671,
+      "cost": 18
+    },
+    {
+      "masterCardId": 672,
+      "characterId": 672,
+      "cost": 17
+    },
+    {
+      "masterCardId": 674,
+      "characterId": 674,
+      "cost": 19
+    },
+    {
+      "masterCardId": 675,
+      "characterId": 675,
+      "cost": 15
+    },
+    {
+      "masterCardId": 676,
+      "characterId": 676,
+      "cost": 19
+    },
+    {
+      "masterCardId": 677,
+      "characterId": 677,
+      "cost": 19
+    },
+    {
+      "masterCardId": 678,
+      "characterId": 678,
+      "cost": 16
+    },
+    {
+      "masterCardId": 679,
+      "characterId": 679,
+      "cost": 16
+    },
+    {
+      "masterCardId": 680,
+      "characterId": 680,
+      "cost": 17
+    },
+    {
+      "masterCardId": 681,
+      "characterId": 681,
+      "cost": 18
+    },
+    {
+      "masterCardId": 682,
+      "characterId": 682,
+      "cost": 18
+    },
+    {
+      "masterCardId": 683,
+      "characterId": 683,
+      "cost": 25
+    },
+    {
+      "masterCardId": 684,
+      "characterId": 684,
+      "cost": 17
+    },
+    {
+      "masterCardId": 685,
+      "characterId": 685,
+      "cost": 15
+    },
+    {
+      "masterCardId": 686,
+      "characterId": 686,
+      "cost": 18
+    },
+    {
+      "masterCardId": 687,
+      "characterId": 687,
+      "cost": 18
+    },
+    {
+      "masterCardId": 688,
+      "characterId": 688,
+      "cost": 17
+    },
+    {
+      "masterCardId": 689,
+      "characterId": 689,
+      "cost": 15
+    },
+    {
+      "masterCardId": 690,
+      "characterId": 690,
+      "cost": 11
+    },
+    {
+      "masterCardId": 691,
+      "characterId": 691,
+      "cost": 16
+    },
+    {
+      "masterCardId": 692,
+      "characterId": 692,
+      "cost": 12
+    },
+    {
+      "masterCardId": 693,
+      "characterId": 693,
+      "cost": 17
+    },
+    {
+      "masterCardId": 694,
+      "characterId": 694,
+      "cost": 18
+    },
+    {
+      "masterCardId": 695,
+      "characterId": 695,
+      "cost": 15
+    },
+    {
+      "masterCardId": 696,
+      "characterId": 696,
+      "cost": 16
+    },
+    {
+      "masterCardId": 742,
+      "characterId": 742,
+      "cost": 18
+    },
+    {
+      "masterCardId": 749,
+      "characterId": 749,
+      "cost": 26
+    },
+    {
+      "masterCardId": 754,
+      "characterId": 754,
+      "cost": 25
+    },
+    {
+      "masterCardId": 755,
+      "characterId": 755,
+      "cost": 26
+    },
+    {
+      "masterCardId": 759,
+      "characterId": 759,
+      "cost": 17
+    },
+    {
+      "masterCardId": 761,
+      "characterId": 761,
+      "cost": 19
+    },
+    {
+      "masterCardId": 800,
+      "characterId": 800,
+      "cost": 15
+    },
+    {
+      "masterCardId": 801,
+      "characterId": 801,
+      "cost": 24
+    },
+    {
+      "masterCardId": 802,
+      "characterId": 802,
+      "cost": 14
+    },
+    {
+      "masterCardId": 803,
+      "characterId": 803,
+      "cost": 25
+    },
+    {
+      "masterCardId": 805,
+      "characterId": 805,
+      "cost": 13
+    },
+    {
+      "masterCardId": 806,
+      "characterId": 806,
+      "cost": 31
+    },
+    {
+      "masterCardId": 807,
+      "characterId": 807,
+      "cost": 17
+    },
+    {
+      "masterCardId": 809,
+      "characterId": 809,
+      "cost": 16
+    },
+    {
+      "masterCardId": 810,
+      "characterId": 810,
+      "cost": 29
+    },
+    {
+      "masterCardId": 811,
+      "characterId": 811,
+      "cost": 13
+    },
+    {
+      "masterCardId": 812,
+      "characterId": 812,
+      "cost": 16
+    },
+    {
+      "masterCardId": 813,
+      "characterId": 813,
+      "cost": 15
+    },
+    {
+      "masterCardId": 814,
+      "characterId": 814,
+      "cost": 24
+    },
+    {
+      "masterCardId": 815,
+      "characterId": 815,
+      "cost": 24
+    },
+    {
+      "masterCardId": 816,
+      "characterId": 816,
+      "cost": 24
+    },
+    {
+      "masterCardId": 817,
+      "characterId": 817,
+      "cost": 16
+    },
+    {
+      "masterCardId": 818,
+      "characterId": 818,
+      "cost": 15
+    },
+    {
+      "masterCardId": 819,
+      "characterId": 819,
+      "cost": 13
+    },
+    {
+      "masterCardId": 820,
+      "characterId": 820,
+      "cost": 18
+    },
+    {
+      "masterCardId": 821,
+      "characterId": 821,
+      "cost": 26
+    },
+    {
+      "masterCardId": 822,
+      "characterId": 822,
+      "cost": 11
+    },
+    {
+      "masterCardId": 823,
+      "characterId": 823,
+      "cost": 19
+    },
+    {
+      "masterCardId": 824,
+      "characterId": 824,
+      "cost": 30
+    },
+    {
+      "masterCardId": 825,
+      "characterId": 825,
+      "cost": 18
+    },
+    {
+      "masterCardId": 826,
+      "characterId": 826,
+      "cost": 28
+    },
+    {
+      "masterCardId": 827,
+      "characterId": 827,
+      "cost": 19
+    },
+    {
+      "masterCardId": 828,
+      "characterId": 828,
+      "cost": 16
+    },
+    {
+      "masterCardId": 829,
+      "characterId": 829,
+      "cost": 19
+    },
+    {
+      "masterCardId": 830,
+      "characterId": 830,
+      "cost": 30
+    },
+    {
+      "masterCardId": 831,
+      "characterId": 831,
+      "cost": 27
+    },
+    {
+      "masterCardId": 832,
+      "characterId": 832,
+      "cost": 15
+    },
+    {
+      "masterCardId": 833,
+      "characterId": 833,
+      "cost": 11
+    },
+    {
+      "masterCardId": 834,
+      "characterId": 834,
+      "cost": 17
+    },
+    {
+      "masterCardId": 835,
+      "characterId": 835,
+      "cost": 14
+    },
+    {
+      "masterCardId": 836,
+      "characterId": 836,
+      "cost": 24
+    },
+    {
+      "masterCardId": 837,
+      "characterId": 837,
+      "cost": 14
+    },
+    {
+      "masterCardId": 838,
+      "characterId": 838,
+      "cost": 25
+    },
+    {
+      "masterCardId": 839,
+      "characterId": 839,
+      "cost": 12
+    },
+    {
+      "masterCardId": 840,
+      "characterId": 840,
+      "cost": 15
+    },
+    {
+      "masterCardId": 841,
+      "characterId": 841,
+      "cost": 24
+    },
+    {
+      "masterCardId": 842,
+      "characterId": 842,
+      "cost": 18
+    },
+    {
+      "masterCardId": 843,
+      "characterId": 843,
+      "cost": 22
+    },
+    {
+      "masterCardId": 844,
+      "characterId": 844,
+      "cost": 32
+    },
+    {
+      "masterCardId": 845,
+      "characterId": 845,
+      "cost": 26
+    },
+    {
+      "masterCardId": 846,
+      "characterId": 846,
+      "cost": 24
+    },
+    {
+      "masterCardId": 847,
+      "characterId": 847,
+      "cost": 17
+    },
+    {
+      "masterCardId": 848,
+      "characterId": 848,
+      "cost": 15
+    },
+    {
+      "masterCardId": 849,
+      "characterId": 849,
+      "cost": 28
+    },
+    {
+      "masterCardId": 850,
+      "characterId": 850,
+      "cost": 27
+    },
+    {
+      "masterCardId": 851,
+      "characterId": 851,
+      "cost": 26
+    },
+    {
+      "masterCardId": 852,
+      "characterId": 852,
+      "cost": 17
+    },
+    {
+      "masterCardId": 853,
+      "characterId": 853,
+      "cost": 14
+    },
+    {
+      "masterCardId": 854,
+      "characterId": 854,
+      "cost": 32
+    },
+    {
+      "masterCardId": 855,
+      "characterId": 855,
+      "cost": 30
+    },
+    {
+      "masterCardId": 856,
+      "characterId": 856,
+      "cost": 29
+    },
+    {
+      "masterCardId": 857,
+      "characterId": 857,
+      "cost": 18
+    },
+    {
+      "masterCardId": 858,
+      "characterId": 858,
+      "cost": 18
+    },
+    {
+      "masterCardId": 859,
+      "characterId": 859,
+      "cost": 15
+    },
+    {
+      "masterCardId": 860,
+      "characterId": 860,
+      "cost": 23
+    },
+    {
+      "masterCardId": 861,
+      "characterId": 861,
+      "cost": 22
+    },
+    {
+      "masterCardId": 862,
+      "characterId": 862,
+      "cost": 21
+    },
+    {
+      "masterCardId": 863,
+      "characterId": 863,
+      "cost": 20
+    },
+    {
+      "masterCardId": 864,
+      "characterId": 864,
+      "cost": 14
+    },
+    {
+      "masterCardId": 865,
+      "characterId": 865,
+      "cost": 17
+    },
+    {
+      "masterCardId": 866,
+      "characterId": 866,
+      "cost": 15
+    },
+    {
+      "masterCardId": 867,
+      "characterId": 867,
+      "cost": 13
+    },
+    {
+      "masterCardId": 868,
+      "characterId": 868,
+      "cost": 27
+    },
+    {
+      "masterCardId": 869,
+      "characterId": 869,
+      "cost": 30
+    },
+    {
+      "masterCardId": 870,
+      "characterId": 870,
+      "cost": 24
+    },
+    {
+      "masterCardId": 871,
+      "characterId": 871,
+      "cost": 25
+    },
+    {
+      "masterCardId": 872,
+      "characterId": 872,
+      "cost": 18
+    },
+    {
+      "masterCardId": 873,
+      "characterId": 873,
+      "cost": 14
+    },
+    {
+      "masterCardId": 874,
+      "characterId": 874,
+      "cost": 29
+    },
+    {
+      "masterCardId": 875,
+      "characterId": 875,
+      "cost": 32
+    },
+    {
+      "masterCardId": 876,
+      "characterId": 876,
+      "cost": 17
+    },
+    {
+      "masterCardId": 877,
+      "characterId": 877,
+      "cost": 17
+    },
+    {
+      "masterCardId": 878,
+      "characterId": 878,
+      "cost": 15
+    },
+    {
+      "masterCardId": 879,
+      "characterId": 879,
+      "cost": 26
+    },
+    {
+      "masterCardId": 880,
+      "characterId": 880,
+      "cost": 25
+    },
+    {
+      "masterCardId": 881,
+      "characterId": 881,
+      "cost": 21
+    },
+    {
+      "masterCardId": 882,
+      "characterId": 882,
+      "cost": 14
+    },
+    {
+      "masterCardId": 883,
+      "characterId": 883,
+      "cost": 15
+    },
+    {
+      "masterCardId": 884,
+      "characterId": 884,
+      "cost": 16
+    },
+    {
+      "masterCardId": 885,
+      "characterId": 885,
+      "cost": 33
+    },
+    {
+      "masterCardId": 887,
+      "characterId": 887,
+      "cost": 17
+    },
+    {
+      "masterCardId": 888,
+      "characterId": 888,
+      "cost": 16
+    }
+  ]
+}

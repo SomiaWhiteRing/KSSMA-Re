@@ -99,6 +99,12 @@ function Get-FlowProperty {
   if ($null -eq $Object) {
     return $null
   }
+  if ($Object -is [System.Collections.IDictionary]) {
+    if ($Object.Contains($Name)) {
+      return $Object[$Name]
+    }
+    return $null
+  }
   $property = $Object.PSObject.Properties[$Name]
   if ($property) {
     return $property.Value
@@ -233,6 +239,110 @@ function Set-FlowMainmenuFactionPlayerSave {
     })
 }
 
+function Set-FlowGachaSettlementPlayerSave {
+  param($Context)
+
+  $defaultSavePath = Join-Path $script:RepoRoot "server\data\player\default-save.json"
+  try {
+    $save = [System.IO.File]::ReadAllText($defaultSavePath, [System.Text.Encoding]::UTF8) | ConvertFrom-Json
+  } catch {
+    Stop-FlowWithFailure -Context $Context -FailureClass "player-save-invalid" -Step "gacha-settlement-save-setup" -Message "Cannot read default player save: $($_.Exception.Message)"
+  }
+
+  $save.currencies.friendshipPoint = 400
+  $save.stats.cardsDrawn = 0
+  $save.gacha.history = @()
+  $save.cards.count = @($save.cards.instances).Count
+  $json = $save | ConvertTo-Json -Depth 40
+  $utf8NoBom = New-Object -TypeName System.Text.UTF8Encoding -ArgumentList $false
+  [System.IO.File]::WriteAllText($Context.playerSave, $json + [Environment]::NewLine, $utf8NoBom)
+  Add-FlowEvent -Context $Context -Type "player-save-seeded" -Data ([ordered]@{
+      scenario = "gacha-settlement-deck-smoke"
+      source = $defaultSavePath
+      path = $Context.playerSave
+      friendshipPoint = [int]$save.currencies.friendshipPoint
+      cardCount = [int]$save.cards.count
+      cardsDrawn = [int]$save.stats.cardsDrawn
+    })
+}
+
+function Set-FlowGachaPaidSettlementPlayerSave {
+  param(
+    $Context,
+    [int]$InitialMc = 300,
+    [string]$ScenarioName = "gacha-paid-settlement-deck-smoke"
+  )
+
+  $defaultSavePath = Join-Path $script:RepoRoot "server\data\player\default-save.json"
+  try {
+    $save = [System.IO.File]::ReadAllText($defaultSavePath, [System.Text.Encoding]::UTF8) | ConvertFrom-Json
+  } catch {
+    Stop-FlowWithFailure -Context $Context -FailureClass "player-save-invalid" -Step "gacha-paid-settlement-save-setup" -Message "Cannot read default player save: $($_.Exception.Message)"
+  }
+
+  $save.currencies.friendshipPoint = 0
+  $save.currencies.mc = $InitialMc
+  $save.stats.cardsDrawn = 0
+  $save.gacha.history = @()
+  $save.cards.count = @($save.cards.instances).Count
+  $json = $save | ConvertTo-Json -Depth 40
+  $utf8NoBom = New-Object -TypeName System.Text.UTF8Encoding -ArgumentList $false
+  [System.IO.File]::WriteAllText($Context.playerSave, $json + [Environment]::NewLine, $utf8NoBom)
+  Add-FlowEvent -Context $Context -Type "player-save-seeded" -Data ([ordered]@{
+      scenario = $ScenarioName
+      source = $defaultSavePath
+      path = $Context.playerSave
+      mc = [int]$save.currencies.mc
+      friendshipPoint = [int]$save.currencies.friendshipPoint
+      cardCount = [int]$save.cards.count
+      cardsDrawn = [int]$save.stats.cardsDrawn
+    })
+}
+
+function Set-FlowDeckBuilderEditPlayerSave {
+  param(
+    $Context,
+    [string]$ScenarioName = "deck-builder-edit-smoke"
+  )
+
+  $defaultSavePath = Join-Path $script:RepoRoot "server\data\player\default-save.json"
+  $gachaDataPath = Join-Path $script:RepoRoot "server\data\game\gacha.json"
+  try {
+    $save = [System.IO.File]::ReadAllText($defaultSavePath, [System.Text.Encoding]::UTF8) | ConvertFrom-Json
+    $gachaData = [System.IO.File]::ReadAllText($gachaDataPath, [System.Text.Encoding]::UTF8) | ConvertFrom-Json
+  } catch {
+    Stop-FlowWithFailure -Context $Context -FailureClass "player-save-invalid" -Step "deck-builder-edit-save-setup" -Message "Cannot read the deck-builder seed data: $($_.Exception.Message)"
+  }
+
+  $starter = @($save.cards.instances | Where-Object { [int]$_.serialId -eq 1 -and [int]$_.masterCardId -eq 22 } | Select-Object -First 1)
+  $drawCard = $gachaData.buy.drawCard
+  $activeDeck = @($save.cards.decks | Where-Object { $_.id -eq $save.cards.activeDeckId } | Select-Object -First 1)
+  if ($starter.Count -ne 1 -or $null -eq $drawCard -or [int]$drawCard.serialId -ne 2 -or [int]$drawCard.masterCardId -ne 9 -or $activeDeck.Count -ne 1) {
+    Stop-FlowWithFailure -Context $Context -FailureClass "player-save-invalid" -Step "deck-builder-edit-save-setup" -Message "Deck-builder seed requires starter 1/22, gacha draw 2/9, and one active deck."
+  }
+
+  $candidate = $drawCard.PSObject.Copy()
+  $candidate | Add-Member -NotePropertyName "level" -NotePropertyValue ([int]$drawCard.buildLevel) -Force
+  $candidate | Add-Member -NotePropertyName "exp" -NotePropertyValue ([int]$drawCard.buildExp) -Force
+  $save.cards.instances = @($starter[0], $candidate)
+  $save.cards.count = 2
+  $activeDeck[0].cardInstanceIds = @(1)
+  $save.profile.leaderSerialId = 1
+  $json = $save | ConvertTo-Json -Depth 40
+  $utf8NoBom = New-Object -TypeName System.Text.UTF8Encoding -ArgumentList $false
+  [System.IO.File]::WriteAllText($Context.playerSave, $json + [Environment]::NewLine, $utf8NoBom)
+  Add-FlowEvent -Context $Context -Type "player-save-seeded" -Data ([ordered]@{
+      scenario = $ScenarioName
+      sources = @($defaultSavePath, $gachaDataPath)
+      path = $Context.playerSave
+      ownerCardSerialIds = @(1, 2)
+      ownerCardMasterCardIds = @(22, 9)
+      activeDeckCardInstanceIds = @(1)
+      leaderSerialId = 1
+      historyCount = @($save.gacha.history).Count
+    })
+}
+
 function Assert-FlowLevelUpPlayerSave {
   param($Context)
 
@@ -298,6 +408,136 @@ function Assert-FlowLevelUpPointsettingPlayerSave {
       apAllocated = $apAllocated
       bcAllocated = $bcAllocated
       movesByFloor0x2 = $moves
+    })
+}
+
+function Assert-FlowGachaSettlementPlayerSave {
+  param($Context)
+
+  $actual = Read-FlowPlayerSave -Context $Context -Step "gacha-settlement-save-after"
+  $friendshipPoint = [int]$actual.currencies.friendshipPoint
+  $instances = if ($actual.cards.instances) { @($actual.cards.instances) } else { @() }
+  $gachaHistoryValue = Get-FlowProperty -Object $actual.gacha -Name "history"
+  $gachaHistoryEntries = if ($gachaHistoryValue) { @($gachaHistoryValue) } else { @() }
+  $drawnCards = @($instances | Where-Object { [int]$_.serialId -eq 2 -and [int]$_.masterCardId -eq 9 })
+  $instanceCount = @($instances).Count
+  $drawnCardCount = @($drawnCards).Count
+  $historyCount = @($gachaHistoryEntries).Count
+  $cardsDrawn = [int]$actual.stats.cardsDrawn
+  $historyLast = if ($historyCount -gt 0) { @($gachaHistoryEntries)[-1] } else { $null }
+
+  if (
+    $friendshipPoint -ne 200 -or
+    $instanceCount -ne 2 -or
+    $drawnCardCount -ne 1 -or
+    $cardsDrawn -ne 1 -or
+    $historyCount -ne 1 -or
+    $null -eq $historyLast -or
+    [int]$historyLast.productId -ne 1 -or
+    [int]$historyLast.bulk -ne 1 -or
+    [int]$historyLast.serialId -ne 2 -or
+    [int]$historyLast.masterCardId -ne 9
+  ) {
+    Stop-FlowWithFailure -Context $Context -FailureClass "gacha-settlement-save-mismatch" -Step "gacha-settlement-save-after" -Message "Gacha settlement save mismatch: friendship=$friendshipPoint cards=$instanceCount drawnCardMatches=$drawnCardCount cardsDrawn=$cardsDrawn history=$historyCount."
+  }
+
+  Add-FlowEvent -Context $Context -Type "gacha-settlement-save-ok" -Data ([ordered]@{
+      friendshipPoint = $friendshipPoint
+      cardCount = $instanceCount
+      serialId = 2
+      masterCardId = 9
+      cardsDrawn = $cardsDrawn
+      historyCount = $historyCount
+    })
+}
+
+function Assert-FlowGachaPaidSettlementPlayerSave {
+  param($Context)
+
+  $actual = Read-FlowPlayerSave -Context $Context -Step "gacha-paid-settlement-save-after"
+  $mc = [int]$actual.currencies.mc
+  $friendshipPoint = [int]$actual.currencies.friendshipPoint
+  $instances = if ($actual.cards.instances) { @($actual.cards.instances) } else { @() }
+  $gachaHistoryValue = Get-FlowProperty -Object $actual.gacha -Name "history"
+  $gachaHistoryEntries = if ($gachaHistoryValue) { @($gachaHistoryValue) } else { @() }
+  $drawnCards = @($instances | Where-Object { [int]$_.serialId -eq 2 -and [int]$_.masterCardId -eq 9 })
+  $instanceCount = @($instances).Count
+  $drawnCardCount = @($drawnCards).Count
+  $historyCount = @($gachaHistoryEntries).Count
+  $cardsDrawn = [int]$actual.stats.cardsDrawn
+  $historyLast = if ($historyCount -gt 0) { @($gachaHistoryEntries)[-1] } else { $null }
+
+  if (
+    $mc -ne 0 -or
+    $friendshipPoint -ne 0 -or
+    $instanceCount -ne 2 -or
+    $drawnCardCount -ne 1 -or
+    $cardsDrawn -ne 1 -or
+    $historyCount -ne 1 -or
+    $null -eq $historyLast -or
+    [int]$historyLast.productId -ne 2 -or
+    [int]$historyLast.bulk -ne 1 -or
+    [int]$historyLast.serialId -ne 2 -or
+    [int]$historyLast.masterCardId -ne 9
+  ) {
+    Stop-FlowWithFailure -Context $Context -FailureClass "gacha-paid-settlement-save-mismatch" -Step "gacha-paid-settlement-save-after" -Message "Paid gacha settlement save mismatch: mc=$mc friendship=$friendshipPoint cards=$instanceCount drawnCardMatches=$drawnCardCount cardsDrawn=$cardsDrawn history=$historyCount."
+  }
+
+  Add-FlowEvent -Context $Context -Type "gacha-paid-settlement-save-ok" -Data ([ordered]@{
+      mc = $mc
+      friendshipPoint = $friendshipPoint
+      cardCount = $instanceCount
+      serialId = 2
+      masterCardId = 9
+      cardsDrawn = $cardsDrawn
+      historyCount = $historyCount
+    })
+}
+
+function Assert-FlowGachaPaidRetryPlayerSave {
+  param($Context)
+
+  $actual = Read-FlowPlayerSave -Context $Context -Step "gacha-paid-retry-save-after"
+  $mc = [int]$actual.currencies.mc
+  $friendshipPoint = [int]$actual.currencies.friendshipPoint
+  $instances = if ($actual.cards.instances) { @($actual.cards.instances) } else { @() }
+  $historyValue = Get-FlowProperty -Object $actual.gacha -Name "history"
+  $history = if ($historyValue) { @($historyValue) } else { @() }
+  $serial2Cards = @($instances | Where-Object { [int]$_.serialId -eq 2 -and [int]$_.masterCardId -eq 9 })
+  $serial3Cards = @($instances | Where-Object { [int]$_.serialId -eq 3 -and [int]$_.masterCardId -eq 9 })
+  $historyFirst = if ($history.Count -gt 0) { $history[0] } else { $null }
+  $historyLast = if ($history.Count -gt 1) { $history[1] } else { $null }
+  if (
+    $mc -ne 0 -or
+    $friendshipPoint -ne 0 -or
+    $instances.Count -ne 3 -or
+    $serial2Cards.Count -ne 1 -or
+    $serial3Cards.Count -ne 1 -or
+    [int]$actual.cards.count -ne 3 -or
+    [int]$actual.stats.cardsDrawn -ne 2 -or
+    $history.Count -ne 2 -or
+    $null -eq $historyFirst -or
+    $null -eq $historyLast -or
+    [int]$historyFirst.productId -ne 2 -or
+    [int]$historyFirst.bulk -ne 1 -or
+    [int]$historyFirst.serialId -ne 2 -or
+    [int]$historyFirst.masterCardId -ne 9 -or
+    [int]$historyLast.productId -ne 2 -or
+    [int]$historyLast.bulk -ne 1 -or
+    [int]$historyLast.serialId -ne 3 -or
+    [int]$historyLast.masterCardId -ne 9
+  ) {
+    Stop-FlowWithFailure -Context $Context -FailureClass "gacha-paid-retry-save-mismatch" -Step "gacha-paid-retry-save-after" -Message "Paid retry save mismatch: mc=$mc friendship=$friendshipPoint cards=$($instances.Count) serial2Matches=$($serial2Cards.Count) serial3Matches=$($serial3Cards.Count) cardsDrawn=$($actual.stats.cardsDrawn) history=$($history.Count)."
+  }
+
+  Add-FlowEvent -Context $Context -Type "gacha-paid-retry-save-ok" -Data ([ordered]@{
+      mc = $mc
+      friendshipPoint = $friendshipPoint
+      cardCount = $instances.Count
+      serialIds = @(2, 3)
+      masterCardId = 9
+      cardsDrawn = [int]$actual.stats.cardsDrawn
+      historyCount = $history.Count
     })
 }
 
@@ -403,6 +643,67 @@ function Test-FlowExpectedMap {
   return $true
 }
 
+function Test-FlowDeckBuilderSaveParams {
+  param($Params)
+
+  if ($null -eq $Params -or -not ($Params -is [System.Collections.IDictionary])) {
+    return $false
+  }
+  $keys = @($Params.Keys | ForEach-Object { "$_" })
+  if (
+    $keys.Count -ne 2 -or
+    @($keys | Where-Object { $_ -ceq "C" }).Count -ne 1 -or
+    @($keys | Where-Object { $_ -ceq "lr" }).Count -ne 1
+  ) {
+    return $false
+  }
+  return (
+    "$($Params["C"])" -ceq "1,2,empty,empty,empty,empty,empty,empty,empty,empty,empty,empty" -and
+    "$($Params["lr"])" -ceq "1"
+  )
+}
+
+function Test-FlowGachaBuyParams {
+  param(
+    $Params,
+    [string]$ProductId,
+    [string]$Bulk,
+    [string]$AutoBuild
+  )
+
+  if ($null -eq $Params -or -not ($Params -is [System.Collections.IDictionary])) {
+    return $false
+  }
+  $keys = @($Params.Keys | ForEach-Object { "$_" })
+  if (
+    $keys.Count -ne 3 -or
+    @($keys | Where-Object { $_ -ceq "product_id" }).Count -ne 1 -or
+    @($keys | Where-Object { $_ -ceq "bulk" }).Count -ne 1 -or
+    @($keys | Where-Object { $_ -ceq "auto_build" }).Count -ne 1
+  ) {
+    return $false
+  }
+  return (
+    "$($Params["product_id"])" -ceq $ProductId -and
+    "$($Params["bulk"])" -ceq $Bulk -and
+    "$($Params["auto_build"])" -ceq $AutoBuild
+  )
+}
+
+function Get-FlowEventDecryptedParams {
+  param($Event)
+
+  $params = Get-FlowProperty -Object $Event -Name "decryptedParams"
+  if (-not $params) {
+    $payload = Get-FlowProperty -Object $Event -Name "payload"
+    $params = Get-FlowProperty -Object $payload -Name "decryptedParams"
+  }
+  if ($params) {
+    return $params
+  }
+  return @{}
+}
+
 function Test-FlowServerEventMatch {
   param(
     $Event,
@@ -418,7 +719,7 @@ function Test-FlowServerEventMatch {
   if ($Path -and $Event.path -ne $Path) {
     return $false
   }
-  if ($Params.Count -gt 0 -and -not (Test-FlowExpectedMap -Actual $Event.decryptedParams -Expected $Params)) {
+  if ($Params.Count -gt 0 -and -not (Test-FlowExpectedMap -Actual (Get-FlowEventDecryptedParams -Event $Event) -Expected $Params)) {
     return $false
   }
   if ($Fields.Count -gt 0 -and -not (Test-FlowExpectedMap -Actual $Event.payload -Expected $Fields)) {
@@ -668,6 +969,112 @@ function Test-FlowCrashDialog {
   return $text -match "has stopped|Unfortunately"
 }
 
+function Invoke-FlowDismissStaleCrashDialog {
+  param(
+    $Context,
+    [string]$Step
+  )
+
+  $ui = Get-FlowUiDump -Context $Context -Serial $Context.serial -Name "stale-crash-$Step"
+  if ($null -eq $ui) {
+    return $false
+  }
+  $message = $ui.SelectSingleNode("//*[@resource-id='android:id/message']")
+  if ($null -eq $message) {
+    return $false
+  }
+  $text = $message.GetAttribute("text")
+  if ($text -notmatch "has stopped|Unfortunately") {
+    return $false
+  }
+  $ok = $ui.SelectSingleNode("//*[@resource-id='android:id/button1' and @text='OK']")
+  if ($null -eq $ok) {
+    return $false
+  }
+  $center = Get-FlowUiNodeCenter -Node $ok
+  if (-not $center) {
+    return $false
+  }
+  Add-FlowEvent -Context $Context -Type "stale-crash-dismiss" -Data ([ordered]@{
+      step = $Step
+      message = $text
+      x = $center.x
+      y = $center.y
+    })
+  # ponytail: startup-only cleanup for Android crash dialogs left by a prior
+  # flow run; new crashes inside a scenario are still handled by Assert-FlowClientAlive.
+  Invoke-Adb -Arguments @("-s", $Context.serial, "shell", "input", "tap", "$($center.x)", "$($center.y)") -TimeoutSeconds 12 -AllowFailure | Out-Null
+  Start-Sleep -Seconds 2
+  return $true
+}
+
+function Find-FlowSystemAnrWaitButton {
+  param([xml]$Ui)
+
+  if ($null -eq $Ui) {
+    return $null
+  }
+  $message = $Ui.SelectSingleNode("//*[@resource-id='android:id/message']")
+  if ($null -eq $message) {
+    return $null
+  }
+  $text = $message.GetAttribute("text")
+  if ($text -notmatch "isn't responding|is not responding") {
+    return $null
+  }
+  return $Ui.SelectSingleNode("//*[@resource-id='android:id/button2' and @text='Wait']")
+}
+
+function Invoke-FlowDismissSystemAnrIfPresent {
+  param(
+    $Context,
+    [string]$Step
+  )
+
+  $ui = Get-FlowUiDump -Context $Context -Serial $Context.serial -Name "system-anr-$Step"
+  $wait = Find-FlowSystemAnrWaitButton -Ui $ui
+  if ($null -eq $wait) {
+    return $false
+  }
+
+  # ponytail: ARM19 sometimes shows the host system ANR dialog over an alive game.
+  # Tapping Wait is the narrow recovery; OK would kill the process and invalidate the flow.
+  Add-FlowEvent -Context $Context -Type "system-anr-dismiss" -Data ([ordered]@{
+      step = $Step
+      action = "wait"
+    })
+  $center = Get-FlowUiNodeCenter -Node $wait
+  if (-not $center) {
+    Add-FlowEvent -Context $Context -Type "system-anr-dismiss-failed" -Data ([ordered]@{
+        step = $Step
+        reason = "button bounds unavailable"
+      })
+    return $false
+  }
+  Add-FlowEvent -Context $Context -Type "tap" -Data ([ordered]@{
+      name = "system-anr-wait-$Step"
+      x = $center.x
+      y = $center.y
+      raw = $true
+    })
+  Invoke-Adb -Arguments @("-s", $Context.serial, "shell", "input", "tap", "$($center.x)", "$($center.y)") -TimeoutSeconds 12 -AllowFailure | Out-Null
+  Start-Sleep -Seconds 2
+  return $true
+}
+
+function Ensure-FlowNoSystemAnr {
+  param(
+    $Context,
+    [string]$Step
+  )
+
+  for ($attempt = 1; $attempt -le 2; $attempt++) {
+    if (-not (Invoke-FlowDismissSystemAnrIfPresent -Context $Context -Step "$Step-$attempt")) {
+      return
+    }
+  }
+}
+
 function Test-FlowUiShowsGamePackage {
   param([xml]$Ui)
 
@@ -683,6 +1090,7 @@ function Assert-FlowClientAlive {
     [string]$Step
   )
 
+  Ensure-FlowNoSystemAnr -Context $Context -Step $Step
   if (Test-FlowCrashDialog -Context $Context -Name "crash-$Step") {
     Stop-FlowWithFailure -Context $Context -FailureClass "client-crash" -Step $Step -Message "Android crash dialog is visible."
   }
@@ -826,10 +1234,11 @@ function Invoke-FlowTap {
     [int]$Y
   )
 
+  Ensure-FlowNoSystemAnr -Context $Context -Step "before-$Name"
   Add-FlowEvent -Context $Context -Type "tap" -Data ([ordered]@{ name = $Name; x = $X; y = $Y })
   $stage = $null
   for ($attempt = 1; $attempt -le 3; $attempt++) {
-    $stage = Invoke-Adb -Arguments @("-s", $Context.serial, "shell", "input", "tap", "$X", "$Y") -TimeoutSeconds 12 -AllowFailure
+    $stage = Invoke-Adb -Arguments @("-s", $Context.serial, "shell", "input", "tap", "$X", "$Y") -TimeoutSeconds 30 -AllowFailure
     if ($stage.ok) {
       Start-Sleep -Milliseconds 800
       return
@@ -926,13 +1335,28 @@ function Capture-FlowScreenshot {
     [string]$Name
   )
 
+  Ensure-FlowNoSystemAnr -Context $Context -Step "screenshot-$Name"
   $safeName = $Name -replace "[^A-Za-z0-9_.-]", "-"
   $remote = "/data/local/tmp/kssma-flow-$safeName.png"
   $local = Join-Path $Context.screenshotsDir "$safeName.png"
   Add-FlowEvent -Context $Context -Type "screenshot-start" -Data ([ordered]@{ name = $Name; path = $local })
-  Invoke-Adb -Arguments @("-s", $Context.serial, "shell", "screencap", "-p", $remote) -TimeoutSeconds 20 -AllowFailure | Out-Null
-  $pull = Invoke-Adb -Arguments @("-s", $Context.serial, "pull", $remote, $local) -TimeoutSeconds 30 -AllowFailure
-  $size = if (Test-Path -LiteralPath $local) { (Get-Item -LiteralPath $local).Length } else { 0 }
+  $pull = $null
+  $size = 0
+  for ($attempt = 1; $attempt -le 3; $attempt++) {
+    if (Test-Path -LiteralPath $local) {
+      Remove-Item -LiteralPath $local -Force -ErrorAction SilentlyContinue
+    }
+    Invoke-Adb -Arguments @("-s", $Context.serial, "shell", "screencap", "-p", $remote) -TimeoutSeconds 20 -AllowFailure | Out-Null
+    $pull = Invoke-Adb -Arguments @("-s", $Context.serial, "pull", $remote, $local) -TimeoutSeconds 30 -AllowFailure
+    $size = if (Test-Path -LiteralPath $local) { (Get-Item -LiteralPath $local).Length } else { 0 }
+    Add-FlowEvent -Context $Context -Type "screenshot-attempt" -Data ([ordered]@{ name = $Name; attempt = $attempt; path = $local; bytes = $size; adbOk = $pull.ok })
+    if ($size -gt 0) {
+      break
+    }
+    # ponytail: classic ARM19 sometimes pulls a zero-byte PNG while the next
+    # screencap succeeds; retry keeps visual gates from failing on capture noise.
+    Start-Sleep -Seconds 2
+  }
   Add-FlowEvent -Context $Context -Type "screenshot" -Data ([ordered]@{ name = $Name; path = $local; ok = [bool]($size -gt 0); bytes = $size; adbOk = $pull.ok })
   return $local
 }
@@ -980,6 +1404,54 @@ function Get-FlowScreenshotDiffScore {
   }
 }
 
+function Get-FlowScreenshotRegionDiffScore {
+  param(
+    [string]$ExpectedPath,
+    [string]$ActualPath,
+    [int]$RegionX,
+    [int]$RegionY,
+    [int]$RegionWidth,
+    [int]$RegionHeight,
+    [int]$SampleStep = 8
+  )
+
+  if (
+    $RegionX -lt 0 -or $RegionY -lt 0 -or $RegionWidth -le 0 -or $RegionHeight -le 0 -or $SampleStep -le 0 -or
+    -not (Test-Path -LiteralPath $ExpectedPath) -or -not (Test-Path -LiteralPath $ActualPath)
+  ) {
+    return $null
+  }
+
+  Add-Type -AssemblyName System.Drawing
+  $expected = $null
+  $actual = $null
+  try {
+    $expected = [System.Drawing.Bitmap]::FromFile((Resolve-Path -LiteralPath $ExpectedPath))
+    $actual = [System.Drawing.Bitmap]::FromFile((Resolve-Path -LiteralPath $ActualPath))
+    $right = [Math]::Min([Math]::Min($expected.Width, $actual.Width), $RegionX + $RegionWidth)
+    $bottom = [Math]::Min([Math]::Min($expected.Height, $actual.Height), $RegionY + $RegionHeight)
+    $sum = 0.0
+    $count = 0
+    for ($y = $RegionY; $y -lt $bottom; $y += $SampleStep) {
+      for ($x = $RegionX; $x -lt $right; $x += $SampleStep) {
+        $leftPixel = $expected.GetPixel($x, $y)
+        $rightPixel = $actual.GetPixel($x, $y)
+        $sum += [Math]::Abs($leftPixel.R - $rightPixel.R) + [Math]::Abs($leftPixel.G - $rightPixel.G) + [Math]::Abs($leftPixel.B - $rightPixel.B)
+        $count += 3
+      }
+    }
+    if ($count -eq 0) {
+      return $null
+    }
+    return [Math]::Round($sum / $count, 2)
+  } catch {
+    return $null
+  } finally {
+    if ($expected) { $expected.Dispose() }
+    if ($actual) { $actual.Dispose() }
+  }
+}
+
 function Assert-FlowScreenshotDiff {
   param(
     $Context,
@@ -1007,6 +1479,134 @@ function Assert-FlowScreenshotDiff {
   }
   if ($MaxDiff -ge 0 -and $score -gt $MaxDiff) {
     Stop-FlowWithFailure -Context $Context -FailureClass "visual-state-mismatch" -Step $Step -Message "Screenshot did not return to expected page. diff=$score max=$MaxDiff"
+  }
+}
+
+function Get-FlowDeckBuilderEntryVisualCheck {
+  param([string]$Path)
+
+  if (-not (Test-Path -LiteralPath $Path) -or (Get-Item -LiteralPath $Path).Length -le 0) {
+    return [pscustomobject][ordered]@{ ok = $false; reason = "missing-image"; samples = @{} }
+  }
+
+  Add-Type -AssemblyName System.Drawing
+  $bitmap = $null
+  try {
+    $bitmap = [System.Drawing.Bitmap]::FromFile((Resolve-Path -LiteralPath $Path))
+    if ($bitmap.Width -lt 1180 -or $bitmap.Height -lt 660) {
+      return [pscustomobject][ordered]@{ ok = $false; reason = "unexpected-size"; samples = @{} }
+    }
+
+    # ponytail: fixed-point colors cover the accepted 1280x720 DeckScene; replace
+    # this with a scene-id hook or template classifier if the display/layout baseline changes.
+    $decide = $bitmap.GetPixel(1040, 80)
+    $leader = $bitmap.GetPixel(1040, 250)
+    $create = $bitmap.GetPixel(1040, 400)
+    $back = $bitmap.GetPixel(1040, 550)
+    $deck = $bitmap.GetPixel(170, 200)
+    $samples = [ordered]@{
+      decide = "$($decide.R),$($decide.G),$($decide.B)"
+      leader = "$($leader.R),$($leader.G),$($leader.B)"
+      createDeck = "$($create.R),$($create.G),$($create.B)"
+      back = "$($back.R),$($back.G),$($back.B)"
+      deckRail = "$($deck.R),$($deck.G),$($deck.B)"
+    }
+    $ok = (
+      $decide.R -ge 130 -and ($decide.R - $decide.G) -ge 80 -and ($decide.R - $decide.B) -ge 80 -and
+      $leader.R -ge 150 -and $leader.G -ge 70 -and ($leader.R - $leader.G) -ge 40 -and ($leader.G - $leader.B) -ge 30 -and
+      $create.R -ge 150 -and $create.G -ge 70 -and ($create.R - $create.G) -ge 40 -and ($create.G - $create.B) -ge 20 -and
+      $back.R -ge 25 -and $back.R -le 100 -and [Math]::Abs($back.R - $back.G) -le 8 -and [Math]::Abs($back.G - $back.B) -le 8 -and
+      $deck.B -ge 180 -and ($deck.B - $deck.R) -ge 100 -and ($deck.G - $deck.R) -ge 60
+    )
+    return [pscustomobject][ordered]@{ ok = [bool]$ok; reason = $(if ($ok) { "" } else { "signature-mismatch" }); samples = $samples }
+  } catch {
+    return [pscustomobject][ordered]@{ ok = $false; reason = $_.Exception.Message; samples = @{} }
+  } finally {
+    if ($bitmap) { $bitmap.Dispose() }
+  }
+}
+
+function Assert-FlowDeckBuilderEntryVisual {
+  param(
+    $Context,
+    [string]$Step,
+    [string]$Path
+  )
+
+  $check = Get-FlowDeckBuilderEntryVisualCheck -Path $Path
+  Add-FlowEvent -Context $Context -Type "deck-builder-visual-check" -Data ([ordered]@{
+      step = $Step
+      path = $Path
+      ok = $check.ok
+      reason = $check.reason
+      samples = $check.samples
+    })
+  if (-not $check.ok) {
+    Stop-FlowWithFailure -Context $Context -FailureClass "visual-state-mismatch" -Step $Step -Message "DeckScene visual signature was not present: $($check.reason)."
+  }
+}
+
+function Get-FlowDeckBuilderLeaderModeVisualCheck {
+  param([string]$Path)
+
+  if (-not (Test-Path -LiteralPath $Path) -or (Get-Item -LiteralPath $Path).Length -le 0) {
+    return [pscustomobject][ordered]@{ ok = $false; reason = "missing-image"; samples = @{} }
+  }
+
+  Add-Type -AssemblyName System.Drawing
+  $bitmap = $null
+  try {
+    $bitmap = [System.Drawing.Bitmap]::FromFile((Resolve-Path -LiteralPath $Path))
+    if ($bitmap.Width -lt 1180 -or $bitmap.Height -lt 660) {
+      return [pscustomobject][ordered]@{ ok = $false; reason = "unexpected-size"; samples = @{} }
+    }
+
+    # ponytail: this fixed signature covers the accepted 1280x720 leader-select dimming;
+    # replace it with a scene-mode hook or template classifier if the display/layout baseline changes.
+    $decide = $bitmap.GetPixel(1040, 80)
+    $leader = $bitmap.GetPixel(1040, 250)
+    $create = $bitmap.GetPixel(1040, 400)
+    $back = $bitmap.GetPixel(1040, 550)
+    $deck = $bitmap.GetPixel(170, 200)
+    $samples = [ordered]@{
+      decide = "$($decide.R),$($decide.G),$($decide.B)"
+      leader = "$($leader.R),$($leader.G),$($leader.B)"
+      createDeck = "$($create.R),$($create.G),$($create.B)"
+      back = "$($back.R),$($back.G),$($back.B)"
+      deckRail = "$($deck.R),$($deck.G),$($deck.B)"
+    }
+    $ok = (
+      $decide.R -le 80 -and [Math]::Abs($decide.R - $decide.G) -le 5 -and [Math]::Abs($decide.G - $decide.B) -le 5 -and
+      $leader.R -le 80 -and [Math]::Abs($leader.R - $leader.G) -le 5 -and [Math]::Abs($leader.G - $leader.B) -le 5 -and
+      $create.R -le 70 -and [Math]::Abs($create.R - $create.G) -le 5 -and [Math]::Abs($create.G - $create.B) -le 5 -and
+      $back.R -le 40 -and [Math]::Abs($back.R - $back.G) -le 5 -and [Math]::Abs($back.G - $back.B) -le 5 -and
+      $deck.B -ge 180 -and ($deck.B - $deck.R) -ge 100 -and ($deck.G - $deck.R) -ge 60
+    )
+    return [pscustomobject][ordered]@{ ok = [bool]$ok; reason = $(if ($ok) { "" } else { "signature-mismatch" }); samples = $samples }
+  } catch {
+    return [pscustomobject][ordered]@{ ok = $false; reason = $_.Exception.Message; samples = @{} }
+  } finally {
+    if ($bitmap) { $bitmap.Dispose() }
+  }
+}
+
+function Assert-FlowDeckBuilderLeaderModeVisual {
+  param(
+    $Context,
+    [string]$Step,
+    [string]$Path
+  )
+
+  $check = Get-FlowDeckBuilderLeaderModeVisualCheck -Path $Path
+  Add-FlowEvent -Context $Context -Type "deck-builder-leader-visual-check" -Data ([ordered]@{
+      step = $Step
+      path = $Path
+      ok = $check.ok
+      reason = $check.reason
+      samples = $check.samples
+    })
+  if (-not $check.ok) {
+    Stop-FlowWithFailure -Context $Context -FailureClass "visual-state-mismatch" -Step $Step -Message "DeckScene leader-select visual signature was not present: $($check.reason)."
   }
 }
 
@@ -1138,7 +1738,56 @@ function Invoke-FlowRuntimeGate {
   if (-not $native.ok) {
     Stop-FlowWithFailure -Context $Context -FailureClass "client-baseline-mismatch" -Step "ensure-client-baseline" -Message "ensure-client-baseline failed: $($native.failureClass)"
   }
+
   $Context.serial = $script:KssmaRuntimeConfig.PrimarySerial
+}
+
+function Sync-FlowSaveFile {
+  param(
+    $Context,
+    [string]$RelativePath
+  )
+
+  $sourcePath = Join-Path $script:SampleSaveDir $RelativePath
+  if (-not (Test-Path -LiteralPath $sourcePath)) {
+    Stop-FlowWithFailure -Context $Context -FailureClass "resource-miss" -Step "sync-save-file" -Message "Missing local save resource: $RelativePath"
+  }
+
+  $devicePath = "$script:DeviceSaveDir/$($RelativePath -replace '\\', '/')"
+  $deviceParent = $devicePath -replace "/[^/]+$", ""
+  Add-FlowEvent -Context $Context -Type "sync-save-file" -Data ([ordered]@{
+      relativePath = $RelativePath
+      source = $sourcePath
+      devicePath = $devicePath
+    })
+  $mkdir = Invoke-Adb -Arguments @("-s", $Context.serial, "shell", "mkdir", "-p", $deviceParent) -TimeoutSeconds 10 -AllowFailure
+  Add-FlowEvent -Context $Context -Type "sync-save-file-mkdir" -Data ([ordered]@{
+      ok = $mkdir.ok
+      timedOut = $mkdir.timedOut
+      failureClass = $mkdir.failureClass
+      stderr = $mkdir.stderr
+    })
+  if (-not $mkdir.ok) {
+    Stop-FlowWithFailure -Context $Context -FailureClass "resource-push-failed" -Step "mkdir-flow-save-file" -Message "Cannot create device parent for $RelativePath"
+  }
+  $push = Invoke-Adb -Arguments @("-s", $Context.serial, "push", $sourcePath, $devicePath) -TimeoutSeconds 120 -AllowFailure
+  Add-FlowEvent -Context $Context -Type "sync-save-file-push" -Data ([ordered]@{
+      ok = $push.ok
+      timedOut = $push.timedOut
+      failureClass = $push.failureClass
+      stdout = $push.stdout
+      stderr = $push.stderr
+    })
+  if (-not $push.ok) {
+    Stop-FlowWithFailure -Context $Context -FailureClass "resource-push-failed" -Step "push-flow-save-file" -Message "Cannot push device resource $RelativePath"
+  }
+  $chmod = Invoke-Adb -Arguments @("-s", $Context.serial, "shell", "chmod", "644", $devicePath) -TimeoutSeconds 10 -AllowFailure
+  Add-FlowEvent -Context $Context -Type "sync-save-file-chmod" -Data ([ordered]@{
+      ok = $chmod.ok
+      timedOut = $chmod.timedOut
+      failureClass = $chmod.failureClass
+      stderr = $chmod.stderr
+    })
 }
 
 function Test-FlowGameActivity {
@@ -1386,12 +2035,14 @@ function Invoke-FlowLaunchAndLogin {
   param($Context)
 
   Add-FlowEvent -Context $Context -Type "clear-logcat" -Data ([ordered]@{})
+  Invoke-FlowDismissStaleCrashDialog -Context $Context -Step "before-launch" | Out-Null
   Invoke-Adb -Arguments @("-s", $Context.serial, "logcat", "-c") -TimeoutSeconds 10 -AllowFailure | Out-Null
   $launch = Invoke-LaunchGame
   Add-FlowEvent -Context $Context -Type "launch-game" -Data ([ordered]@{ ok = $launch.ok; failureClass = $launch.failureClass; data = $launch.data })
   if (-not $launch.ok) {
     Stop-FlowWithFailure -Context $Context -FailureClass "login-failed" -Step "launch-game" -Message "launch failed: $($launch.failureClass)"
   }
+  Invoke-FlowDismissStaleCrashDialog -Context $Context -Step "after-launch" | Out-Null
 
   $enteredGame = $false
   $deadline = (Get-Date).AddSeconds(15)
@@ -1497,6 +2148,37 @@ function Get-FlowMenuPageCoords {
     help = @{ x = 985; y = 485 }
     updateHistory = @{ x = 300; y = 635 }
   }
+}
+
+function Get-FlowGachaCoords {
+  @{
+      drawOne = @{ x = 650; y = 200 }
+      paidOne = @{ x = 650; y = 405 }
+      paidConfirm = @{ x = 440; y = 418 }
+      touchResult = @{ x = 640; y = 650 }
+    resultRetry = @{ x = 1090; y = 95 }
+    resultBack = @{ x = 1090; y = 585 }
+  }
+}
+
+function Invoke-FlowSwipe {
+  param(
+    $Context,
+    [string]$Name,
+    [int]$X1,
+    [int]$Y1,
+    [int]$X2,
+    [int]$Y2,
+    [int]$DurationMs = 450
+  )
+
+  Ensure-FlowNoSystemAnr -Context $Context -Step "before-$Name"
+  Add-FlowEvent -Context $Context -Type "swipe" -Data ([ordered]@{ name = $Name; x1 = $X1; y1 = $Y1; x2 = $X2; y2 = $Y2; durationMs = $DurationMs })
+  $stage = Invoke-Adb -Arguments @("-s", $Context.serial, "shell", "input", "swipe", "$X1", "$Y1", "$X2", "$Y2", "$DurationMs") -TimeoutSeconds 30 -AllowFailure
+  if (-not $stage.ok) {
+    Stop-FlowWithFailure -Context $Context -FailureClass "tap-no-effect" -Step $Name -Message "ADB swipe failed: $($stage.failureClass)"
+  }
+  Start-Sleep -Milliseconds 1000
 }
 
 function Move-FlowRequestCursorToEnd {
@@ -1826,7 +2508,7 @@ function Invoke-FlowMainmenuBottomButtonsSmoke {
   Move-FlowRequestCursorToEnd -Context $Context
 
   $entries = @(
-    @{ name = "open-mainmenu-deck"; coord = $coords.deck; path = "/connect/app/roundtable/edit"; params = @{ move = "1" }; fields = @{ command = "round_table"; nextScene = 10100 } },
+    @{ name = "open-mainmenu-deck"; coord = $coords.deck; path = "/connect/app/roundtable/edit"; params = @{ move = "1" }; fields = @{ command = "round_table"; nextScene = 83200 } },
     @{ name = "open-mainmenu-friends"; coord = $coords.friends; path = "/connect/app/menu/friendlist"; fields = @{ command = "friends"; nextScene = 17100 } }
   )
 
@@ -1837,6 +2519,576 @@ function Invoke-FlowMainmenuBottomButtonsSmoke {
     Assert-FlowScreenshotDiff -Context $Context -Step "$($entry.name)-visual-open" -ExpectedPath $baseline -ActualPath $opened -MinDiff 20
     Invoke-FlowReturnToMainmenuRetry -Context $Context -Name "return-from-$($entry.name)" -BaselineScreenshot $baseline -AllowedIntermediatePaths @("/connect/app/cardselect/savedeckcard") | Out-Null
   }
+}
+
+function Invoke-FlowDeckBuilderEntrySmoke {
+  param($Context)
+
+  $coords = Get-FlowMainmenuRouteCoords
+  Start-Sleep -Seconds 2
+  Assert-FlowClientAlive -Context $Context -Step "deck-builder-entry-ready"
+  $mainmenu = Capture-FlowScreenshot -Context $Context -Name "deck-builder-mainmenu"
+  Move-FlowRequestCursorToEnd -Context $Context
+
+  Invoke-FlowTap -Context $Context -Name "open-deck-builder" -X $coords.deck.x -Y $coords.deck.y
+  $probe = Wait-FlowServerEvent -Context $Context -Step "open-deck-builder-probe" -Tag "connect_app_probe" -Path "/connect/app/roundtable/edit" -Params @{ move = "1" } -TimeoutSeconds 25 -NoEventFailureClass "tap-no-effect"
+  $response = Wait-FlowServerEvent -Context $Context -Step "open-deck-builder-response" -Tag "connect_app_response" -Path "/connect/app/roundtable/edit" -Fields @{
+    command = "round_table"
+    nextScene = 83200
+  } -TimeoutSeconds 10
+  Start-Sleep -Seconds 3
+  Assert-FlowClientAlive -Context $Context -Step "open-deck-builder-after-response"
+  $entry = Capture-FlowScreenshot -Context $Context -Name "deck-builder-entry"
+  Assert-FlowScreenshotDiff -Context $Context -Step "deck-builder-entry-visual-open" -ExpectedPath $mainmenu -ActualPath $entry -MinDiff 20
+  Assert-FlowDeckBuilderEntryVisual -Context $Context -Step "deck-builder-entry-controls-visible" -Path $entry
+  Add-FlowEvent -Context $Context -Type "deck-builder-entry-ok" -Data ([ordered]@{
+      path = $probe.path
+      decryptedParams = $probe.decryptedParams
+      response = $response.payload
+      nextTarget = [ordered]@{
+        name = "leader"
+        screen = [ordered]@{ x = 1090; y = 270 }
+        expectedBehavior = "change_mode_leader_select"
+        expectedRoute = ""
+      }
+    })
+}
+
+function Invoke-FlowDeckBuilderLeaderModeSmoke {
+  param($Context)
+
+  Invoke-FlowDeckBuilderEntrySmoke -Context $Context
+  $before = Capture-FlowScreenshot -Context $Context -Name "deck-builder-leader-before"
+  Move-FlowRequestCursorToEnd -Context $Context
+
+  Invoke-FlowTap -Context $Context -Name "open-deck-builder-leader-mode" -X 1090 -Y 270
+  $unexpectedProbe = Wait-FlowServerEventOptional -Context $Context -Step "deck-builder-leader-mode-no-route" -Tag "connect_app_probe" -Path "" -TimeoutSeconds 3
+  if ($unexpectedProbe) {
+    Stop-FlowWithFailure -Context $Context -FailureClass "route-param-mismatch" -Step "deck-builder-leader-mode-no-route" -Message "Leader mode unexpectedly emitted $($unexpectedProbe.path)."
+  }
+  Assert-FlowClientAlive -Context $Context -Step "deck-builder-leader-mode-after-tap"
+  $after = Capture-FlowScreenshot -Context $Context -Name "deck-builder-leader-after"
+  Assert-FlowScreenshotDiff -Context $Context -Step "deck-builder-leader-mode-visual-change" -ExpectedPath $before -ActualPath $after -MinDiff 8
+  Assert-FlowDeckBuilderLeaderModeVisual -Context $Context -Step "deck-builder-leader-mode-visible" -Path $after
+  Add-FlowEvent -Context $Context -Type "deck-builder-leader-mode-ok" -Data ([ordered]@{
+      target = "leader"
+      screen = [ordered]@{ x = 1090; y = 270 }
+      expectedBehavior = "change_mode_leader_select"
+      expectedRoute = ""
+      quietSeconds = 3
+      before = $before
+      after = $after
+    })
+}
+
+function Invoke-FlowDeckBuilderEditSmoke {
+  param($Context)
+
+  $initialSaveText = [System.IO.File]::ReadAllText($Context.playerSave, [System.Text.Encoding]::UTF8)
+  $initialSaveHash = (Get-FileHash -LiteralPath $Context.playerSave -Algorithm SHA256).Hash
+  Invoke-FlowDeckBuilderEntrySmoke -Context $Context
+  Sync-FlowServerEvents -Context $Context | Out-Null
+  $entryResponse = @(
+    $Context.requestEvents |
+      Where-Object { $_.tag -eq "connect_app_response" -and $_.path -eq "/connect/app/roundtable/edit" } |
+      Select-Object -Last 1
+  )
+  $serialIds = if ($entryResponse.Count -eq 1) { @(Get-FlowProperty -Object $entryResponse[0].payload -Name "ownerCardSerialIds") } else { @() }
+  $masterCardIds = if ($entryResponse.Count -eq 1) { @(Get-FlowProperty -Object $entryResponse[0].payload -Name "ownerCardMasterCardIds") } else { @() }
+  if (($serialIds -join ",") -ne "1,2" -or ($masterCardIds -join ",") -ne "22,9") {
+    Stop-FlowWithFailure -Context $Context -FailureClass "deck-owned-card-mismatch" -Step "deck-builder-edit-fixture" -Message "Expected owned serials 1,2 and masters 22,9; saw serials=$($serialIds -join ',') masters=$($masterCardIds -join ',')."
+  }
+
+  $before = Capture-FlowScreenshot -Context $Context -Name "deck-builder-edit-before"
+
+  Move-FlowRequestCursorToEnd -Context $Context
+  Invoke-FlowTap -Context $Context -Name "open-deck-builder-card-selection" -X 127 -Y 360
+  $openProbe = Wait-FlowServerEventOptional -Context $Context -Step "deck-builder-edit-open-no-route" -Tag "connect_app_probe" -Path "" -TimeoutSeconds 3
+  if ($openProbe) {
+    Stop-FlowWithFailure -Context $Context -FailureClass "route-param-mismatch" -Step "deck-builder-edit-open-no-route" -Message "Opening card-selection mode unexpectedly emitted $($openProbe.path)."
+  }
+  Assert-FlowClientAlive -Context $Context -Step "deck-builder-edit-card-mode-alive"
+  $cardMode = Capture-FlowScreenshot -Context $Context -Name "deck-builder-edit-card-mode"
+  Assert-FlowScreenshotDiff -Context $Context -Step "deck-builder-edit-card-mode-visible" -ExpectedPath $before -ActualPath $cardMode -MinDiff 8
+  if ((Get-FlowDeckBuilderEntryVisualCheck -Path $cardMode).ok) {
+    Stop-FlowWithFailure -Context $Context -FailureClass "visual-state-mismatch" -Step "deck-builder-edit-card-mode-visible" -Message "Card-selection mode still matched the normal DeckScene signature."
+  }
+  # ponytail: these fixed 1280x720 ROIs cover the closed D3 geometry; replace
+  # them with scene-layout geometry if the accepted display baseline changes.
+  $candidateEnterDiff = Get-FlowScreenshotRegionDiffScore -ExpectedPath $before -ActualPath $cardMode -RegionX 174 -RegionY 174 -RegionWidth 104 -RegionHeight 146
+  if ($null -eq $candidateEnterDiff -or $candidateEnterDiff -lt 20) {
+    Stop-FlowWithFailure -Context $Context -FailureClass "visual-state-mismatch" -Step "deck-builder-edit-card-mode-candidate-visible" -Message "The sole serial-2 candidate did not visibly enter its card-mode ROI. diff=$candidateEnterDiff"
+  }
+
+  Move-FlowRequestCursorToEnd -Context $Context
+  Invoke-FlowTap -Context $Context -Name "select-deck-builder-card-serial-2" -X 226 -Y 247
+  $selectProbe = Wait-FlowServerEventOptional -Context $Context -Step "deck-builder-edit-select-no-route" -Tag "connect_app_probe" -Path "" -TimeoutSeconds 3
+  if ($selectProbe) {
+    Stop-FlowWithFailure -Context $Context -FailureClass "route-param-mismatch" -Step "deck-builder-edit-select-no-route" -Message "Selecting serial 2 unexpectedly emitted $($selectProbe.path)."
+  }
+  Assert-FlowClientAlive -Context $Context -Step "deck-builder-edit-card-accepted-alive"
+  $cardAccepted = Capture-FlowScreenshot -Context $Context -Name "deck-builder-edit-card-accepted"
+  Assert-FlowScreenshotDiff -Context $Context -Step "deck-builder-edit-card-accepted-visible" -ExpectedPath $cardMode -ActualPath $cardAccepted -MinDiff 3
+  if ((Get-FlowDeckBuilderEntryVisualCheck -Path $cardAccepted).ok) {
+    Stop-FlowWithFailure -Context $Context -FailureClass "visual-state-mismatch" -Step "deck-builder-edit-card-accepted-visible" -Message "Card selection returned to normal DeckScene before the explicit return action."
+  }
+  $candidateDiff = Get-FlowScreenshotRegionDiffScore -ExpectedPath $cardMode -ActualPath $cardAccepted -RegionX 174 -RegionY 174 -RegionWidth 104 -RegionHeight 146
+  if ($null -eq $candidateDiff -or $candidateDiff -lt 20) {
+    Stop-FlowWithFailure -Context $Context -FailureClass "visual-state-mismatch" -Step "deck-builder-edit-card-accepted-visible" -Message "The sole serial-2 candidate did not visibly leave its card-mode ROI. diff=$candidateDiff"
+  }
+  $returnTabDiff = Get-FlowScreenshotRegionDiffScore -ExpectedPath $cardMode -ActualPath $cardAccepted -RegionX 1115 -RegionY 30 -RegionWidth 50 -RegionHeight 660
+  if ($null -eq $returnTabDiff -or $returnTabDiff -gt 8) {
+    Stop-FlowWithFailure -Context $Context -FailureClass "visual-state-mismatch" -Step "deck-builder-edit-card-mode-retained" -Message "The mode-1 return tab changed before the explicit return action. diff=$returnTabDiff"
+  }
+
+  Move-FlowRequestCursorToEnd -Context $Context
+  Invoke-FlowTap -Context $Context -Name "return-deck-builder-edit-mode" -X 1144 -Y 360
+  $returnProbe = Wait-FlowServerEventOptional -Context $Context -Step "deck-builder-edit-return-no-route" -Tag "connect_app_probe" -Path "" -TimeoutSeconds 3
+  if ($returnProbe) {
+    Stop-FlowWithFailure -Context $Context -FailureClass "route-param-mismatch" -Step "deck-builder-edit-return-no-route" -Message "Returning to deck-edit mode unexpectedly emitted $($returnProbe.path)."
+  }
+  Assert-FlowClientAlive -Context $Context -Step "deck-builder-edit-returned-alive"
+  $returned = Capture-FlowScreenshot -Context $Context -Name "deck-builder-edit-returned"
+  Assert-FlowScreenshotDiff -Context $Context -Step "deck-builder-edit-returned-visible" -ExpectedPath $cardAccepted -ActualPath $returned -MinDiff 8
+  Assert-FlowDeckBuilderEntryVisual -Context $Context -Step "deck-builder-edit-normal-mode-restored" -Path $returned
+
+  $slot0Diff = Get-FlowScreenshotRegionDiffScore -ExpectedPath $before -ActualPath $returned -RegionX 176 -RegionY 5 -RegionWidth 144 -RegionHeight 143
+  $slot1Diff = Get-FlowScreenshotRegionDiffScore -ExpectedPath $before -ActualPath $returned -RegionX 335 -RegionY 5 -RegionWidth 144 -RegionHeight 143
+  if ($null -eq $slot0Diff -or $slot0Diff -gt 8 -or $null -eq $slot1Diff -or $slot1Diff -lt 20) {
+    Stop-FlowWithFailure -Context $Context -FailureClass "visual-state-mismatch" -Step "deck-builder-edit-slot-state" -Message "Expected slot0 stable and slot1 changed. slot0Diff=$slot0Diff slot1Diff=$slot1Diff"
+  }
+
+  $finalSaveText = [System.IO.File]::ReadAllText($Context.playerSave, [System.Text.Encoding]::UTF8)
+  $finalSaveHash = (Get-FileHash -LiteralPath $Context.playerSave -Algorithm SHA256).Hash
+  if ($finalSaveText -cne $initialSaveText -or $finalSaveHash -ne $initialSaveHash) {
+    Stop-FlowWithFailure -Context $Context -FailureClass "player-save-mismatch" -Step "deck-builder-edit-save-unchanged" -Message "The artifact player save changed during the client-local D4 edit. before=$initialSaveHash after=$finalSaveHash"
+  }
+  Add-FlowEvent -Context $Context -Type "deck-builder-edit-ok" -Data ([ordered]@{
+      taps = @(
+        [ordered]@{ x = 127; y = 360; action = "slider_right" },
+        [ordered]@{ x = 226; y = 247; action = "select_serial_2" },
+        [ordered]@{ x = 1144; y = 360; action = "slider_left" }
+      )
+      quietSecondsPerAction = 3
+      candidateEnterDiff = $candidateEnterDiff
+      candidateDiff = $candidateDiff
+      returnTabDiff = $returnTabDiff
+      slot0Diff = $slot0Diff
+      slot1Diff = $slot1Diff
+      playerSaveSha256 = $finalSaveHash
+      persisted = $false
+    })
+}
+
+function Invoke-FlowDeckBuilderSaveSmoke {
+  param($Context)
+
+  $initialSaveText = [System.IO.File]::ReadAllText($Context.playerSave, [System.Text.Encoding]::UTF8)
+  $initialSaveHash = (Get-FileHash -LiteralPath $Context.playerSave -Algorithm SHA256).Hash
+  Invoke-FlowDeckBuilderEditSmoke -Context $Context
+
+  $beforeSave = Capture-FlowScreenshot -Context $Context -Name "deck-builder-save-before"
+  Assert-FlowDeckBuilderEntryVisual -Context $Context -Step "deck-builder-save-before-visible" -Path $beforeSave
+  Move-FlowRequestCursorToEnd -Context $Context
+  $preTapCursor = [int]$Context.requestCursor
+
+  Invoke-FlowTap -Context $Context -Name "decide-deck-builder-save" -X 1090 -Y 95
+  $saveProbe = Wait-FlowServerEvent -Context $Context -Step "deck-builder-save-probe" -Tag "connect_app_probe" -Path "/connect/app/cardselect/savedeckcard" -TimeoutSeconds 25 -NoEventFailureClass "tap-no-effect"
+  $saveParams = Get-FlowEventDecryptedParams -Event $saveProbe
+  if (-not (Test-FlowDeckBuilderSaveParams -Params $saveParams)) {
+    $actualParams = $saveParams | ConvertTo-Json -Compress
+    Stop-FlowWithFailure -Context $Context -FailureClass "route-param-mismatch" -Step "deck-builder-save-probe" -Message "Expected exact case-sensitive C/lr deck-save params; saw $actualParams."
+  }
+
+  $duplicateProbe = Wait-FlowServerEventOptional -Context $Context -Step "deck-builder-save-no-duplicate" -Tag "connect_app_probe" -Path "/connect/app/cardselect/savedeckcard" -TimeoutSeconds 3
+  if ($duplicateProbe) {
+    Stop-FlowWithFailure -Context $Context -FailureClass "duplicate-route" -Step "deck-builder-save-no-duplicate" -Message "A duplicate deck-save probe was emitted at server line $($duplicateProbe.index)."
+  }
+  $saveResponse = Wait-FlowServerEvent -Context $Context -Step "deck-builder-save-response" -Tag "connect_app_response" -Path "/connect/app/cardselect/savedeckcard" -TimeoutSeconds 10
+
+  Assert-FlowClientAlive -Context $Context -Step "deck-builder-save-response-alive"
+  $afterResponse = Capture-FlowScreenshot -Context $Context -Name "deck-builder-save-response"
+  $responseDiff = Get-FlowScreenshotDiffScore -ExpectedPath $beforeSave -ActualPath $afterResponse
+  if ($null -eq $responseDiff) {
+    Stop-FlowWithFailure -Context $Context -FailureClass "visual-state-mismatch" -Step "deck-builder-save-response-capture" -Message "Could not score the diagnostic post-response screenshot."
+  }
+  $deckSceneCheck = Get-FlowDeckBuilderEntryVisualCheck -Path $afterResponse
+
+  $events = @(Sync-FlowServerEvents -Context $Context)
+  $saveProbes = @($events | Where-Object {
+      [int]$_.index -ge $preTapCursor -and
+      $_.tag -eq "connect_app_probe" -and
+      $_.path -eq "/connect/app/cardselect/savedeckcard"
+    })
+  if ($saveProbes.Count -ne 1) {
+    Stop-FlowWithFailure -Context $Context -FailureClass "duplicate-route" -Step "deck-builder-save-probe-count" -Message "Expected exactly one deck-save probe after the decide cursor; saw $($saveProbes.Count)."
+  }
+  $followupRequests = @($events | Where-Object {
+      [int]$_.index -gt [int]$saveResponse.index -and $_.tag -eq "connect_app_probe" -and $_.path
+    } | ForEach-Object {
+      [ordered]@{ path = $_.path; decryptedParams = $_.decryptedParams }
+    })
+
+  $finalSaveText = [System.IO.File]::ReadAllText($Context.playerSave, [System.Text.Encoding]::UTF8)
+  $finalSaveHash = (Get-FileHash -LiteralPath $Context.playerSave -Algorithm SHA256).Hash
+  if ($finalSaveText -cne $initialSaveText -or $finalSaveHash -ne $initialSaveHash) {
+    Stop-FlowWithFailure -Context $Context -FailureClass "player-save-mismatch" -Step "deck-builder-save-unchanged" -Message "The capture-only D5 request changed the artifact save. before=$initialSaveHash after=$finalSaveHash"
+  }
+
+  Add-FlowEvent -Context $Context -Type "deck-builder-save-captured" -Data ([ordered]@{
+      request = [ordered]@{
+        path = $saveProbe.path
+        decryptedParams = $saveParams
+        preTapCursor = $preTapCursor
+        probeIndex = $saveProbe.index
+        countFromPreTapCursor = $saveProbes.Count
+      }
+      response = $saveResponse.payload
+      responseClaim = "diagnostic-only"
+      responseScreenshot = $afterResponse
+      responseDiff = $responseDiff
+      deckSceneClassifier = $deckSceneCheck
+      followupRequests = $followupRequests
+      playerSaveBeforeSha256 = $initialSaveHash
+      playerSaveAfterSha256 = $finalSaveHash
+      playerSaveBytesUnchanged = $true
+      persisted = $false
+    })
+}
+
+function Invoke-FlowGachaDrawSmoke {
+  param(
+    $Context,
+    [string]$DrawKind = "friendship"
+  )
+
+  $mainmenuCoords = Get-FlowMainmenuRouteCoords
+  $gachaCoords = Get-FlowGachaCoords
+  Start-Sleep -Seconds 2
+  Assert-FlowClientAlive -Context $Context -Step "gacha-draw-ready"
+  $baseline = Capture-FlowScreenshot -Context $Context -Name "gacha-draw-mainmenu-baseline"
+  Move-FlowRequestCursorToEnd -Context $Context
+
+  $expectedPage = "main"
+  Invoke-FlowOpenMainmenuRoute -Context $Context -Name "open-gacha-select" -X $mainmenuCoords.gacha.x -Y $mainmenuCoords.gacha.y -Path "/connect/app/gacha/select/getcontents" -Fields @{ command = "gacha"; nextScene = 9100; gachaPage = $expectedPage }
+  $selectScreenshot = Join-Path $Context.screenshotsDir "open-gacha-select.png"
+  Assert-FlowScreenshotDiff -Context $Context -Step "open-gacha-select-visual-open" -ExpectedPath $baseline -ActualPath $selectScreenshot -MinDiff 20
+  Move-FlowRequestCursorToEnd -Context $Context
+
+  if ($DrawKind -eq "paid") {
+    Capture-FlowScreenshot -Context $Context -Name "gacha-main-paid-entry" | Out-Null
+  }
+  $drawCoord = if ($DrawKind -eq "paid") { $gachaCoords.paidOne } else { $gachaCoords.drawOne }
+  $expectedProductId = if ($DrawKind -eq "paid") { "2" } else { "1" }
+  $expectedBulk = if ($DrawKind -eq "paid") { "0" } else { "1" }
+  $expectedAutoBuild = if ($DrawKind -eq "paid") { "0" } else { "1" }
+  Invoke-FlowTap -Context $Context -Name "tap-gacha-$DrawKind-draw-one" -X $drawCoord.x -Y $drawCoord.y
+  if ($DrawKind -eq "paid") {
+    Start-Sleep -Seconds 1
+    Capture-FlowScreenshot -Context $Context -Name "gacha-paid-confirm" | Out-Null
+    Invoke-FlowTap -Context $Context -Name "tap-gacha-paid-confirm" -X $gachaCoords.paidConfirm.x -Y $gachaCoords.paidConfirm.y
+  }
+  $probe = Wait-FlowServerEventOptional -Context $Context -Step "tap-gacha-$DrawKind-draw-one-probe" -Tag "connect_app_probe" -Path "" -TimeoutSeconds 12
+  if (-not $probe) {
+    Capture-FlowScreenshot -Context $Context -Name "gacha-draw-no-route" | Out-Null
+    Stop-FlowWithFailure -Context $Context -FailureClass "tap-no-effect" -Step "tap-gacha-$DrawKind-draw-one" -Message "Tapping the gacha $DrawKind draw candidate did not emit a route."
+  }
+  if ($probe.path -notmatch "^/connect/app/gacha/") {
+    Stop-FlowWithFailure -Context $Context -FailureClass "route-param-mismatch" -Step "tap-gacha-$DrawKind-draw-one" -Message "Unexpected route after gacha draw tap: $($probe.path)."
+  }
+  $probeParams = Get-FlowEventDecryptedParams -Event $probe
+  if (-not (Test-FlowGachaBuyParams -Params $probeParams -ProductId $expectedProductId -Bulk $expectedBulk -AutoBuild $expectedAutoBuild)) {
+    Stop-FlowWithFailure -Context $Context -FailureClass "route-param-mismatch" -Step "tap-gacha-$DrawKind-draw-one" -Message "Expected exact gacha params product_id=$expectedProductId, bulk=$expectedBulk, auto_build=$expectedAutoBuild after $DrawKind draw."
+  }
+  $response = Wait-FlowServerEventOptional -Context $Context -Step "tap-gacha-$DrawKind-draw-one-response" -Tag "connect_app_response" -Path $probe.path -TimeoutSeconds 10
+  if (-not $response) {
+    Capture-FlowScreenshot -Context $Context -Name "gacha-draw-route-no-response" | Out-Null
+    Stop-FlowWithFailure -Context $Context -FailureClass "route-timeout" -Step "tap-gacha-$DrawKind-draw-one-response" -Message "Gacha draw route $($probe.path) emitted but no response log was captured."
+  }
+  Start-Sleep -Seconds 4
+  Assert-FlowClientAlive -Context $Context -Step "tap-gacha-$DrawKind-draw-one-after-response"
+  Capture-FlowScreenshot -Context $Context -Name "gacha-draw-after-route" | Out-Null
+  Add-FlowEvent -Context $Context -Type "gacha-draw-route-captured" -Data ([ordered]@{
+      drawKind = $DrawKind
+      path = $probe.path
+      decryptedParams = $probeParams
+      response = $response.payload
+    })
+}
+
+function Invoke-FlowGachaResultSmoke {
+  param(
+    $Context,
+    [string]$DrawKind = "friendship"
+  )
+
+  $gachaCoords = Get-FlowGachaCoords
+  Invoke-FlowGachaDrawSmoke -Context $Context -DrawKind $DrawKind
+  $drawScene = Join-Path $Context.screenshotsDir "gacha-draw-after-route.png"
+  Move-FlowRequestCursorToEnd -Context $Context
+
+  Invoke-FlowTap -Context $Context -Name "tap-gacha-draw-touch-screen" -X $gachaCoords.touchResult.x -Y $gachaCoords.touchResult.y
+  $probe = Wait-FlowServerEventOptional -Context $Context -Step "tap-gacha-draw-touch-screen-probe" -Tag "connect_app_probe" -Path "" -TimeoutSeconds 15
+  $response = $null
+  if ($probe) {
+    if ($probe.path -notmatch "^/connect/app/gacha/") {
+      Stop-FlowWithFailure -Context $Context -FailureClass "route-param-mismatch" -Step "tap-gacha-draw-touch-screen" -Message "Unexpected route after gacha draw touch: $($probe.path)."
+    }
+    $response = Wait-FlowServerEventOptional -Context $Context -Step "tap-gacha-draw-touch-screen-response" -Tag "connect_app_response" -Path $probe.path -TimeoutSeconds 10
+  }
+
+  Start-Sleep -Seconds 4
+  Assert-FlowClientAlive -Context $Context -Step "tap-gacha-draw-touch-screen-after"
+  $afterTouch = Capture-FlowScreenshot -Context $Context -Name "gacha-result-after-touch"
+  Assert-FlowScreenshotDiff -Context $Context -Step "gacha-result-visual-transition" -ExpectedPath $drawScene -ActualPath $afterTouch -MinDiff 8
+  Add-FlowEvent -Context $Context -Type "gacha-result-edge-captured" -Data ([ordered]@{
+      route = if ($probe) { $probe.path } else { "" }
+      decryptedParams = if ($probe) { $probe.decryptedParams } else { @{} }
+      response = if ($response) { $response.payload } else { @{} }
+      localTransition = [bool](-not $probe)
+    })
+}
+
+function Invoke-FlowGachaResultBackSmoke {
+  param(
+    $Context,
+    [string]$DrawKind = "friendship"
+  )
+
+  $gachaCoords = Get-FlowGachaCoords
+  Invoke-FlowGachaResultSmoke -Context $Context -DrawKind $DrawKind
+  $resultScreenshot = Join-Path $Context.screenshotsDir "gacha-result-after-touch.png"
+  Move-FlowRequestCursorToEnd -Context $Context
+
+  Invoke-FlowTap -Context $Context -Name "tap-gacha-result-back" -X $gachaCoords.resultBack.x -Y $gachaCoords.resultBack.y
+  $probe = Wait-FlowServerEventOptional -Context $Context -Step "tap-gacha-result-back-probe" -Tag "connect_app_probe" -Path "" -TimeoutSeconds 12
+  $mode = "local"
+  $response = $null
+  if ($probe) {
+    if ($probe.path -eq "/connect/app/gacha/select/getcontents") {
+      $mode = "gacha-select"
+      $response = Wait-FlowServerEvent -Context $Context -Step "tap-gacha-result-back-select-response" -Tag "connect_app_response" -Path $probe.path -Fields @{ command = "gacha"; nextScene = 9100 } -TimeoutSeconds 10
+    } elseif ($probe.path -eq "/connect/app/mainmenu") {
+      $mode = "mainmenu"
+      $response = Wait-FlowServerEvent -Context $Context -Step "tap-gacha-result-back-mainmenu-response" -Tag "connect_app_response" -Path $probe.path -TimeoutSeconds 10
+    } else {
+      Stop-FlowWithFailure -Context $Context -FailureClass "route-param-mismatch" -Step "tap-gacha-result-back" -Message "Unexpected route after gacha result back: $($probe.path)."
+    }
+  } else {
+    Wait-FlowServerQuiet -Context $Context -Step "tap-gacha-result-back-local-settle" -QuietSeconds 2 -TimeoutSeconds 10
+    Move-FlowRequestCursorToEnd -Context $Context
+  }
+
+  Start-Sleep -Seconds 3
+  Assert-FlowClientAlive -Context $Context -Step "tap-gacha-result-back-after"
+  $afterBack = Capture-FlowScreenshot -Context $Context -Name "gacha-result-after-back"
+  Assert-FlowScreenshotDiff -Context $Context -Step "gacha-result-back-visual-transition" -ExpectedPath $resultScreenshot -ActualPath $afterBack -MinDiff 8
+  Add-FlowEvent -Context $Context -Type "gacha-result-back-captured" -Data ([ordered]@{
+      mode = $mode
+      route = if ($probe) { $probe.path } else { "" }
+      decryptedParams = if ($probe) { $probe.decryptedParams } else { @{} }
+      response = if ($response) { $response.payload } else { @{} }
+    })
+}
+
+function Invoke-FlowGachaPaidRetrySmoke {
+  param($Context)
+
+  $gachaCoords = Get-FlowGachaCoords
+  Invoke-FlowGachaResultSmoke -Context $Context -DrawKind "paid"
+  $firstResult = Join-Path $Context.screenshotsDir "gacha-result-after-touch.png"
+  Move-FlowRequestCursorToEnd -Context $Context
+
+  Invoke-FlowTap -Context $Context -Name "tap-gacha-paid-result-retry" -X $gachaCoords.resultRetry.x -Y $gachaCoords.resultRetry.y
+  Start-Sleep -Seconds 1
+  $retryConfirm = Capture-FlowScreenshot -Context $Context -Name "gacha-paid-retry-confirm"
+  Assert-FlowScreenshotDiff -Context $Context -Step "gacha-paid-retry-confirm-visible" -ExpectedPath $firstResult -ActualPath $retryConfirm -MinDiff 8
+
+  Invoke-FlowTap -Context $Context -Name "tap-gacha-paid-retry-confirm" -X $gachaCoords.paidConfirm.x -Y $gachaCoords.paidConfirm.y
+  $retryProbe = Wait-FlowServerEvent -Context $Context -Step "gacha-paid-retry-probe" -Tag "connect_app_probe" -Path "/connect/app/gacha/buy" -Params @{
+    product_id = "2"
+    bulk = "0"
+    auto_build = "0"
+  } -TimeoutSeconds 15 -NoEventFailureClass "tap-no-effect"
+  $retryResponse = Wait-FlowServerEvent -Context $Context -Step "gacha-paid-retry-response" -Tag "connect_app_response" -Path "/connect/app/gacha/buy" -Fields @{
+    source = "gacha buy settlement"
+    command = "gacha_buy"
+    nextScene = 9200
+    productId = 2
+    bulk = 1
+    friendshipBefore = 0
+    friendshipCost = 0
+    friendshipAfter = 0
+    mcBefore = 300
+    mcCost = 300
+    mcAfter = 0
+    drawnSerialId = 3
+    drawnMasterCardId = 9
+    ownerCardCount = 3
+    cardsDrawn = 2
+    saved = $true
+  } -TimeoutSeconds 10
+
+  Start-Sleep -Seconds 4
+  Assert-FlowClientAlive -Context $Context -Step "gacha-paid-retry-after-response"
+  $retryDraw = Capture-FlowScreenshot -Context $Context -Name "gacha-paid-retry-draw-after-route"
+  Assert-FlowScreenshotDiff -Context $Context -Step "gacha-paid-retry-draw-transition" -ExpectedPath $firstResult -ActualPath $retryDraw -MinDiff 8
+  Move-FlowRequestCursorToEnd -Context $Context
+
+  Invoke-FlowTap -Context $Context -Name "tap-gacha-paid-retry-draw-touch-screen" -X $gachaCoords.touchResult.x -Y $gachaCoords.touchResult.y
+  $resultProbe = Wait-FlowServerEventOptional -Context $Context -Step "gacha-paid-retry-result-probe" -Tag "connect_app_probe" -Path "" -TimeoutSeconds 15
+  if ($resultProbe) {
+    Stop-FlowWithFailure -Context $Context -FailureClass "route-param-mismatch" -Step "gacha-paid-retry-result" -Message "The accepted draw-to-result edge is local, but retry emitted route $($resultProbe.path)."
+  }
+
+  Start-Sleep -Seconds 4
+  Assert-FlowClientAlive -Context $Context -Step "gacha-paid-retry-result-after"
+  $secondResult = Capture-FlowScreenshot -Context $Context -Name "gacha-paid-retry-result"
+  Assert-FlowScreenshotDiff -Context $Context -Step "gacha-paid-retry-result-transition" -ExpectedPath $retryDraw -ActualPath $secondResult -MinDiff 8
+  Assert-FlowGachaPaidRetryPlayerSave -Context $Context
+  Add-FlowEvent -Context $Context -Type "gacha-paid-retry-edge-ok" -Data ([ordered]@{
+      route = $retryProbe.path
+      decryptedParams = $retryProbe.decryptedParams
+      response = $retryResponse.payload
+      resultRoute = ""
+      localResultTransition = $true
+    })
+}
+
+function Invoke-FlowGachaSettlementDeckSmoke {
+  param($Context)
+
+  $mainmenuCoords = Get-FlowMainmenuRouteCoords
+  Invoke-FlowGachaResultBackSmoke -Context $Context
+  Sync-FlowServerEvents -Context $Context | Out-Null
+  $buyResponse = @(
+    $Context.requestEvents |
+      Where-Object { $_.tag -eq "connect_app_response" -and $_.path -eq "/connect/app/gacha/buy" } |
+      Select-Object -Last 1
+  )
+  $expectedBuyFields = @{
+    source = "gacha buy settlement"
+    command = "gacha_buy"
+    nextScene = 9200
+    productId = 1
+    bulk = 1
+    friendshipBefore = 400
+    friendshipCost = 200
+    friendshipAfter = 200
+    drawnSerialId = 2
+    drawnMasterCardId = 9
+    ownerCardCount = 2
+    cardsDrawn = 1
+    saved = $true
+  }
+  if ($buyResponse.Count -eq 0 -or -not (Test-FlowExpectedMap -Actual $buyResponse[0].payload -Expected $expectedBuyFields)) {
+    Stop-FlowWithFailure -Context $Context -FailureClass "gacha-settlement-response-mismatch" -Step "gacha-settlement-buy-response" -Message "Gacha buy settlement response was missing or did not match expected settlement fields."
+  }
+  Assert-FlowGachaSettlementPlayerSave -Context $Context
+
+  $mainmenuBaseline = Join-Path $Context.screenshotsDir "gacha-draw-mainmenu-baseline.png"
+  $returnedMainmenu = Invoke-FlowReturnToMainmenuRetry -Context $Context -Name "return-from-gacha-select-after-settlement" -BaselineScreenshot $mainmenuBaseline
+  Move-FlowRequestCursorToEnd -Context $Context
+
+  Invoke-FlowTap -Context $Context -Name "open-deck-after-gacha-settlement" -X $mainmenuCoords.deck.x -Y $mainmenuCoords.deck.y
+  $deckProbe = Wait-FlowServerEvent -Context $Context -Step "open-deck-after-gacha-settlement-probe" -Tag "connect_app_probe" -Path "/connect/app/roundtable/edit" -Params @{ move = "1" } -TimeoutSeconds 25 -NoEventFailureClass "tap-no-effect"
+  $deckResponse = Wait-FlowServerEvent -Context $Context -Step "open-deck-after-gacha-settlement-response" -Tag "connect_app_response" -Path "/connect/app/roundtable/edit" -Fields @{
+    command = "round_table"
+    nextScene = 83200
+    ownerCardCount = 2
+  } -TimeoutSeconds 10
+  Start-Sleep -Seconds 3
+  Assert-FlowClientAlive -Context $Context -Step "open-deck-after-gacha-settlement-after-response"
+  Capture-FlowScreenshot -Context $Context -Name "open-deck-after-gacha-settlement" | Out-Null
+  Add-FlowEvent -Context $Context -Type "deck-route-after-gacha-settlement" -Data ([ordered]@{
+      path = $deckProbe.path
+      decryptedParams = $deckProbe.decryptedParams
+      response = $deckResponse.payload
+    })
+  $serialIds = @(Get-FlowProperty -Object $deckResponse.payload -Name "ownerCardSerialIds")
+  $masterCardIds = @(Get-FlowProperty -Object $deckResponse.payload -Name "ownerCardMasterCardIds")
+  if (-not ($serialIds -contains 2) -or -not ($masterCardIds -contains 9)) {
+    Stop-FlowWithFailure -Context $Context -FailureClass "deck-owned-card-mismatch" -Step "deck-after-gacha-settlement-response" -Message "Deck entry did not report the drawn card. serialIds=$($serialIds -join ',') masterCardIds=$($masterCardIds -join ',')."
+  }
+  $deckScreenshot = Join-Path $Context.screenshotsDir "open-deck-after-gacha-settlement.png"
+  Assert-FlowScreenshotDiff -Context $Context -Step "open-deck-after-gacha-settlement-visual-open" -ExpectedPath $returnedMainmenu -ActualPath $deckScreenshot -MinDiff 20
+  Add-FlowEvent -Context $Context -Type "gacha-settlement-deck-ok" -Data ([ordered]@{
+      serialId = 2
+      masterCardId = 9
+      friendshipPoint = 200
+      ownerCardSerialIds = $serialIds
+      ownerCardMasterCardIds = $masterCardIds
+    })
+}
+
+function Invoke-FlowGachaPaidSettlementDeckSmoke {
+  param($Context)
+
+  $mainmenuCoords = Get-FlowMainmenuRouteCoords
+  Invoke-FlowGachaResultBackSmoke -Context $Context -DrawKind "paid"
+  Sync-FlowServerEvents -Context $Context | Out-Null
+  $buyResponse = @(
+    $Context.requestEvents |
+      Where-Object { $_.tag -eq "connect_app_response" -and $_.path -eq "/connect/app/gacha/buy" } |
+      Select-Object -Last 1
+  )
+  $expectedBuyFields = @{
+    source = "gacha buy settlement"
+    command = "gacha_buy"
+    nextScene = 9200
+    productId = 2
+    bulk = 1
+    friendshipBefore = 0
+    friendshipCost = 0
+    friendshipAfter = 0
+    mcBefore = 300
+    mcCost = 300
+    mcAfter = 0
+    drawnSerialId = 2
+    drawnMasterCardId = 9
+    ownerCardCount = 2
+    cardsDrawn = 1
+    saved = $true
+  }
+  if ($buyResponse.Count -eq 0 -or -not (Test-FlowExpectedMap -Actual $buyResponse[0].payload -Expected $expectedBuyFields)) {
+    Stop-FlowWithFailure -Context $Context -FailureClass "gacha-paid-settlement-response-mismatch" -Step "gacha-paid-settlement-buy-response" -Message "Paid gacha buy settlement response was missing or did not match expected settlement fields."
+  }
+  Assert-FlowGachaPaidSettlementPlayerSave -Context $Context
+
+  $mainmenuBaseline = Join-Path $Context.screenshotsDir "gacha-draw-mainmenu-baseline.png"
+  $returnedMainmenu = Invoke-FlowReturnToMainmenuRetry -Context $Context -Name "return-from-paid-gacha-select-after-settlement" -BaselineScreenshot $mainmenuBaseline
+  Move-FlowRequestCursorToEnd -Context $Context
+
+  Invoke-FlowTap -Context $Context -Name "open-deck-after-paid-gacha-settlement" -X $mainmenuCoords.deck.x -Y $mainmenuCoords.deck.y
+  $deckProbe = Wait-FlowServerEvent -Context $Context -Step "open-deck-after-paid-gacha-settlement-probe" -Tag "connect_app_probe" -Path "/connect/app/roundtable/edit" -Params @{ move = "1" } -TimeoutSeconds 25 -NoEventFailureClass "tap-no-effect"
+  $deckResponse = Wait-FlowServerEvent -Context $Context -Step "open-deck-after-paid-gacha-settlement-response" -Tag "connect_app_response" -Path "/connect/app/roundtable/edit" -Fields @{
+    command = "round_table"
+    nextScene = 83200
+    ownerCardCount = 2
+  } -TimeoutSeconds 10
+  Start-Sleep -Seconds 3
+  Assert-FlowClientAlive -Context $Context -Step "open-deck-after-paid-gacha-settlement-after-response"
+  Capture-FlowScreenshot -Context $Context -Name "open-deck-after-paid-gacha-settlement" | Out-Null
+  Add-FlowEvent -Context $Context -Type "deck-route-after-paid-gacha-settlement" -Data ([ordered]@{
+      path = $deckProbe.path
+      decryptedParams = $deckProbe.decryptedParams
+      response = $deckResponse.payload
+    })
+  $serialIds = @(Get-FlowProperty -Object $deckResponse.payload -Name "ownerCardSerialIds")
+  $masterCardIds = @(Get-FlowProperty -Object $deckResponse.payload -Name "ownerCardMasterCardIds")
+  if (-not ($serialIds -contains 2) -or -not ($masterCardIds -contains 9)) {
+    Stop-FlowWithFailure -Context $Context -FailureClass "deck-owned-card-mismatch" -Step "deck-after-paid-gacha-settlement-response" -Message "Deck entry did not report the paid drawn card. serialIds=$($serialIds -join ',') masterCardIds=$($masterCardIds -join ',')."
+  }
+  $deckScreenshot = Join-Path $Context.screenshotsDir "open-deck-after-paid-gacha-settlement.png"
+  Assert-FlowScreenshotDiff -Context $Context -Step "open-deck-after-paid-gacha-settlement-visual-open" -ExpectedPath $returnedMainmenu -ActualPath $deckScreenshot -MinDiff 20
+  Add-FlowEvent -Context $Context -Type "gacha-paid-settlement-deck-ok" -Data ([ordered]@{
+      serialId = 2
+      masterCardId = 9
+      mc = 0
+      friendshipPoint = 0
+      ownerCardSerialIds = $serialIds
+      ownerCardMasterCardIds = $masterCardIds
+    })
 }
 
 function Invoke-FlowMenuButtonsRouteSmoke {
@@ -2390,7 +3642,11 @@ function Invoke-FlowSelfCheck {
       '[2026-01-01T00:00:08.000Z] connect_app_probe {"path":"/connect/app/town/lvup_status","decryptedParams":{}}',
       '[2026-01-01T00:00:08.100Z] connect_app_response {"path":"/connect/app/town/lvup_status","source":"minimal town lvup status","nextScene":84100,"level":18,"profileExp":0,"nextExp":2100,"apCurrent":25,"apMax":25,"bcCurrent":25,"bcMax":25,"abilityPoints":3}',
       '[2026-01-01T00:00:09.000Z] connect_app_probe {"path":"/connect/app/town/pointsetting","decryptedParams":{"ap":"3","bc":"0"}}',
-      '[2026-01-01T00:00:09.100Z] connect_app_response {"path":"/connect/app/town/pointsetting","source":"minimal town pointsetting","nextScene":2100,"requestedAp":3,"requestedBc":0,"apAllocated":3,"bcAllocated":0,"remainingAbilityPoints":0,"apCurrent":28,"apMax":28,"bcCurrent":25,"bcMax":25,"abilityPoints":0,"saved":true}'
+      '[2026-01-01T00:00:09.100Z] connect_app_response {"path":"/connect/app/town/pointsetting","source":"minimal town pointsetting","nextScene":2100,"requestedAp":3,"requestedBc":0,"apAllocated":3,"bcAllocated":0,"remainingAbilityPoints":0,"apCurrent":28,"apMax":28,"bcCurrent":25,"bcMax":25,"abilityPoints":0,"saved":true}',
+      '[2026-01-01T00:00:10.000Z] connect_app_response {"path":"/connect/app/gacha/buy","source":"gacha buy settlement","command":"gacha_buy","nextScene":9200,"productId":1,"bulk":1,"friendshipBefore":400,"friendshipCost":200,"friendshipAfter":200,"drawnSerialId":2,"drawnMasterCardId":9,"ownerCardCount":2,"cardsDrawn":1,"saved":true}',
+      '[2026-01-01T00:00:10.900Z] connect_app_probe {"path":"/connect/app/roundtable/edit","decryptedParams":{"move":"1"}}',
+      '[2026-01-01T00:00:11.000Z] connect_app_response {"path":"/connect/app/roundtable/edit","command":"round_table","nextScene":83200,"ownerCardCount":2,"ownerCardSerialIds":[1,2],"ownerCardMasterCardIds":[22,9]}',
+      '[2026-01-01T00:00:12.000Z] connect_app_response {"path":"/connect/app/gacha/buy","source":"gacha buy settlement","command":"gacha_buy","nextScene":9200,"productId":2,"bulk":1,"friendshipBefore":0,"friendshipCost":0,"friendshipAfter":0,"mcBefore":300,"mcCost":300,"mcAfter":0,"drawnSerialId":2,"drawnMasterCardId":9,"ownerCardCount":2,"cardsDrawn":1,"saved":true}'
     ) | Set-Content -LiteralPath $ctx.serverOut -Encoding UTF8
     Set-FlowApShortagePlayerSave -Context $ctx
     $initialApShortageSave = Read-FlowPlayerSave -Context $ctx -Step "self-ap-shortage-save-before"
@@ -2417,6 +3673,106 @@ function Invoke-FlowSelfCheck {
     $levelUpSave.progression.abilityPoints.bcAllocated = 0
     [System.IO.File]::WriteAllText($ctx.playerSave, ($levelUpSave | ConvertTo-Json -Depth 40) + [Environment]::NewLine, $utf8NoBom)
     Assert-FlowLevelUpPointsettingPlayerSave -Context $ctx
+    Set-FlowDeckBuilderEditPlayerSave -Context $ctx
+    $deckEditSave = Read-FlowPlayerSave -Context $ctx -Step "self-deck-builder-edit-seed"
+    $deckEditSerials = @($deckEditSave.cards.instances | ForEach-Object { [int]$_.serialId })
+    $deckEditMasters = @($deckEditSave.cards.instances | ForEach-Object { [int]$_.masterCardId })
+    $deckEditActiveDeck = @($deckEditSave.cards.decks | Where-Object { $_.id -eq $deckEditSave.cards.activeDeckId } | Select-Object -First 1)
+    if (
+      ($deckEditSerials -join ",") -ne "1,2" -or
+      ($deckEditMasters -join ",") -ne "22,9" -or
+      $deckEditActiveDeck.Count -ne 1 -or
+      (@($deckEditActiveDeck[0].cardInstanceIds) -join ",") -ne "1" -or
+      [int]$deckEditSave.profile.leaderSerialId -ne 1 -or
+      [int]$deckEditSave.cards.count -ne 2 -or
+      @($deckEditSave.gacha.history).Count -ne 0
+    ) {
+      throw "deck-builder edit seed does not preserve owned 1,2 / active deck 1 / leader 1 / untouched history"
+    }
+    $deckSaveCards = "1,2,empty,empty,empty,empty,empty,empty,empty,empty,empty,empty"
+    $deckSaveValid = @{ C = $deckSaveCards; lr = "1" }
+    $deckSaveExtra = @{ C = $deckSaveCards; lr = "1"; extra = "1" }
+    $deckSaveWrongCase = @{ c = $deckSaveCards; lr = "1" }
+    $deckSaveWrongValue = @{ C = $deckSaveCards; lr = "2" }
+    if (-not (Test-FlowDeckBuilderSaveParams -Params $deckSaveValid)) {
+      throw "deck-builder save param predicate rejected the valid exact fixture"
+    }
+    if (
+      (Test-FlowDeckBuilderSaveParams -Params $deckSaveExtra) -or
+      (Test-FlowDeckBuilderSaveParams -Params $deckSaveWrongCase) -or
+      (Test-FlowDeckBuilderSaveParams -Params $deckSaveWrongValue)
+    ) {
+      throw "deck-builder save param predicate accepted an extra-key, wrong-case, or wrong-value fixture"
+    }
+    $gachaFriendshipParams = @{ product_id = "1"; bulk = "1"; auto_build = "1" }
+    $gachaPaidParams = @{ product_id = "2"; bulk = "0"; auto_build = "0" }
+    $gachaExtraParams = @{ product_id = "1"; bulk = "1"; auto_build = "1"; extra = "1" }
+    if (
+      -not (Test-FlowGachaBuyParams -Params $gachaFriendshipParams -ProductId "1" -Bulk "1" -AutoBuild "1") -or
+      -not (Test-FlowGachaBuyParams -Params $gachaPaidParams -ProductId "2" -Bulk "0" -AutoBuild "0")
+    ) {
+      throw "gacha buy param predicate rejected an accepted friendship or paid fixture"
+    }
+    if (
+      (Test-FlowGachaBuyParams -Params $gachaExtraParams -ProductId "1" -Bulk "1" -AutoBuild "1") -or
+      (Test-FlowGachaBuyParams -Params $gachaPaidParams -ProductId "2" -Bulk "1" -AutoBuild "1")
+    ) {
+      throw "gacha buy param predicate accepted an extra-key or wrong-mode fixture"
+    }
+    Set-FlowGachaSettlementPlayerSave -Context $ctx
+    $gachaSave = Read-FlowPlayerSave -Context $ctx -Step "self-gacha-settlement-before"
+    $drawnCard = [pscustomobject]@{
+      serialId = 2
+      masterCardId = 9
+      holography = 0
+      hp = 450
+      power = 520
+      critical = 0
+      level = 1
+      maxLevel = 30
+      exp = 0
+      maxExp = 1800
+      nextExp = 60
+      expDiff = 0
+      expPercent = 0
+      salePrice = 120
+      materialPrice = 80
+      evolutionPrice = 100
+      plusLimitCount = 0
+      limitOver = 0
+    }
+    $gachaSave.currencies.friendshipPoint = 200
+    $gachaSave.cards.instances += $drawnCard
+    $gachaSave.cards.count = 2
+    $gachaSave.stats.cardsDrawn = 1
+    $gachaSave.gacha.history += [pscustomobject]@{ productId = 1; bulk = 1; serialId = 2; masterCardId = 9 }
+    [System.IO.File]::WriteAllText($ctx.playerSave, ($gachaSave | ConvertTo-Json -Depth 40) + [Environment]::NewLine, $utf8NoBom)
+    Assert-FlowGachaSettlementPlayerSave -Context $ctx
+    Set-FlowGachaPaidSettlementPlayerSave -Context $ctx
+    $paidGachaSave = Read-FlowPlayerSave -Context $ctx -Step "self-gacha-paid-settlement-before"
+    $paidGachaSave.currencies.mc = 0
+    $paidGachaSave.currencies.friendshipPoint = 0
+    $paidGachaSave.cards.instances += $drawnCard
+    $paidGachaSave.cards.count = 2
+    $paidGachaSave.stats.cardsDrawn = 1
+    $paidGachaSave.gacha.history += [pscustomobject]@{ productId = 2; bulk = 1; serialId = 2; masterCardId = 9 }
+    [System.IO.File]::WriteAllText($ctx.playerSave, ($paidGachaSave | ConvertTo-Json -Depth 40) + [Environment]::NewLine, $utf8NoBom)
+    Assert-FlowGachaPaidSettlementPlayerSave -Context $ctx
+    Set-FlowGachaPaidSettlementPlayerSave -Context $ctx -InitialMc 600 -ScenarioName "gacha-paid-retry-smoke"
+    $paidRetrySave = Read-FlowPlayerSave -Context $ctx -Step "self-gacha-paid-retry-before"
+    $retryCard2 = $drawnCard.PSObject.Copy()
+    $retryCard3 = $drawnCard.PSObject.Copy()
+    $retryCard3.serialId = 3
+    $paidRetrySave.currencies.mc = 0
+    $paidRetrySave.cards.instances += @($retryCard2, $retryCard3)
+    $paidRetrySave.cards.count = 3
+    $paidRetrySave.stats.cardsDrawn = 2
+    $paidRetrySave.gacha.history = @(
+      [pscustomobject]@{ productId = 2; bulk = 1; serialId = 2; masterCardId = 9 },
+      [pscustomobject]@{ productId = 2; bulk = 1; serialId = 3; masterCardId = 9 }
+    )
+    [System.IO.File]::WriteAllText($ctx.playerSave, ($paidRetrySave | ConvertTo-Json -Depth 40) + [Environment]::NewLine, $utf8NoBom)
+    Assert-FlowGachaPaidRetryPlayerSave -Context $ctx
     Wait-FlowServerEvent -Context $ctx -Step "self-floor" -Tag "connect_app_probe" -Path "/connect/app/exploration/floor" -Params @{ area_id = "0" } -TimeoutSeconds 2 | Out-Null
     Wait-FlowServerEvent -Context $ctx -Step "self-floor-response" -Tag "connect_app_response" -Path "/connect/app/exploration/floor" -Fields @{ regionId = 0; maxProgress = 10; maxProgressFloorId = 7 } -TimeoutSeconds 2 | Out-Null
     Wait-FlowServerEvent -Context $ctx -Step "self-get-floor" -Tag "connect_app_probe" -Path "/connect/app/exploration/get_floor" -Params @{ area_id = "0"; check = "1" } -TimeoutSeconds 2 | Out-Null
@@ -2437,6 +3793,20 @@ function Invoke-FlowSelfCheck {
     Wait-FlowServerEvent -Context $ctx -Step "self-levelup-status-response" -Tag "connect_app_response" -Path "/connect/app/town/lvup_status" -Fields @{ source = "minimal town lvup status"; nextScene = 84100; level = 18; profileExp = 0; nextExp = 2100; apCurrent = 25; apMax = 25; bcCurrent = 25; bcMax = 25; abilityPoints = 3 } -TimeoutSeconds 2 | Out-Null
     Wait-FlowServerEvent -Context $ctx -Step "self-levelup-pointsetting-probe" -Tag "connect_app_probe" -Path "/connect/app/town/pointsetting" -Params @{ ap = "3"; bc = "0" } -TimeoutSeconds 2 | Out-Null
     Wait-FlowServerEvent -Context $ctx -Step "self-levelup-pointsetting-response" -Tag "connect_app_response" -Path "/connect/app/town/pointsetting" -Fields @{ source = "minimal town pointsetting"; nextScene = 2100; requestedAp = 3; requestedBc = 0; apAllocated = 3; bcAllocated = 0; remainingAbilityPoints = 0; apCurrent = 28; apMax = 28; bcCurrent = 25; bcMax = 25; abilityPoints = 0; saved = $true } -TimeoutSeconds 2 | Out-Null
+    Wait-FlowServerEvent -Context $ctx -Step "self-gacha-settlement-response" -Tag "connect_app_response" -Path "/connect/app/gacha/buy" -Fields @{ source = "gacha buy settlement"; command = "gacha_buy"; nextScene = 9200; productId = 1; bulk = 1; friendshipBefore = 400; friendshipCost = 200; friendshipAfter = 200; drawnSerialId = 2; drawnMasterCardId = 9; ownerCardCount = 2; cardsDrawn = 1; saved = $true } -TimeoutSeconds 2 | Out-Null
+    Wait-FlowServerEvent -Context $ctx -Step "self-deck-entry-probe" -Tag "connect_app_probe" -Path "/connect/app/roundtable/edit" -Params @{ move = "1" } -TimeoutSeconds 2 | Out-Null
+    Wait-FlowServerEvent -Context $ctx -Step "self-gacha-deck-response" -Tag "connect_app_response" -Path "/connect/app/roundtable/edit" -Fields @{ command = "round_table"; nextScene = 83200; ownerCardCount = 2 } -TimeoutSeconds 2 | Out-Null
+    Wait-FlowServerEvent -Context $ctx -Step "self-gacha-paid-settlement-response" -Tag "connect_app_response" -Path "/connect/app/gacha/buy" -Fields @{ source = "gacha buy settlement"; command = "gacha_buy"; nextScene = 9200; productId = 2; bulk = 1; friendshipBefore = 0; friendshipCost = 0; friendshipAfter = 0; mcBefore = 300; mcCost = 300; mcAfter = 0; drawnSerialId = 2; drawnMasterCardId = 9; ownerCardCount = 2; cardsDrawn = 1; saved = $true } -TimeoutSeconds 2 | Out-Null
+    $unexpectedLeaderProbe = Wait-FlowServerEventOptional -Context $ctx -Step "self-deck-leader-no-route" -Tag "connect_app_probe" -Path "" -TimeoutSeconds 1
+    if ($unexpectedLeaderProbe) {
+      throw "leader-mode quiet-window fixture unexpectedly found $($unexpectedLeaderProbe.path)"
+    }
+    $scenarioNames = @((Get-FlowScenarioCatalog).name)
+    foreach ($requiredScenario in @("deck-builder-leader-mode-smoke", "deck-builder-edit-smoke", "deck-builder-save-smoke")) {
+      if ($scenarioNames -notcontains $requiredScenario) {
+        throw "$requiredScenario is missing from the flow catalog"
+      }
+    }
     $plainUi = [xml]"<?xml version='1.0'?><hierarchy><node class='android.view.View' /></hierarchy>"
     $webUi = [xml]"<?xml version='1.0'?><hierarchy><node class='android.webkit.WebView' /></hierarchy>"
     if (Test-FlowUiHasWebView -Ui $plainUi) {
@@ -2453,6 +3823,18 @@ function Invoke-FlowSelfCheck {
     if (Test-FlowUiShowsGamePackage -Ui $launcherUi) {
       throw "launcher UI was misclassified as game foreground"
     }
+    $anrUi = [xml]"<?xml version='1.0'?><hierarchy><node resource-id='android:id/message' text='Process system isn&apos;t responding.&#10;&#10;Do you want to close it?' /><node resource-id='android:id/button2' text='Wait' /></hierarchy>"
+    $crashUi = [xml]"<?xml version='1.0'?><hierarchy><node resource-id='android:id/message' text='Unfortunately, KSSMA has stopped.' /><node resource-id='android:id/button1' text='OK' /></hierarchy>"
+    if ($null -eq (Find-FlowSystemAnrWaitButton -Ui $anrUi)) {
+      throw "system ANR Wait classifier failed"
+    }
+    if ($null -ne (Find-FlowSystemAnrWaitButton -Ui $crashUi)) {
+      throw "crash dialog was misclassified as system ANR"
+    }
+    $crashOk = $crashUi.SelectSingleNode("//*[@resource-id='android:id/button1' and @text='OK']")
+    if ($null -eq $crashOk) {
+      throw "crash dialog OK classifier failed"
+    }
     $sameA = Join-Path $ctx.artifactDir "self-diff-a.png"
     $sameB = Join-Path $ctx.artifactDir "self-diff-b.png"
     New-FlowSolidPng -Path $sameA -Width 90 -Height 90 -Red 20 -Green 40 -Blue 60
@@ -2464,6 +3846,51 @@ function Invoke-FlowSelfCheck {
     }
     if ($changedScore -lt 50) {
       throw "changed screenshot diff too small: $changedScore"
+    }
+    $sameRegionScore = Get-FlowScreenshotRegionDiffScore -ExpectedPath $sameA -ActualPath $sameA -RegionX 0 -RegionY 0 -RegionWidth 90 -RegionHeight 90
+    $changedRegionScore = Get-FlowScreenshotRegionDiffScore -ExpectedPath $sameA -ActualPath $sameB -RegionX 0 -RegionY 0 -RegionWidth 90 -RegionHeight 90
+    if ($sameRegionScore -ne 0 -or $changedRegionScore -lt 50) {
+      throw "regional screenshot diff check failed: same=$sameRegionScore changed=$changedRegionScore"
+    }
+    $deckSignature = Join-Path $ctx.artifactDir "self-deck-builder-signature.png"
+    Add-Type -AssemblyName System.Drawing
+    $deckBitmap = New-Object System.Drawing.Bitmap 1280, 720
+    try {
+      $deckBitmap.SetPixel(1040, 80, [System.Drawing.Color]::FromArgb(235, 79, 79))
+      $deckBitmap.SetPixel(1040, 250, [System.Drawing.Color]::FromArgb(205, 122, 64))
+      $deckBitmap.SetPixel(1040, 400, [System.Drawing.Color]::FromArgb(184, 99, 39))
+      $deckBitmap.SetPixel(1040, 550, [System.Drawing.Color]::FromArgb(54, 54, 54))
+      $deckBitmap.SetPixel(170, 200, [System.Drawing.Color]::FromArgb(80, 168, 226))
+      $deckBitmap.Save($deckSignature, [System.Drawing.Imaging.ImageFormat]::Png)
+    } finally {
+      $deckBitmap.Dispose()
+    }
+    if (-not (Get-FlowDeckBuilderEntryVisualCheck -Path $deckSignature).ok) {
+      throw "deck builder visual signature classifier rejected its positive fixture"
+    }
+    if ((Get-FlowDeckBuilderEntryVisualCheck -Path $sameA).ok) {
+      throw "deck builder visual signature classifier accepted a non-DeckScene fixture"
+    }
+    $leaderModeSignature = Join-Path $ctx.artifactDir "self-deck-builder-leader-mode-signature.png"
+    $leaderBitmap = New-Object System.Drawing.Bitmap 1280, 720
+    try {
+      $leaderBitmap.SetPixel(1040, 80, [System.Drawing.Color]::FromArgb(51, 51, 51))
+      $leaderBitmap.SetPixel(1040, 250, [System.Drawing.Color]::FromArgb(50, 50, 50))
+      $leaderBitmap.SetPixel(1040, 400, [System.Drawing.Color]::FromArgb(42, 42, 42))
+      $leaderBitmap.SetPixel(1040, 550, [System.Drawing.Color]::FromArgb(23, 23, 23))
+      $leaderBitmap.SetPixel(170, 200, [System.Drawing.Color]::FromArgb(80, 168, 226))
+      $leaderBitmap.Save($leaderModeSignature, [System.Drawing.Imaging.ImageFormat]::Png)
+    } finally {
+      $leaderBitmap.Dispose()
+    }
+    if (-not (Get-FlowDeckBuilderLeaderModeVisualCheck -Path $leaderModeSignature).ok) {
+      throw "deck builder leader-mode visual signature classifier rejected its positive fixture"
+    }
+    if ((Get-FlowDeckBuilderLeaderModeVisualCheck -Path $deckSignature).ok) {
+      throw "deck builder leader-mode visual signature classifier accepted the normal DeckScene fixture"
+    }
+    if ((Get-FlowDeckBuilderLeaderModeVisualCheck -Path $sameA).ok) {
+      throw "deck builder leader-mode visual signature classifier accepted a non-DeckScene fixture"
     }
     $elapsed = [int]((Get-Date) - $ctx.startedAt).TotalMilliseconds
     $summary = [ordered]@{
@@ -2556,6 +3983,76 @@ function Get-FlowScenarioCatalog {
       startsRuntime = $true
       ownsServer = $true
       description = "Focused main-menu smoke covering the bottom deck and friends entry/back visual gates."
+    },
+    [ordered]@{
+      name = "deck-builder-entry-smoke"
+      default = $false
+      startsRuntime = $true
+      ownsServer = $true
+      description = "Open the bottom deck entry, verify roundtable/edit move=1 enters DeckScene, capture it, and stop before the leader action."
+    },
+    [ordered]@{
+      name = "deck-builder-leader-mode-smoke"
+      default = $false
+      startsRuntime = $true
+      ownsServer = $true
+      description = "Reuse the accepted DeckScene entry, tap leader, verify a route-quiet local visual transition, and stop before card selection."
+    },
+    [ordered]@{
+      name = "deck-builder-edit-smoke"
+      default = $false
+      startsRuntime = $true
+      ownsServer = $true
+      description = "Use the closed local card-selector path to place owned serial 2 in slot 1, return to DeckScene, and prove no save occurred."
+    },
+    [ordered]@{
+      name = "deck-builder-save-smoke"
+      default = $false
+      startsRuntime = $true
+      ownsServer = $true
+      description = "Replay the accepted one-card edit, capture the exact decide request and diagnostic response state, and prove the save stayed unchanged."
+    },
+    [ordered]@{
+      name = "gacha-draw-smoke"
+      default = $false
+      startsRuntime = $true
+      ownsServer = $true
+      description = "Login to main menu, enter gacha select, tap the first draw candidate, and capture the next gacha route or scene."
+    },
+    [ordered]@{
+      name = "gacha-result-smoke"
+      default = $false
+      startsRuntime = $true
+      ownsServer = $true
+      description = "Run the accepted one-draw path, tap the draw-card touch screen, and capture result-page or next-route behavior."
+    },
+    [ordered]@{
+      name = "gacha-result-back-smoke"
+      default = $false
+      startsRuntime = $true
+      ownsServer = $true
+      description = "Run the accepted one-draw result path, tap the visible result-page back button, and verify route or local page transition."
+    },
+    [ordered]@{
+      name = "gacha-paid-retry-smoke"
+      default = $false
+      startsRuntime = $true
+      ownsServer = $true
+      description = "Run one paid draw, use the visible result-page retry action, and verify the second buy, result, and persisted settlement."
+    },
+    [ordered]@{
+      name = "gacha-settlement-deck-smoke"
+      default = $false
+      startsRuntime = $true
+      ownsServer = $true
+      description = "Run one friendship-point draw, verify persisted settlement, return to main menu, then verify deck entry sees the drawn card."
+    },
+    [ordered]@{
+      name = "gacha-paid-settlement-deck-smoke"
+      default = $false
+      startsRuntime = $true
+      ownsServer = $true
+      description = "Run one paid MC draw, verify persisted settlement, return to main menu, then verify deck entry sees the drawn card."
     },
     [ordered]@{
       name = "menu-buttons-route-smoke"
@@ -2706,7 +4203,7 @@ function Invoke-Flow {
   if ($Scenario -eq "self-check") {
     return Invoke-FlowSelfCheck -Scenario $Scenario -Tag $Tag
   }
-  $supportedRuntimeScenarios = @("mainmenu-faction-smoke", "mainmenu-buttons-route-smoke", "mainmenu-bottom-buttons-smoke", "menu-buttons-route-smoke", "menu-buttons-tail-smoke", "menu-item-parts-smoke", "exploration-smoke", "exploration-walk-smoke", "exploration-forward-visual-smoke", "exploration-floor-clear-smoke", "exploration-ap-shortage-smoke", "exploration-levelup-smoke")
+  $supportedRuntimeScenarios = @("mainmenu-faction-smoke", "mainmenu-buttons-route-smoke", "mainmenu-bottom-buttons-smoke", "deck-builder-entry-smoke", "deck-builder-leader-mode-smoke", "deck-builder-edit-smoke", "deck-builder-save-smoke", "gacha-draw-smoke", "gacha-result-smoke", "gacha-result-back-smoke", "gacha-paid-retry-smoke", "gacha-settlement-deck-smoke", "gacha-paid-settlement-deck-smoke", "menu-buttons-route-smoke", "menu-buttons-tail-smoke", "menu-item-parts-smoke", "exploration-smoke", "exploration-walk-smoke", "exploration-forward-visual-smoke", "exploration-floor-clear-smoke", "exploration-ap-shortage-smoke", "exploration-levelup-smoke")
   if ($Scenario -notin $supportedRuntimeScenarios) {
     $ctx = New-FlowContext -Scenario $Scenario -Tag $Tag
     $supported = (@(Get-FlowScenarioCatalog).name -join ", ")
@@ -2726,6 +4223,18 @@ function Invoke-Flow {
     if ($Scenario -eq "mainmenu-faction-smoke") {
       Set-FlowMainmenuFactionPlayerSave -Context $ctx
     }
+    if ($Scenario -eq "gacha-settlement-deck-smoke") {
+      Set-FlowGachaSettlementPlayerSave -Context $ctx
+    }
+    if ($Scenario -eq "gacha-paid-settlement-deck-smoke") {
+      Set-FlowGachaPaidSettlementPlayerSave -Context $ctx
+    }
+    if ($Scenario -eq "gacha-paid-retry-smoke") {
+      Set-FlowGachaPaidSettlementPlayerSave -Context $ctx -InitialMc 600 -ScenarioName $Scenario
+    }
+    if ($Scenario -in @("deck-builder-edit-smoke", "deck-builder-save-smoke")) {
+      Set-FlowDeckBuilderEditPlayerSave -Context $ctx -ScenarioName $Scenario
+    }
     if ($Scenario -eq "exploration-floor-clear-smoke") {
       $serverEnvironment["KSSMA_EXPLORATION_MOVES_SEED"] = '{"4:6":15}'
     }
@@ -2734,11 +4243,29 @@ function Invoke-Flow {
     }
     Start-FlowServer -Context $ctx -ExtraEnvironment $serverEnvironment
     Invoke-FlowRuntimeGate -Context $ctx
+    if ($Scenario -match "^gacha-") {
+      foreach ($gachaResource in @("gacha_free_0", "gacha_cp_button")) {
+        Sync-FlowSaveFile -Context $ctx -RelativePath "download\pack\gacha\$gachaResource"
+      }
+      foreach ($gachaResource in @("ae_gacha", "ae_gacha02", "rja_ae_gacha", "rja_ae_gacha.load")) {
+        Sync-FlowSaveFile -Context $ctx -RelativePath "download\rest\$gachaResource"
+      }
+    }
     Invoke-FlowLaunchAndLogin -Context $ctx
     switch ($Scenario) {
       "mainmenu-faction-smoke" { Invoke-FlowMainmenuFactionSmoke -Context $ctx }
       "mainmenu-buttons-route-smoke" { Invoke-FlowMainmenuButtonsRouteSmoke -Context $ctx }
       "mainmenu-bottom-buttons-smoke" { Invoke-FlowMainmenuBottomButtonsSmoke -Context $ctx }
+      "deck-builder-entry-smoke" { Invoke-FlowDeckBuilderEntrySmoke -Context $ctx }
+      "deck-builder-leader-mode-smoke" { Invoke-FlowDeckBuilderLeaderModeSmoke -Context $ctx }
+      "deck-builder-edit-smoke" { Invoke-FlowDeckBuilderEditSmoke -Context $ctx }
+      "deck-builder-save-smoke" { Invoke-FlowDeckBuilderSaveSmoke -Context $ctx }
+      "gacha-draw-smoke" { Invoke-FlowGachaDrawSmoke -Context $ctx }
+      "gacha-result-smoke" { Invoke-FlowGachaResultSmoke -Context $ctx }
+      "gacha-result-back-smoke" { Invoke-FlowGachaResultBackSmoke -Context $ctx }
+      "gacha-paid-retry-smoke" { Invoke-FlowGachaPaidRetrySmoke -Context $ctx }
+      "gacha-settlement-deck-smoke" { Invoke-FlowGachaSettlementDeckSmoke -Context $ctx }
+      "gacha-paid-settlement-deck-smoke" { Invoke-FlowGachaPaidSettlementDeckSmoke -Context $ctx }
       "menu-buttons-route-smoke" { Invoke-FlowMenuButtonsRouteSmoke -Context $ctx }
       "menu-buttons-tail-smoke" { Invoke-FlowMenuButtonsRouteSmoke -Context $ctx -EntryNames @("open-menu-option", "open-menu-item", "open-menu-card-collection", "open-menu-parts-list", "open-menu-fairy", "open-menu-update-history", "open-menu-help") }
       "menu-item-parts-smoke" { Invoke-FlowMenuButtonsRouteSmoke -Context $ctx -EntryNames @("open-menu-item", "open-menu-parts-list") }

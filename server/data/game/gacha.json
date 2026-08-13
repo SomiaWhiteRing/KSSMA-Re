@@ -1,0 +1,73 @@
+{
+  "defaultPage": "main",
+  "pages": {
+    "main": {
+      "scrollHeight": 240,
+      "contents": [
+        {
+          "actionId": 1,
+          "imagefile": "gacha_free_0",
+          "x": 8,
+          "y": 8,
+          "se": "se_def_cancel_04_01",
+          "behavior": "1,1,1,0"
+        },
+        {
+          "actionId": 2,
+          "imagefile": "gacha_cp_button",
+          "x": 8,
+          "y": 112,
+          "se": "se_def_cancel_04_01",
+          "message": "消耗300MC进行扭蛋，确定吗？",
+          "behavior": "2,0,0,0"
+        },
+        {
+          "actionId": 0,
+          "x": 140,
+          "y": 116,
+          "textMessages": [
+            {
+              "text": "使用300MC进行扭蛋",
+              "color": "0xFFFFFF",
+              "size": 20
+            }
+          ]
+        }
+      ]
+    }
+  },
+  "buy": {
+    "gachaType": 1,
+    "telopMessage": "友情点扭蛋",
+    "paidGachaType": 2,
+    "paidTelopMessage": "付费扭蛋",
+    "drawCard": {
+      "serialId": 2,
+      "masterCardId": 9,
+      "holoFlag": 0,
+      "holography": 0,
+      "hp": 450,
+      "power": 520,
+      "critical": 0,
+      "buildExp": 0,
+      "buildLevel": 1,
+      "buildCount": 0,
+      "isNewCard": 1,
+      "maxLevel": 30,
+      "maxExp": 1800,
+      "nextExp": 60,
+      "expDiff": 0,
+      "expPercent": 0,
+      "salePrice": 120,
+      "materialPrice": 80,
+      "evolutionPrice": 100,
+      "plusLimitCount": 0,
+      "limitOver": 0
+    },
+    "completeList": {
+      "cmpsheetIndex": 0,
+      "isGet": 0,
+      "isNew": 0
+    }
+  }
+}
