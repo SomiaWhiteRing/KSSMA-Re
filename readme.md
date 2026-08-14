@@ -1,5 +1,102 @@
 # 扩散性百万亚瑟王重建项目
 
+## 项目启动方式
+
+当前启动流程只在 Windows 上验收。游戏客户端是 2013 年的 ARM 版本，已验证的运行目标是
+**Android 4.4.2（API 19）ARMv7 模拟器**。项目脚本将这套环境简称为 `ARM19`，Android
+Virtual Device（AVD）名称为 `kssma_arm19`。
+
+全新设备还需要 Node.js、Python 3、JDK（`keytool` 和 `jarsigner`）及
+ADB/platform-tools。运行客户端时请使用上述 Android 4.4 ARM 环境。
+
+### 1. 准备原始文件
+
+从 [Internet Archive 的 gacha-archive](https://archive.org/details/gacha-archive) 下载以下两个文件，
+将未解压的资源 ZIP 和 APK 放入仓库根目录的 `base` 文件夹：
+
+```text
+base/
+├─ com.square_enix.million_cn-1.0.0.100.0712.M330.apk
+└─ com.square_enix.million_cn-140330.zip
+```
+
+校验 SHA-256：
+
+```text
+4F6A854C49D1AF59BB5500828D2BDDA0767F4D6A9FCFA8D4D6E46EA9257C58A7  com.square_enix.million_cn-1.0.0.100.0712.M330.apk
+D311C8FC3152BE328FA36638F2075F01B95A8AAB2DEA47F918DB3101F18D69F5  com.square_enix.million_cn-140330.zip
+```
+
+```powershell
+Get-FileHash .\base\com.square_enix.million_cn-1.0.0.100.0712.M330.apk -Algorithm SHA256
+Get-FileHash .\base\com.square_enix.million_cn-140330.zip -Algorithm SHA256
+```
+
+### 2. 安装 Android 4.4 ARM 模拟器
+
+阅读 [Android SDK License](https://developer.android.com/studio/terms) 后执行：
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File .\work\setup-android44-arm.ps1 -AcceptAndroidSdkLicense
+```
+
+脚本会直接从 Google 官方 Android 仓库下载固定版本的 classic emulator tools `25.2.5`
+和 Android 4.4/API 19 ARMv7 system image revision `5`，校验归档大小、官方 SHA-1、固定
+SHA-256 及关键解压文件后，安装到：
+
+```text
+%LOCALAPPDATA%\Android\Sdk-classic-arm
+```
+
+下载量约 445 MiB，解压后约 1.55 GiB。后续 `configure` 会创建名为 `kssma_arm19` 的
+Android 4.4 ARM 虚拟设备、4 GiB SD 卡及必要配置。首次创建和启动会离线生成 1.5 GiB
+userdata，ARM 模拟器冷启动可能需要约 4 分钟。
+
+### 3. 首次部署
+
+在仓库根目录执行：
+
+```powershell
+python .\work\prepare-assets.py
+python .\work\build-client-baseline.py
+powershell -NoProfile -ExecutionPolicy Bypass -File .\work\kssma-runtime.ps1 configure
+powershell -NoProfile -ExecutionPolicy Bypass -File .\work\kssma-runtime.ps1 ensure-runtime
+powershell -NoProfile -ExecutionPolicy Bypass -File .\work\kssma-runtime.ps1 ensure-client-baseline
+powershell -NoProfile -ExecutionPolicy Bypass -File .\work\kssma-runtime.ps1 preload-full
+powershell -NoProfile -ExecutionPolicy Bypass -File .\work\kssma-runtime.ps1 ensure-baseline
+```
+
+`prepare-assets.py` 会校验两个下载文件并准备客户端所需资源。`build-client-baseline.py`
+会生成可安装的客户端；缺少 Android debug keystore 时会通过 JDK 的 `keytool` 创建。
+必须先执行 `ensure-client-baseline`，再执行 `preload-full`；顺序调换会导致模拟器空间不足，
+客户端无法安装。
+
+脚本使用 `kssma_arm19`、`emulator-5556` / `127.0.0.1:5557`；其他 Android 设备可以保持在线。
+请确保 `5556` 和 `5557` 端口可用，否则脚本会停止并输出诊断。
+
+### 4. 日常启动
+
+1. 双击 `start-runtime.cmd`，等待 Android 4.4 ARM 模拟器启动并完成基线检查。
+2. 双击 `start-server.cmd`，保持服务器窗口运行。
+3. 在模拟器中打开 KSSMA；结束后双击 `stop.cmd` 停止本地服务器。
+
+### 5. 登录
+
+首次进入时选择“继续游戏”，服务器选择 `Local Dev World`，然后使用以下账号登录：
+
+```text
+手机号：13800138000
+密码：testpass1
+```
+
+遇到问题先执行：
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File .\work\kssma-preflight.ps1
+```
+
+## 项目说明
+
 该项目的最终目的是重建已经停服的手游《扩散性百万亚瑟王》，使其能够使用本地搭建的服务器进行游戏。项目的开发和维护由社区志愿者完成，旨在让玩家能够继续享受这款经典游戏。
 
 该项目目前正处于初创阶段，其结构和内容随时且快速的可能发生变化。
