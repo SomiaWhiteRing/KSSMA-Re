@@ -795,6 +795,53 @@ Archives:
   dialog, return to `GachaDrawResult`, or route quiet. The candidate XML is not implemented; G2 product, mode, and
   balance rejection remain frozen rather than guessing a wire error contract.
 
+## Fresh-clone startup asset closure
+
+- Frontier: a Git clone could not start because accepted native bytes, XML overlays, layout fixtures, game files, and ARM19 machine state were implicit local dependencies.
+- Hypothesis: keep only 4.37 MiB of accepted project artifacts in Git; rebuild ignored runtime assets from the two archive.org files and create the AVD skeleton from a separately supplied classic ARM SDK.
+- Changed one variable: documented the first-run path, added stdlib-only asset preparation, made debug-keystore and AVD skeleton creation automatic, and removed layout-check dependence on a pre-existing apktool tree.
+- Server check: `prepare-assets.py` passed, layout check reported `current_overlaps=0`, and `node server/test-bootstrap-server.js` printed `bootstrap-server self-check passed`.
+- ARM19 check: transport self-check passed 6/6 and existing-AVD `configure` passed; full preload stopped at the existing `wrong-runtime-only` guard because unrelated Android devices were online.
+- Observed: baseline rebuilt with accepted lib SHA-256 `DEC36585CA0129AA19E68CC53898D95DE41067AA5D380B23218F3E88273CD40F`.
+- Conclusion: Git needs 4.37 MiB of previously ignored project artifacts; external distribution still needs the two game files plus an approximately 1.55 GiB self-contained `Sdk-classic-arm` package, not the 9.6 GiB machine-state AVD. The local SDK used junctions, so naive recursive copying is invalid.
+- Next: validate the documented first-run sequence on a clean Windows device with no other emulator online.
+
+## Fresh-device baseline install branch
+
+- Frontier: fresh ARM19 with the package removed could not complete `ensure-client-baseline`.
+- Hypothesis: the helper called installed-lib verification before its existing package-missing install branch could run.
+- Changed one variable: check package presence first and reuse `Invoke-InstallClientBaselineApk` directly when absent.
+- Observable: `ensure-client-baseline` on the same fresh emulator must install the generated APK and verify installed `librooneyj.so` SHA-256.
+- Intermediate result: after `preload-full`, the 1.5 GiB data partition had only 490.9 MiB free versus 546.5 MiB required for first install; README order was corrected to install before preload.
+- Result: after removing the rebuildable stash, fresh install completed in 229.991s with installed/source lib SHA-256 `DEC36585CA0129AA19E68CC53898D95DE41067AA5D380B23218F3E88273CD40F`; re-preload pushed 6895 files / 517055607 bytes and final baseline passed.
+- Startup observable: fresh-clone server listened on `50005,10001`, client package launched on fresh ARM19, and `work/kssma-runtime-fresh-clone-startup.png` showed the original visible mode-select screen.
+- Conclusion: the documented fresh-clone sequence is accepted through visible client startup; first install must precede full resource preload.
+
+## Official Android 4.4 ARM setup automation
+
+- Frontier: fresh developers still needed a manually distributed `Sdk-classic-arm` directory.
+- Hypothesis: the accepted runtime can be reconstructed from immutable Google Android repository archives rather than a project-owned environment package.
+- Changed one variable: added `work/setup-android44-arm.ps1`; README now requires explicit SDK-license acceptance and runs this installer.
+- Sources: `tools_r25.2.5-windows.zip` (306785944 bytes, official SHA-1 `A7F7EBEAE1C8D8F62D3A8466E9C81BAEE7CC31CA`, SHA-256 `DA1A0BD9BB358CB52A8FC0A553A060428EFE11151E69B9EA7A5CBACB27CF1C7C`) and `sys-img/android/armeabi-v7a-19_r05.zip` (159871567 bytes, official SHA-1 `D1A5FD4F2E1C013C3D3D9BFE7E9DB908C3ED56FA`, SHA-256 `CA7440CADE53D829A8CACE857CFAD9AFAA174C286D1B7A5D139E73CFCFDE45D7`).
+- Checks: setup self-check passed; missing license acceptance was rejected; isolated install verified four accepted file SHA-256 values; repeated install was idempotent; a second clean profile installed the runtime and `configure` created `kssma_arm19` plus the 4 GiB SD card.
+- Conclusion: maintainers no longer need to redistribute a 1.55 GiB Android environment package. Google downloads total about 445 MiB and expand into the existing `%LOCALAPPDATA%/Android/Sdk-classic-arm` contract.
+
+## Isolated README cold-start validation
+
+- Frontier: prove the documented setup works from a new clone and isolated Windows profile without reusing the existing project's assets, SDK, AVD, cache, or keystore.
+- Hypothesis: the only remaining host-state conflict was `ensure-runtime` refusing to start `kssma_arm19` when unrelated Android devices were online even though ports `5556/5557` were free.
+- Changed one variable: allow a new classic runtime only for `adb-transport` or `wrong-runtime-only`, with no target process and both dedicated ports free; other devices are never stopped or controlled.
+- Check: transport self-check passed 10/10, including other-device/free-port acceptance and occupied-target-port rejection.
+- Cold evidence: a fresh clone under `KSSMA-Re-readme-validation-20260814` used an isolated `USERPROFILE`/`LOCALAPPDATA`; both archive.org game files and both official Google runtime archives were downloaded again, hashes passed, and the isolated runtime installed without an external SDK package or existing AVD.
+- Rejected run: although the emulator executable came from the isolated SDK, process/file timestamps proved classic emulator had resolved `kssma_arm19` from the pre-existing global AVD home. Its installed client predated this run, so the otherwise healthy login/main-menu observable was contaminated and is not accepted as cold-start evidence.
+- Correction: classic emulator r25 ignores the newer `ANDROID_AVD_HOME`; `Start-ClassicEmulator` now temporarily supplies its documented `ANDROID_SDK_HOME` and `ANDROID_EMULATOR_HOME`, then restores the caller environment. The next run created `userdata-qemu.img` and `cache.img` under the isolated profile, proving it no longer reused the global AVD.
+- Isolated cold result: failed. The truly fresh instance reached the Android kernel and initialized `/data`, but `/cache` failed to mount, ADB remained `emulator-5556 offline`, and `ensure-runtime` hit its 240-second `boot-timeout`; another 90-second observation produced no state change. No client install, preload, baseline, or login claim from this run is accepted.
+- Cache finding: the isolated and accepted global `cache.img` files are byte-identical (SHA-256 `C39628D11159632D1D5B20A1BDE5A0C96CC105EA2B4701DD80985FA6BC34D343`) and both pass `e2fsck -fn`; the kernel's `/cache` mount warning also remains in a successful cold boot. It is not the startup blocker.
+- Accepted runtime fix: `configure` now copies the official initial userdata, expands it to 1536 MiB with the bundled `resize2fs.exe`, repairs the resize inode with bundled `e2fsck.exe -fy`, and requires a clean `e2fsck -fn` before first boot. This removes first-boot filesystem expansion from the emulator. Fresh `configure` created a clean 1610612736-byte image, and the same new isolated AVD passed `armeabi-v7a / 4.4.2 / boot_completed=1` on its first start. The cold-start wait is 360 seconds because this host completed near the old 240-second boundary.
+- Deployment result: with no package initially installed, `ensure-client-baseline` completed the package-missing install and matched installed/source native SHA-256 `DEC36585...CD40F`; `preload-full` pushed 6895 files / 517055607 bytes; hosts, mounts, 1280x720/240 dpi, audio, and package baseline passed. A screenshot from this clean AVD shows the expected Mode Select page, proving no saved account/AVD state was inherited.
+- Separate non-runtime frontier: `exploration-smoke` reached Mode Select, World Select, and LoginActivity but its ADB text driver timed out with only `1` in the phone field and no password. Two bounded runs produced no login route, so the attempted batching change was removed. Do not reinterpret this login-automation failure as an ARM19 cold-start failure.
+- Conclusion: the off-book AVD/cache runtime blocker is resolved. The README deployment reaches a healthy, fully provisioned, visible fresh client from isolated downloaded inputs; automatic first-login driving remains a separate flow-helper issue.
+
 ## Archive Index
 
 - Full old log:

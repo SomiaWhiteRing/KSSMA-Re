@@ -1,0 +1,130 @@
+<route>
+	<filter prefix="card" path="save/download/image/card/" />
+	<filter prefix="adv" path="save/download/image/adv/" />
+	<filter prefix="face" path="save/download/image/face/" />
+	<filter prefix="boss" path="save/download/image/boss/" />
+    
+    <!-- カード -->
+    <filter prefix="thumbnail" path="save/download/image/card/" />
+    
+    <!-- ガチャ -->
+    <filter prefix="gac" path="save/download/image/gacha/" />
+    
+    <!-- マスターデータ -->
+    <filter prefix="master" path="save/database/" />
+    
+    <!-- 設定データ -->
+    <filter prefix="save" path="save/appdata/" />
+
+    <!-- レイアウト -->
+    <filter prefix="layout" path="bandle" ext=".xml"/>
+    
+    <!-- 各種設定 -->
+    <filter prefix="setting" path="bandle" ext=".xml"/>
+    
+    <!-- BGM -->
+    <filter prefix="bgm" path="save/download/sound/" ext=".ogg" />
+    
+    <!-- SE -->
+    <filter prefix="se" path="save/download/sound/" ext=".ogg">
+        <ignore alias="se_def_ok_01_01" name="se_def_ok_01_01.ogg"/>
+        <ignore alias="se_def_cancel_04_01" name="se_def_cancel_04_01.ogg"/>
+        <ignore alias="se_def_cancel_06_01" name="se_def_cancel_06_01.ogg"/>
+    </filter>
+        
+    <!-- voice -->
+    <filter prefix="vo" path="bandle" ext=".ogg" />
+    
+    <!-- voice download -->
+    <filter prefix="vol" path="bandle" ext=".ogg" />
+        
+    <!-- screen -->
+    <filter prefix="" path="">
+        <ignore alias="rja_screen_fade" name="screen_fade.anm" />
+        <ignore alias="rja_screen_curtain_star" name="screen_curtain_star.anm" />
+        <ignore alias="rja_screen_crossfade" name="screen_crossfade.anm" />
+        <ignore alias="rja_screen_whitefade" name="screen_whitefade.anm"/>
+    </filter>
+        
+    <!-- boot -->
+    <filter prefix="" path="">
+        <ignore alias="ae_login" name="ae_login.png"/>
+        <ignore alias="fade_white" name="fade_white.png" />
+        <ignore alias="0001_login" name="0001_login.png" />
+        <ignore alias="1000_common_button_" name="1000_common_button_.png" />
+        <ignore alias="boot_loading_chara" name="boot_loading_chara.png" />
+        <ignore alias="cmn_bg_00" name="cmn_bg_00.png" />
+        <ignore alias="cmn_bg_01" name="cmn_bg_01.png" />
+        <ignore alias="cmn_card" name="cmn_card.png" />
+        <ignore alias="cmn_font" name="cmn_font.png" />
+        <ignore alias="cmn_loading" name="cmn_loading.png" />
+        <ignore alias="cmn_window" name="cmn_window.png" />
+        <ignore alias="rja_1000_main_menu_badge" name="1000_main_menu_badge.anm" />
+        <ignore alias="rja_1100_login" name="1100_login.anm" />
+        <ignore alias="rja_button_login" name="button_login.anm" />
+        <ignore alias="rja_cmn_button" name="cmn_button.anm" />
+        <ignore alias="rja_cmn_bg" name="cmn_bg.anm" />
+        <ignore alias="rja_cmn_fontset" name="cmn_fontset.anm" />
+        <ignore alias="rja_cmn_button_res" name="cmn_button_res.anm" />
+        <ignore alias="rja_cmn_window_res" name="cmn_window_res.anm" />
+        <ignore alias="rja_new_button_res" name="new_button_res.anm" />
+        <ignore alias="rja_cmn_loading" name="cmn_loading.anm" />
+        <ignore alias="rja_ae_login" name="ae_login.anm"/>
+        <ignore alias="rja_opening_logo" name="opening_logo.anm"/>
+        <ignore alias="opening_logo" name="opening_logo.png"/>
+        <ignore alias="opening_logo_sisilala" name="opening_logo_grb.png"/>
+        <ignore alias="opening_logo_atz" name="opening_logo_atz.png"/>
+        <ignore alias="opening_logo_ppg" name="opening_logo_ppg.png"/>
+        <ignore alias="opening_logo_grb" name="opening_logo_grb.png"/>
+        <ignore alias="rja_scene_title" name="scene_title.anm" />
+        <ignore alias="rja_cmn_scroll_button" name="cmn_scroll_button.anm" />
+        <ignore alias="button_label" name="button_label.png" />
+    </filter>
+    
+    <!-- シナリオ -->
+    <filter prefix="scsc" path="save/download/scenario/" />
+    <filter prefix="scss" path="save/download/scenario/" />
+    <filter prefix="scol" path="save/download/scenario/" />
+    
+    <!-- Touch Screen -->
+    <filter prefix="" path="">
+        <ignore alias="rja_touch_screen" name="touch_screen.anm"/>        
+    </filter>
+  
+    <!------------------------------- GW update ------------------------------------->
+    <!-- ガチャ選択 -->
+    <filter prefix="gacha" path="save/download/pack/gacha/"/>
+    <filter prefix="rja_gacha" path="save/download/pack/gacha/"/>
+    
+    <!-- イベントバナー -->
+    <filter prefix="eventbanner" path="save/download/pack/eventbanner/"/>
+    <filter prefix="rja_eventbanner" path="save/download/pack/eventbanner/"/>
+    
+    <!-- コンプシート -->
+    <filter prefix="cmpsheet" path="save/download/pack/cmpsheet/"/>
+    <filter prefix="rja_cmpsheet" path="save/download/pack/cmpsheet/"/>
+    
+    <!-- 拠点データ -->
+    <filter prefix="mainbg"  path="save/download/pack/mainbg/"/>
+    <filter prefix="rja_mainbg" path="save/download/pack/mainbg/"/>
+    
+    <!-- 友達招待 -->
+    <filter prefix="privilege" path="save/download/pack/privilege"/>
+    <filter prefix="rja_privilege" path="save/download/pack/privilege"/>
+    
+    <!-- バンドル読み込み指定 -->
+    <filter prefix="" path="">
+        <ignore alias="movie_op" name="movie_op.mp4"/>
+    </filter>
+    <!------------------------------------------------------------------------------->
+    
+    <!-- 5/21 update -->
+    <filter prefix="" path="">
+        <ignore alias="rja_push_notification" name="push_notification.anm" />
+        <ignore alias="cmn_header" name="cmn_header.png" />
+        <ignore alias="rja_cmn_header_res" name="cmn_header_res.anm"/>
+    </filter>
+    <!---->
+    
+    <filter prefix="vos" path="save/download/voice/" ext=".ogg" /> <!-- //!VOICE -->
+</route>

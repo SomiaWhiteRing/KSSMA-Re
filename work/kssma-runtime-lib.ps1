@@ -10,6 +10,7 @@ $script:KssmaRuntimeConfig = [ordered]@{
   ExpectedRelease = "4.4.2"
   DisplaySize = "1280x720"
   DisplayDensity = "240"
+  DataPartitionSize = "1536M"
   SdcardSize = "4096M"
   StateTtlSeconds = 30
 }
@@ -24,7 +25,9 @@ if (-not (Test-Path -LiteralPath $script:AdbExe)) {
   $script:AdbExe = "adb"
 }
 $script:AvdDir = Join-Path $env:USERPROFILE ".android\avd\$($script:KssmaRuntimeConfig.AvdName).avd"
+$script:AvdHome = Split-Path $script:AvdDir -Parent
 $script:ConfigPath = Join-Path $script:AvdDir "config.ini"
+$script:UserdataPath = Join-Path $script:AvdDir "userdata-qemu.img"
 $script:SdcardPath = Join-Path $script:AvdDir "sdcard.img"
 $script:StatePath = Join-Path $PSScriptRoot "runtime-state.json"
 $script:StdoutLog = Join-Path $PSScriptRoot "android44-arm19-runtime.out.log"
@@ -423,6 +426,13 @@ function Get-TargetPortSummary {
   }
 }
 
+function Test-CanStartClassicRuntime {
+  param($Transport)
+  $startableClass = $Transport.class -in @("adb-transport", "wrong-runtime-only")
+  $portsFree = -not $Transport.ports.console.open -and -not $Transport.ports.adb.open
+  $startableClass -and $Transport.emulatorProcesses.Count -eq 0 -and $portsFree
+}
+
 function Get-AdbDeviceRows {
   $result = Invoke-Adb -Arguments @("devices", "-l") -TimeoutSeconds 5 -AllowFailure
   Get-OutputLines $result.stdout | Where-Object { $_ -match "\s+(device|offline|unauthorized)\b" }
@@ -748,6 +758,60 @@ function Set-AvdConfigValue {
   Set-Content -LiteralPath $script:ConfigPath -Value $lines
 }
 
+function Ensure-AvdSkeleton {
+  if (Test-Path -LiteralPath $script:ConfigPath) {
+    return
+  }
+  Require-File $script:EmulatorExe
+  Require-File $script:EmulatorArmExe
+  Require-File (Join-Path $script:SdkClassic "system-images\android-19\default\armeabi-v7a\system.img")
+  Require-File (Join-Path $script:SdkClassic "system-images\android-19\default\armeabi-v7a\userdata.img")
+  New-Item -ItemType Directory -Path $script:AvdDir -Force | Out-Null
+  Set-Content -LiteralPath $script:ConfigPath -Value @(
+    "avd.ini.encoding=UTF-8"
+    "target=android-19"
+    "abi.type=armeabi-v7a"
+    "image.sysdir.1=system-images\android-19\default\armeabi-v7a\"
+  )
+  $avdIni = Join-Path (Split-Path $script:AvdDir -Parent) "$($script:KssmaRuntimeConfig.AvdName).ini"
+  Set-Content -LiteralPath $avdIni -Value @(
+    "avd.ini.encoding=UTF-8"
+    "path=$script:AvdDir"
+    "path.rel=avd\$($script:KssmaRuntimeConfig.AvdName).avd"
+    "target=android-19"
+  )
+}
+
+function Ensure-AvdUserdataImage {
+  if (Test-Path -LiteralPath $script:UserdataPath) {
+    return
+  }
+  $initialUserdata = Join-Path $script:SdkClassic "system-images\android-19\default\armeabi-v7a\userdata.img"
+  $resize2fs = Join-Path $script:SdkClassic "tools\bin\resize2fs.exe"
+  $e2fsck = Join-Path $script:SdkClassic "tools\bin\e2fsck.exe"
+  Require-File $initialUserdata
+  Require-File $resize2fs
+  Require-File $e2fsck
+  try {
+    Copy-Item -LiteralPath $initialUserdata -Destination $script:UserdataPath
+    $resize = Invoke-RuntimeProcess -FilePath $resize2fs -ArgumentList @($script:UserdataPath, $script:KssmaRuntimeConfig.DataPartitionSize) -TimeoutSeconds 120
+    if (-not $resize.ok) {
+      throw "resize2fs failed: $($resize.stderr)"
+    }
+    $repair = Invoke-RuntimeProcess -FilePath $e2fsck -ArgumentList @("-fy", $script:UserdataPath) -TimeoutSeconds 120 -AllowFailure
+    if ($repair.timedOut -or $repair.exitCode -notin @(0, 1)) {
+      throw "e2fsck repair failed: $($repair.stderr) $($repair.stdout)"
+    }
+    $verify = Invoke-RuntimeProcess -FilePath $e2fsck -ArgumentList @("-fn", $script:UserdataPath) -TimeoutSeconds 120
+    if (-not $verify.ok) {
+      throw "e2fsck verify failed: $($verify.stderr) $($verify.stdout)"
+    }
+  } catch {
+    Remove-Item -LiteralPath $script:UserdataPath -Force -ErrorAction SilentlyContinue
+    throw
+  }
+}
+
 function Get-ShortPath {
   param([string]$Path)
   $resolved = (Resolve-Path -LiteralPath $Path -ErrorAction SilentlyContinue).Path
@@ -760,10 +824,11 @@ function Get-ShortPath {
 }
 
 function Ensure-AvdConfig {
+  Ensure-AvdSkeleton
   Set-AvdConfigValue "abi.type" "armeabi-v7a"
   Set-AvdConfigValue "target" "android-19"
   Set-AvdConfigValue "image.sysdir.1" "system-images\android-19\default\armeabi-v7a\"
-  Set-AvdConfigValue "disk.dataPartition.size" "1536M"
+  Set-AvdConfigValue "disk.dataPartition.size" $script:KssmaRuntimeConfig.DataPartitionSize
   Set-AvdConfigValue "hw.ramSize" "1536"
   Set-AvdConfigValue "vm.heapSize" "256M"
   Set-AvdConfigValue "hw.audioInput" "yes"
@@ -775,6 +840,7 @@ function Ensure-AvdConfig {
   Set-AvdConfigValue "skin.name" "1280x720"
   Set-AvdConfigValue "hw.sdCard" "yes"
   Set-AvdConfigValue "sdcard.size" $script:KssmaRuntimeConfig.SdcardSize
+  Ensure-AvdUserdataImage
   Require-File $script:MksdcardExe
   $needsSdcard = -not (Test-Path -LiteralPath $script:SdcardPath)
   if (-not $needsSdcard) {
@@ -832,7 +898,24 @@ function Start-ClassicEmulator {
     $args += "-wipe-data"
   }
   $sw = [System.Diagnostics.Stopwatch]::StartNew()
-  Start-Process -FilePath $script:EmulatorExe -ArgumentList $args -RedirectStandardOutput $script:StdoutLog -RedirectStandardError $script:StderrLog -WindowStyle Hidden | Out-Null
+  $previousSdkHome = $env:ANDROID_SDK_HOME
+  $previousEmulatorHome = $env:ANDROID_EMULATOR_HOME
+  try {
+    $env:ANDROID_SDK_HOME = $env:USERPROFILE
+    $env:ANDROID_EMULATOR_HOME = Split-Path $script:AvdHome -Parent
+    Start-Process -FilePath $script:EmulatorExe -ArgumentList $args -RedirectStandardOutput $script:StdoutLog -RedirectStandardError $script:StderrLog -WindowStyle Hidden | Out-Null
+  } finally {
+    if ($null -eq $previousSdkHome) {
+      Remove-Item Env:ANDROID_SDK_HOME -ErrorAction SilentlyContinue
+    } else {
+      $env:ANDROID_SDK_HOME = $previousSdkHome
+    }
+    if ($null -eq $previousEmulatorHome) {
+      Remove-Item Env:ANDROID_EMULATOR_HOME -ErrorAction SilentlyContinue
+    } else {
+      $env:ANDROID_EMULATOR_HOME = $previousEmulatorHome
+    }
+  }
   Add-Stage $Context "start-emulator-process" ([ordered]@{ ok = $true; elapsedMs = [int]$sw.ElapsedMilliseconds; details = "started classic ARM emulator" })
 }
 
@@ -883,9 +966,9 @@ function Invoke-EnsureRuntime {
     return Complete-RuntimeResult -Context $ctx -Ok $true -Data ([ordered]@{ abi = $health.abi; release = $health.release; bootCompleted = $health.bootCompleted; transport = $health.transport })
   }
 
-  if ($health.transport.class -eq "adb-transport" -and $health.transport.emulatorProcesses.Count -eq 0) {
+  if (Test-CanStartClassicRuntime -Transport $health.transport) {
     Start-ClassicEmulator -Context $ctx -WipeData:$WipeData
-    if (Wait-PrimaryBoot -Context $ctx -TimeoutSeconds 240) {
+    if (Wait-PrimaryBoot -Context $ctx -TimeoutSeconds 360) {
       $boot = Get-DeviceBootFingerprint -Serial $script:KssmaRuntimeConfig.PrimarySerial
       Add-Stage $ctx "boot-fingerprint" $boot.stage
       Reset-BaselineStateValues ([ordered]@{ fastHealthOk = $true; bootCompleted = $true; bootUptimeSeconds = $boot.uptimeSeconds })
@@ -1504,6 +1587,20 @@ function Invoke-EnsureClientBaseline {
   }
   try {
     $baseline = Resolve-ClientBaselineApk -Context $ctx
+    $package = Ensure-PackageInstalled -Context $ctx
+    if (-not $package.ok) {
+      $installResult = Invoke-InstallClientBaselineApk -Context $ctx -ApkPath $baseline.apkPath
+      if (-not $installResult.ok) {
+        return Complete-RuntimeResult -Context $ctx -Ok $false -FailureClass $installResult.failureClass -RecommendedCommand "Inspect install stages; do not install old APKs or patch a random librooneyj.so." -Data ([ordered]@{ apk = $baseline.apkPath; install = $installResult })
+      }
+      return Complete-RuntimeResult -Context $ctx -Ok $true -Data ([ordered]@{
+          status = $installResult.status
+          apk = $baseline.apkPath
+          manifest = $script:ClientBaselineManifestPath
+          verify = $installResult.verify
+          apkCheck = $baseline.check
+        })
+    }
     $sourceLib = Get-LibrooneySource -SourcePath $baseline.apkPath
     try {
       $verify = Test-InstalledLibMatches -SourceLibPath $sourceLib.Path -Context $ctx
@@ -2154,6 +2251,18 @@ function Invoke-TransportSelfCheck {
     $actual = Get-TransportClassification -PrimaryHealth $case.primary -LegacyHealth $case.legacy -Devices $case.devices -EmulatorProcesses $case.emulators -Ports $ports
     $pass = $actual.class -eq $case.expected
     $results += [ordered]@{ name = $case.name; expected = $case.expected; actual = $actual.class; ok = $pass }
+  }
+  $startCases = @(
+    [ordered]@{ name = "no-devices-free-ports"; class = "adb-transport"; ports = [ordered]@{ console = [ordered]@{ open = $false }; adb = [ordered]@{ open = $false } }; emulators = @(); expected = $true },
+    [ordered]@{ name = "other-devices-free-ports"; class = "wrong-runtime-only"; ports = [ordered]@{ console = [ordered]@{ open = $false }; adb = [ordered]@{ open = $false } }; emulators = @(); expected = $true },
+    [ordered]@{ name = "other-devices-target-port-busy"; class = "wrong-runtime-only"; ports = [ordered]@{ console = [ordered]@{ open = $true }; adb = [ordered]@{ open = $false } }; emulators = @(); expected = $false },
+    [ordered]@{ name = "target-process-present"; class = "wrong-runtime-only"; ports = [ordered]@{ console = [ordered]@{ open = $false }; adb = [ordered]@{ open = $false } }; emulators = $emulators; expected = $false }
+  )
+  foreach ($case in $startCases) {
+    $transport = [ordered]@{ class = $case.class; ports = $case.ports; emulatorProcesses = $case.emulators }
+    $actual = Test-CanStartClassicRuntime -Transport $transport
+    $pass = $actual -eq $case.expected
+    $results += [ordered]@{ name = $case.name; expected = $case.expected; actual = $actual; ok = $pass }
   }
   $ok = -not ($results | Where-Object { -not $_.ok })
   Add-Stage $ctx "transport-classifier-cases" ([ordered]@{ ok = $ok; elapsedMs = 0; details = "$(($results | Where-Object { $_.ok }).Count)/$($results.Count) passed" })

@@ -85,7 +85,34 @@ def sign_apk() -> None:
     if not jarsigner:
         raise SystemExit("jarsigner was not found in PATH")
     if not DEBUG_KEYSTORE.exists():
-        raise SystemExit(f"Missing debug keystore: {DEBUG_KEYSTORE}")
+        keytool = shutil.which("keytool")
+        if not keytool:
+            raise SystemExit("keytool was not found in PATH")
+        DEBUG_KEYSTORE.parent.mkdir(parents=True, exist_ok=True)
+        subprocess.run(
+            [
+                keytool,
+                "-genkeypair",
+                "-keystore",
+                str(DEBUG_KEYSTORE),
+                "-storepass",
+                DEBUG_PASSWORD,
+                "-keypass",
+                DEBUG_PASSWORD,
+                "-alias",
+                DEBUG_ALIAS,
+                "-keyalg",
+                "RSA",
+                "-keysize",
+                "2048",
+                "-validity",
+                "10000",
+                "-dname",
+                "CN=Android Debug,O=Android,C=US",
+                "-noprompt",
+            ],
+            check=True,
+        )
 
     subprocess.run(
         [

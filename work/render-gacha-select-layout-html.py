@@ -5,6 +5,7 @@ import html
 import json
 import shutil
 import xml.etree.ElementTree as ET
+import zipfile
 from pathlib import Path
 
 from PIL import Image
@@ -14,6 +15,7 @@ ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_JSON = ROOT / "server" / "data" / "game" / "gacha.json"
 DEFAULT_XML = ROOT / "work" / "million_cn" / "apktool" / "assets" / "bundle" / "local_gachaselect.xml"
 DEFAULT_LAYOUT = ROOT / "work" / "million_cn" / "apktool" / "assets" / "bundle" / "layout_gacha_select.xml"
+BASE_APK = ROOT / "base" / "com.square_enix.million_cn-1.0.0.100.0712.M330.apk"
 DEFAULT_IMAGE_DIR = ROOT / "work" / "gacha-image-preview" / "decoded"
 DEFAULT_OUT_DIR = ROOT / "work" / "gacha-layout-html-check"
 DEFAULT_FRAME_WIDTH = 400
@@ -68,8 +70,17 @@ def text_messages_from_xml(content: ET.Element) -> str:
     return "".join(messages)
 
 
+def read_bundled_xml(path: Path, apk_entry: str) -> ET.Element:
+    if path.exists():
+        return ET.parse(path).getroot()
+    if not BASE_APK.exists():
+        raise SystemExit(f"missing {path} and base APK {BASE_APK}")
+    with zipfile.ZipFile(BASE_APK) as apk:
+        return ET.fromstring(apk.read(apk_entry))
+
+
 def read_xml_contents(xml_path: Path) -> tuple[int, list[dict[str, object]]]:
-    root = ET.parse(xml_path).getroot()
+    root = read_bundled_xml(xml_path, "assets/bundle/local_gachaselect.xml")
     xml_contents = root.find("./body/gacha_select/xml_contents")
     if xml_contents is None:
         raise SystemExit(f"missing gacha_select/xml_contents in {xml_path}")
@@ -91,9 +102,7 @@ def read_xml_contents(xml_path: Path) -> tuple[int, list[dict[str, object]]]:
 
 
 def read_layout_frame_width(layout_path: Path) -> int:
-    if not layout_path.exists():
-        return DEFAULT_FRAME_WIDTH
-    root = ET.parse(layout_path).getroot()
+    root = read_bundled_xml(layout_path, "assets/bundle/layout_gacha_select.xml")
     viewer = root.find(".//xml_viewer[@name='viewer']")
     if viewer is None:
         return DEFAULT_FRAME_WIDTH
@@ -982,7 +991,7 @@ def main() -> None:
     current_scroll, current_contents = read_json_contents(args.json, "main")
     reference_scroll, reference_contents = read_xml_contents(args.xml)
     frame_width = read_layout_frame_width(args.layout)
-    display_scale = infer_display_scale(reference_contents, args.image_dir, frame_width)
+    display_scale = infer_display_scale(reference_contents + current_contents, args.image_dir, frame_width)
     current_elements = build_elements(current_contents, args.image_dir, "current", display_scale)
     reference_elements = build_elements(reference_contents, args.image_dir, "reference", display_scale)
     current = {

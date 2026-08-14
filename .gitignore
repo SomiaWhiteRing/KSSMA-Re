@@ -5,6 +5,17 @@ work/*
 !work/*.py
 !work/*.md
 !work/*.js
+!work/librooneyj-gacha-cardget-inner-touch-nullguard.so
+!work/gacha-image-preview/
+work/gacha-image-preview/*
+!work/gacha-image-preview/decoded/
+work/gacha-image-preview/decoded/*
+!work/gacha-image-preview/decoded/gacha_free_0.png
+!work/gacha-image-preview/decoded/gacha_cp_button.png
+!work/accepted-assets/
+work/accepted-assets/*
+!work/accepted-assets/bundle/
+!work/accepted-assets/bundle/*.xml
 work/runtime-state.json
 HUMAN-ROADMAP.local.md
 server/data/player/local-save.json

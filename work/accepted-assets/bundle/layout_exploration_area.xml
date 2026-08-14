@@ -1,0 +1,307 @@
+<layout>
+	<!-- Rect -->
+	<layer>
+		<rect name="rect" d_type="1" alpha="1" r="0" g="0" b="0" x="0" y="0" width="480" height="320"/>
+	</layer>
+	
+	<!-- MAP -->
+	<layer>
+        <area_map name="area_map" x="0" y="0" zoom="17" model="exploration_model" >
+            <param name="locations" value="locations" />
+            <param name="focus" value="focus" />
+            <param name="areaInfoList" value="areaInfoList" />
+            <param name="areaId" value="areaId"/>
+        </area_map>
+        
+        
+	</layer>
+	
+	<layer>
+		<exp_place_view name="placeview" x="0" y="0" visible="false" model="exploration_model">
+			<param name="focus" value="focus"/>
+			<param name="areaInfoList" value="areaInfoList" />
+		</exp_place_view>
+	</layer>
+	
+	
+	<!-- Indication -->
+	<layer>
+		<d_place name="w_tips" x="0" y="0" visible="false"/>
+        <!--<exp_list name="title" x="40" y="75" mc="31"/>-->
+        <scene_title name="title" x="-5" y="-88" effect="1"/>
+        <!-- area_clear -->
+		<exploration_area_clear name="clear" visible="false"/>
+	</layer>
+    
+	<layer>
+		<v_list type="avairable" name="area_list" x="0" y="0" center_index="0" center_top="85" item_space="5" item_left="205" model="scene" width="200" height="57"   visible="false" sclip="true">
+            <param name="focus" value="focus" />
+            <param name="list" value="area_list"/>
+            <sync target="area_map"/>
+            <sync target="placeview"/>
+			<sclip x="0" w="410"/>
+        </v_list>
+		<v_list type="avairable"name="floor_list" x="0" y="0" center_index="0" center_top="85" item_space="5" item_left="205" model="scene" width="200" height="57" reverse="true" auto="false" sclip="true">
+            <param name="focus" value="f_focus" />
+            <param name="list" value="floor_list" />
+            <param name="remake" value="remake"/>
+			<sclip x="0" w="410"/>
+        </v_list>
+	</layer>
+    
+	<!-- ApStatus -->
+	<layer>
+		<ap name="ap" x="60" y="290" command="ap" visible="false" >
+            <animation stay="0" move="1"/>
+		</ap>
+    </layer>
+    
+    <!-- button group -->
+    <layer name="button_group" scroll="true">
+		<param>
+			<scroll type="vertical"/>
+			<touch_area x="410"/>
+			<content_param h="870"/>
+		</param>
+		
+        <button type="scroll_back" name="back" x="440" y="260" visible="false"/>
+		<button type="scroll_backMainmenu" name="back_mainmenu" x="440" y="260" visible="false"/>
+		
+		<!-- ガチャ -->
+		<button name="scroll_gacha" x="440" y="330" type="scroll_gacha" visible="false" command="scroll_gacha"/>
+		<!-- バトル -->
+		<button name="scroll_battle" x="440" y="400" type="scroll_battle" visible="false" command="scroll_battle"/>
+		<!-- 合成／売却 -->
+		<button name="scroll_compound" x="440" y="470" type="scroll_compound" visible="false" command="scroll_compound"/>
+		<!-- ショップ -->
+		<button name="scroll_shop" x="440" y="540" type="scroll_shop" visible="false" command="scroll_shop"/>
+		<!-- メニュー -->
+		<button name="scroll_menu" x="440" y="610" type="scroll_menu" visible="false" model="scene" command="scroll_menu"/>
+		<!-- フレンド -->
+		<button name="scroll_friend" x="440" y="680" visible="false" type="scroll_friend" command="scroll_friend"/>
+		<!-- ストーリー -->
+		<button name="scroll_story" x="440" y="750" visible="false" type="scroll_story" command="scroll_story"/>
+	<!-- 	<button name="scroll_chat" x="440" y="820" visible="false" type="scroll_chat" command="scroll_chat"/> //@@chat -->
+
+    </layer>
+    
+    <layer>
+        <mini_info_bar y="308" width="300" text="请选择要探索的秘境，在秘境中可以找到骑士和因子碎片。" /> <!--  探索する秘境を選んでください。秘境を探索して騎士カードや因子のカケラを入手しましょう。 //@@275 -->
+    </layer>
+	
+	<!-- initialize tigger -->
+    <behavior name="open">
+        <visible target="back" value="true"/>
+		
+		<visible value='true' target='scroll_gacha'/>
+		<visible value='true' target='scroll_battle'/>
+		<visible value='true' target='scroll_compound'/>
+		<visible value='true' target='scroll_shop'/>
+		<visible value='true' target='scroll_menu'/>
+		<visible value='true' target='scroll_friend'/>
+		<visible value='true' target='scroll_story'/>
+		<!-- <visible value='true' target='scroll_chat'/> //@@chat -->
+		
+        <action target="back" name="open"/>
+		
+		<action name='open' target='scroll_gacha'/>
+		<action name='open' target='scroll_battle'/>
+		<action name='open' target='scroll_compound'/>
+		<action name='open' target='scroll_shop'/>
+		<action name='open' target='scroll_menu'/>
+		<action name='open' target='scroll_friend'/>
+		<action name='open' target='scroll_story'/>
+		<!-- <action name='open' target='scroll_chat'/> //@@chat -->
+		
+		<action target="button_group" name="unlock"/>
+    </behavior>
+    
+	<behavior name="open_backmainmenu">
+        <visible target="back_mainmenu" value="true"/>
+		
+		<visible value='true' target='scroll_gacha'/>
+		<visible value='true' target='scroll_battle'/>
+		<visible value='true' target='scroll_compound'/>
+		<visible value='true' target='scroll_shop'/>
+		<visible value='true' target='scroll_menu'/>
+		<visible value='true' target='scroll_friend'/>
+		<visible value='true' target='scroll_story'/>
+		<!-- <visible value='true' target='scroll_chat'/> //@@chat -->
+		
+        <action target="back_mainmenu" name="open"/>
+		
+		<action name='open' target='scroll_gacha'/>
+		<action name='open' target='scroll_battle'/>
+		<action name='open' target='scroll_compound'/>
+		<action name='open' target='scroll_shop'/>
+		<action name='open' target='scroll_menu'/>
+		<action name='open' target='scroll_friend'/>
+		<action name='open' target='scroll_story'/>
+		<!-- <action name='open' target='scroll_chat'/> //@@chat -->
+		
+		<action target="button_group" name="unlock"/>
+    </behavior>
+	
+	<!-- バックボタンを仕舞い拠点ボタンを表示する -->
+	<behavior name="back_close">
+		<visible target="back" value="false"/>
+		<visible target="back_mainmenu" value="true"/>
+	
+		<action target="back" name="close"/>
+		<action target="back_mainmenu" name="open"/>
+	</behavior>
+
+	<behavior name="mainmenu_close">
+		<visible target="back" value="true"/>
+		<visible target="back_mainmenu" value="false"/>
+		
+		<action target="back" name="open"/>
+		<action target="back_mainmenu" name="close"/>
+	</behavior>
+
+	
+	
+	<behavior name="init_trigger"  force="true">
+        <action target="area_map" name="new_area" />
+		<visible target="placeview" value="false" />
+	</behavior>
+	
+	<behavior name="floor_list_active">
+		<visible target="area_list" value="false" />
+		<visible target="floor_list" value="true" />
+		<visible target="placeview" value="true" />
+		<action target="placeview" name="animation"/>
+        <visible target="title" value="false"/>
+	</behavior>
+    
+    <behavior name="floor_list_active2">
+		<visible target="area_list" value="false" />
+		<visible target="floor_list" value="true" />
+		<action target="floor_list" name="remake" />
+		<visible target="placeview" value="true" />
+		<action target="placeview" name="animation"/>
+        <visible target="title" value="false"/>
+	</behavior>
+    
+    <behavior name="area_remake">
+        <action target="area_list" name="remake" />
+    </behavior>
+    
+	
+	<behavior name="no_move" >
+		<action target="area_map" name="no_move" />
+	</behavior>
+    <behaviar name="moveto" force="true">
+        <action target="area_map" name="moveto" />
+    </behaviar>
+    <behaviar name="scalex2">
+        <action target="area_map" name="scale_x2" />
+    </behaviar>
+    
+    <behaviar name="scalex1">
+        <action target="area_map" name="scale_x1" />
+    </behaviar>
+    
+    <behaviar name="newarea">
+        <action target="area_map" name="new_area" />
+    </behaviar>
+    
+    <behaviar name="get_floor">
+        <command name="floor"/>
+    </behaviar>
+    
+	<behaviar name="placeview_anm_slide">
+        <action target="placeview" name="animation"/>
+	</behaviar>
+	
+	<behavior name="placeview_anm_stop">
+		<action target="placeview" name="no_animation" />
+	</behavior>
+	
+    <behaviar name="placeview_update">
+        <action target="placeview" name="anm_update"/>
+    </behaviar>
+    
+	<!-- behavior list group -->
+	<behaviar name="area_list_true">
+        <action target="title" name="frame_zero"/>
+		<visible target="area_list" value="true" />
+        <visible target="title" value="true"/>
+        <visible target="placeview" value="false" />
+        <visible target="floor_list" value="false" />
+	</behaviar>
+    
+    <behaviar name="area_list_true2">
+        <!--<action target="title" name="frame_zero"/>-->
+		<visible target="area_list" value="false" />
+        <visible target="title" value="true"/>
+        <visible target="placeview" value="false" />
+        <visible target="floor_list" value="false" />
+	</behaviar>
+    
+    <behavior name="area_list_sp">
+        <visible target="area_list" value="true" />
+        <action target="area_list" name="remake" />
+    </behavior>
+	
+	
+	<behaviar name="floor_list_true">
+		<visible target="floor_list" value="true" />
+        <visible target="title" value="false"/>
+		<action target="floor_list" name="remake" />
+        <visible target="placeview" value="true" />
+	</behaviar>
+	
+	<behaviar name="floor_list_false">
+		<visible target="floor_list" value="false" />
+	</behaviar>
+    <behavior name="auto" >
+        <action target="area_list" name="auto0" />
+    </behavior>
+    
+    <behavior name="f_auto">
+        <action target="floor_list" name="auto" />
+    </behavior>
+    
+    <behavior name="ap_reset" >
+        <action target="ap" name="reset" />
+    </behavior>
+    
+    <!-- AREAクリア -->
+	<behaviar name="area_clear" >
+		<visible target="clear" value="true" />
+		<visible target="placeview" value="false" />
+        <action target="area_map" name="new_area_stanby" />
+		<action target="clear" name="clear_area">   
+            <action target="area_map" name="new_area" />
+            <visible target="placeview" value="false" />
+        </action>
+		<action target="button_group" name="lock"/>
+	</behaviar>
+	
+    <behaviar name="area_clear_only" >
+		<visible target="clear" value="true" />
+		<visible target="placeview" value="false" />
+		<action target="clear" name="clear_area">   
+            <visible target="placeview" value="false" />
+        </action>
+	</behaviar>
+</layout>
+
+
+
+<!--
+ M: data
+ V: xml
+ VM: scene
+ command: シーンに実装
+ 
+ ボタンからcommandを実行する
+ behaviarはイベント処理のまとまり、開始アニメーションをグルーピングして定義する
+ ボタン押下 -> 通信 & アニメーション -> 結果反映(M -> VM -> V)
+ の流れを想定
+ 
+ 残
+ behaviarのチェイン
+ データバインディング
+ -->
