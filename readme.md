@@ -134,6 +134,43 @@ artifact 目录里的临时 `player-save.json`，避免自动测试污染真实�
 模拟器、server、登录和验收 flow 绑在一起，遇到已有非 ARM19 设备时会报
 `wrong-runtime-only`。
 
+## 本地管理后台
+
+启动 server 后，在服务端电脑浏览器打开：
+
+```text
+http://127.0.0.1:50005/admin/
+```
+
+首版后台使用接近原作王城界面的本地样式，可以查看运行状态、探索/卡牌摘要，并修改已经被
+客户端协议验证过的玩家字段：名称、阵营、等级/经验、AP/BC、金币、MC、友情点、扭蛋券和
+持卡上限。“探索妖精”区可单独控制启用状态、遭遇概率、等级、最大 HP、攻击力、存活时限以及
+胜利金币/经验奖励；数值在新妖精生成时快照，不会中途改写已在战斗的实例。探索进度、持卡实例及卡组槽位
+暂时保持只读，避免生成客户端无法消费的不一致存档。
+
+默认只有服务端本机可以写入。从局域网其他设备管理时，启动 server 前设置管理令牌，并在
+页面底部输入同一令牌：
+
+```powershell
+$env:KSSMA_ADMIN_TOKEN='请换成足够长的随机值'
+powershell -NoProfile -ExecutionPolicy Bypass -File .\work\kssma-server.ps1 restart
+```
+
+然后用服务端的局域网 IP 打开 `http://<服务端IP>:50005/admin/`。不要把 `50005`、`10001`
+或后台页面转发到公网。
+
+## Python / conda 环境
+
+日常服务端不依赖 Python；资源准备和布局自检需要 Python/Pillow。建议使用仓库提供的独立
+conda 环境，避免污染系统 Python：
+
+```powershell
+conda env create -f .\environment.yml
+conda run -n KSSMA-Re node .\server\test-bootstrap-server.js
+```
+
+环境只使用 `conda-forge`，名称固定为 `KSSMA-Re`。
+
 如果双击入口没有窗口或出现乱码，先在项目目录运行入口自检。它只验证 Windows 能正确解析
 `.cmd`，不会启动模拟器：
 
@@ -142,13 +179,17 @@ cmd /c start-runtime.cmd self-test
 cmd /c start-server.cmd self-test
 cmd /c play.cmd self-test
 cmd /c stop.cmd self-test
+cmd /c install-mumu-a12.cmd self-test
 ```
 
 当前可体验内容：主菜单、角色点击互动/BGM/语音、主按钮入口、Menu 页入口、底部卡组/好友入口、
 探索秘境列表、楼层列表、进入关卡、关卡前进、AP 消耗、进度保存、按顺序开放下一区域、
 完成演出、AP 不足页、普通升级与 AP/BC 分配、返回秘境列表，以及友情点/付费单抽、结果页返回与
-付费再抽、持卡落盘、友情点/MC 消耗和可见卡组编辑入口。探索已标记为初步完成；探索深层、战斗、
-妖精、奖励结算先冻结。
+付费再抽、持卡落盘、友情点/MC 消耗和可见卡组编辑入口。普通妖精遭遇与原生 VS/战斗/结果演出已验收；
+动态伤害、金币/经验结算及原子存档也已由 ARM19 实机 `fairy-battle-smoke` 验收。战斗敌方现按
+`master_boss_id` 显示具体妖精贴图，普通妖精死亡后也不会再误播旧的“妖精出现”事件。奖励展示与返回点击
+尚未完整验收；罕见妖精、多人协作、卡牌/因子碎片掉落、奖励箱和原作 BC 扣除/不足契约仍未实现；
+静态协议边界见 `work/fairy-advanced-protocol-survey-card-20260817.md`。
 
 卡组入口 D1、队长模式 D2 和单卡内存编辑 D4 已验收：`/roundtable/edit move=1` 进入 scene `83200` 的 DeckScene，点击
 队长控件会在 server quiet 状态下进入本地 `change_mode_leader_select`；scene `10100` 只是圆桌查看页。
@@ -237,11 +278,58 @@ server 端口、ARM19 ADB 目标、hosts、显示、音频和几个关键资源�
 powershell -NoProfile -ExecutionPolicy Bypass -File .\work\kssma-preflight.ps1
 ```
 
+## MuMu Android 12 安装
+
+当前 MuMu 12（ADB `127.0.0.1:7555`）已支持独立的一键安装入口。先启动 MuMu 并确认其
+ADB 调试端口为 `7555`，然后在仓库根目录双击 `install-mumu-a12.cmd`，或运行：
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File .\work\kssma-mumu-a12.ps1 deploy -StartServer -Launch
+```
+
+该入口会严格检查 Android 12/API 31-32、32 位 ARM 翻译层和 `10.0.2.2` 宿主网关，随后完成：
+
+- 从干净 base APK 重建唯一客户端 baseline（缺少产物时自动执行，传 `-Rebuild` 可强制重建）；
+- 安装 APK、授予旧客户端所需权限，并校验设备端 `librooneyj.so` SHA-256；
+- 合并而非覆盖 `/system/etc/hosts`，把 `game.ma.mobimon.com.tw` 和
+  `dlc.game-CBT.ma.sdo.com` 指向 `10.0.2.2`；
+- 将完整静态资源包安装到应用外部存储，并逐文件校验；已有
+  `appdata/save_appdata` 玩家存档不会进入资源包，也不会被删除；
+- 可选启动双端口本地服务、拉起客户端，并在 10 秒存活检查后保存截图。
+
+第一次准备资源和 APK，或需要明确重建全部安装产物时运行：
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File .\work\kssma-mumu-a12.ps1 deploy -Rebuild -StartServer -Launch
+```
+
+单项诊断与修复入口：
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File .\work\kssma-mumu-a12.ps1 self-check
+powershell -NoProfile -ExecutionPolicy Bypass -File .\work\kssma-mumu-a12.ps1 status
+powershell -NoProfile -ExecutionPolicy Bypass -File .\work\kssma-mumu-a12.ps1 install-client
+powershell -NoProfile -ExecutionPolicy Bypass -File .\work\kssma-mumu-a12.ps1 ensure-hosts
+powershell -NoProfile -ExecutionPolicy Bypass -File .\work\kssma-mumu-a12.ps1 install-resources
+powershell -NoProfile -ExecutionPolicy Bypass -File .\work\kssma-mumu-a12.ps1 launch -StartServer
+```
+
+hosts 修复会在设备上保留原始备份 `/system/etc/hosts.kssma-re-original`。只有需要撤销旧域名映射时才运行：
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File .\work\kssma-mumu-a12.ps1 restore-hosts
+```
+
+生成的约 499 MiB TAR、校验表和 manifest 位于 `work\mumu-a12-package\`，均可由脚本重新生成，
+无需手工解包或逐文件 `adb push`。MuMu Android 12 目前已验收到登录、主菜单和即时页面导航；
+扭蛋选择页闲置约 269 秒后的 reward-box 路径崩溃尚未归因，因此它是安装/人工调查候选，暂不替代
+ARM19 的自动玩法验收。
+
 ## ARM19 运行时
 
-不要再用本机的 Android 12 模拟器跑这个客户端。
-当前已验证的运行时是 `kssma_arm19`：Android `4.4.2` / API 19 / `armeabi-v7a` classic ARM emulator。
-这是这份 ARM-only 2013 APK 的最短可用目标，BlueStacks x86/Houdini 崩溃先不要当主线。
+默认自动玩法验收运行时仍是 `kssma_arm19`：Android `4.4.2` / API 19 / `armeabi-v7a`
+classic ARM emulator。这是这份 ARM-only 2013 APK 当前证据最完整的目标；不要因为 MuMu
+Android 12 已可安装，就放宽或复用 ARM19 的 serial、ABI、坐标和 flow 门禁。
 
 如果不用 `flow` 做玩法验收，手动实机测试前先跑快检：
 

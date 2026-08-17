@@ -3,6 +3,12 @@ const fs = require("node:fs");
 const http = require("node:http");
 const path = require("node:path");
 const { URLSearchParams } = require("node:url");
+const {
+  ADMIN_UI_HTML,
+  applyAdminFairyUpdate,
+  applyAdminPlayerUpdate,
+  createAdminState,
+} = require("./admin-ui");
 
 const PORT = Number(process.env.PORT || 50005);
 const HOST = (process.env.HOST || "0.0.0.0").trim();
@@ -60,12 +66,14 @@ const DEFAULT_SAVE_DATA_PATH = path.join(PLAYER_DATA_DIR, "default-save.json");
 const LOCAL_SAVE_DATA_PATH = path.join(PLAYER_DATA_DIR, "local-save.json");
 const WORLDS_DATA_PATH = path.join(SERVER_DATA_DIR, "worlds.json");
 const MASTERDATA_ROUTES_DATA_PATH = path.join(SERVER_DATA_DIR, "masterdata-routes.json");
+const RUNTIME_CONFIG_DATA_PATH = path.join(SERVER_DATA_DIR, "runtime-config.json");
 
 function sendJson(res, statusCode, value) {
   const body = JSON.stringify(value);
   res.writeHead(statusCode, {
     "Content-Type": "application/json; charset=utf-8",
     "Content-Length": Buffer.byteLength(body),
+    "Cache-Control": "no-store",
   });
   res.end(body);
 }
@@ -90,6 +98,10 @@ function sendHtml(res, statusCode, value) {
   res.writeHead(statusCode, {
     "Content-Type": "text/html; charset=utf-8",
     "Content-Length": Buffer.byteLength(value),
+    "Cache-Control": "no-store",
+    "Content-Security-Policy": "default-src 'self'; style-src 'unsafe-inline'; script-src 'unsafe-inline'; connect-src 'self'; img-src 'self' data:; object-src 'none'; base-uri 'none'; frame-ancestors 'none'",
+    "Referrer-Policy": "no-referrer",
+    "X-Content-Type-Options": "nosniff",
   });
   res.end(value);
 }
@@ -108,6 +120,27 @@ function sendBinary(res, statusCode, value) {
     "Content-Length": value.length,
   });
   res.end(value);
+}
+
+function getAdminToken() {
+  return (process.env.KSSMA_ADMIN_TOKEN || "").trim();
+}
+
+function isLoopbackAddress(address) {
+  return address === "127.0.0.1" || address === "::1" || address === "::ffff:127.0.0.1";
+}
+
+function isAdminWriteAuthorized(req) {
+  const requiredToken = getAdminToken();
+  if (!requiredToken) {
+    return isLoopbackAddress(req.socket?.remoteAddress || "");
+  }
+  const suppliedToken = String(req.headers["x-kssma-admin-token"] || "");
+  const requiredBytes = Buffer.from(requiredToken, "utf8");
+  const suppliedBytes = Buffer.from(suppliedToken, "utf8");
+  return suppliedBytes.length === requiredBytes.length
+    && suppliedBytes.length > 0
+    && crypto.timingSafeEqual(suppliedBytes, requiredBytes);
 }
 
 function getCheckInspectionKey() {
@@ -290,6 +323,7 @@ const GAME_GACHA_DATA = readRequiredJsonFile(GACHA_DATA_PATH);
 const GAME_MAINMENU_DATA = readRequiredJsonFile(MAINMENU_DATA_PATH);
 const GAME_PLAYER_LEVEL_EXP_TABLE = readRequiredJsonFile(PLAYER_LEVEL_EXP_TABLE_PATH);
 const DEFAULT_PLAYER_SAVE = readRequiredJsonFile(DEFAULT_SAVE_DATA_PATH);
+const DEFAULT_RUNTIME_CONFIG = readRequiredJsonFile(RUNTIME_CONFIG_DATA_PATH);
 const DEFAULT_EXPLORATION_BGM = requireDataString(
   GAME_EXPLORATION_DATA.defaultBgm,
   "game.exploration.defaultBgm"
@@ -788,19 +822,65 @@ function createExplorationGetFloorXml(areaId = 0, floorId = 2, movesDone = 0, pl
 ].join("");
 }
 const EXPLORATION_GET_FLOOR_XML = createExplorationGetFloorXml();
-function createExplorationExploreXml(
+function renderExplorationExploreBodyXml(
   progress = 10,
   rewards = getExplorationStepRewards(EXPLORATION_FLOORS[0]),
   playerSave = null,
-  levelResult = null
+  levelResult = null,
+  fairyEncounter = null,
+  eventType = fairyEncounter ? 1 : 0,
+  indent = "    "
 ) {
   const safeProgress = Math.min(Math.max(parseInteger(progress, 10), 0), 100);
   const gold = Math.max(parseInteger(rewards.gold, 0), 0);
   const getExp = Math.max(parseInteger(rewards.getExp, 0), 0);
-  const yourDataRows = renderYourDataXml(playerSave);
   const nextExp = getProfileNextExp(playerSave);
   const lvup = levelResult?.levelUp ? 1 : 0;
   const isLimit = levelResult?.isLimit ? 1 : 0;
+  const safeEventType = Math.max(parseInteger(eventType, fairyEncounter ? 1 : 0), 0);
+  const fairyRows = fairyEncounter ? [
+    `${indent}  <fairy>`,
+    `${indent}    <serial_id>${escapeXmlText(fairyEncounter.serialId)}</serial_id>`,
+    `${indent}    <master_boss_id>${Math.max(parseInteger(fairyEncounter.masterBossId, 0), 0)}</master_boss_id>`,
+    `${indent}    <name>${escapeXmlText(fairyEncounter.name)}</name>`,
+    `${indent}    <lv>${Math.max(parseInteger(fairyEncounter.level, 1), 1)}</lv>`,
+    `${indent}    <hp>${Math.max(parseInteger(fairyEncounter.currentHp, 1), 0)}</hp>`,
+    `${indent}    <hp_max>${Math.max(parseInteger(fairyEncounter.maxHp, 1), 1)}</hp_max>`,
+    `${indent}    <time_limit>${Math.max(parseInteger(fairyEncounter.timeLimitSeconds, 60), 0)}</time_limit>`,
+    `${indent}    <discoverer_id>${Math.max(parseInteger(fairyEncounter.discovererId, 1), 1)}</discoverer_id>`,
+    `${indent}    <rare_flg>${fairyEncounter.rareFlg ? 1 : 0}</rare_flg>`,
+    `${indent}    <event_chara_flg>${fairyEncounter.eventCharaFlg ? 1 : 0}</event_chara_flg>`,
+    `${indent}  </fairy>`,
+  ] : [];
+
+  return [
+    `${indent}<explore>`,
+    `${indent}  <progress>${safeProgress}</progress>`,
+    ...fairyRows,
+    `${indent}  <event_type>${safeEventType}</event_type>`,
+    `${indent}  <gold>${gold}</gold>`,
+    `${indent}  <get_exp>${getExp}</get_exp>`,
+    `${indent}  <next_exp>${nextExp}</next_exp>`,
+    `${indent}  <lvup>${lvup}</lvup>`,
+    `${indent}  <is_limit>${isLimit}</is_limit>`,
+    `${indent}  <next_floor>0</next_floor>`,
+    `${indent}  <friendship_point>0</friendship_point>`,
+    `${indent}  <recover>0</recover>`,
+    `${indent}  <encounter>${fairyEncounter ? 1 : 0}</encounter>`,
+    `${indent}  <fairy_pose>2</fairy_pose>`,
+    `${indent}  <fairy_face>5</fairy_face>`,
+    `${indent}</explore>`,
+  ];
+}
+
+function createExplorationExploreXml(
+  progress = 10,
+  rewards = getExplorationStepRewards(EXPLORATION_FLOORS[0]),
+  playerSave = null,
+  levelResult = null,
+  fairyEncounter = null
+) {
+  const yourDataRows = renderYourDataXml(playerSave);
 
   return [
     '<?xml version="1.0" encoding="UTF-8"?>',
@@ -811,21 +891,7 @@ function createExplorationExploreXml(
     ...yourDataRows,
     "  </header>",
     "  <body>",
-    "    <explore>",
-    `      <progress>${safeProgress}</progress>`,
-    "      <event_type>0</event_type>",
-    `      <gold>${gold}</gold>`,
-    `      <get_exp>${getExp}</get_exp>`,
-    `      <next_exp>${nextExp}</next_exp>`,
-    `      <lvup>${lvup}</lvup>`,
-    `      <is_limit>${isLimit}</is_limit>`,
-    "      <next_floor>0</next_floor>",
-    "      <friendship_point>0</friendship_point>",
-    "      <recover>0</recover>",
-    "      <encounter>0</encounter>",
-    "      <fairy_pose>2</fairy_pose>",
-    "      <fairy_face>5</fairy_face>",
-    "    </explore>",
+    ...renderExplorationExploreBodyXml(progress, rewards, playerSave, levelResult, fairyEncounter),
     "  </body>",
     "</response>",
   ].join("");
@@ -962,6 +1028,285 @@ function createSceneForwardXml(nextScene, playerSave = createDefaultPlayerSave()
     `    <next_scene>${Math.max(parseInteger(nextScene, 2100), 0)}</next_scene>`,
     "  </header>",
     "  <body></body>",
+    "</response>",
+  ].join("");
+}
+
+function getFairyBattleDeckCards(playerSave) {
+  const instances = Array.isArray(playerSave?.cards?.instances) ? playerSave.cards.instances : [];
+  const bySerialId = new Map(instances.map((card) => [parseInteger(card?.serialId, 0), card]));
+  const decks = Array.isArray(playerSave?.cards?.decks) ? playerSave.cards.decks : [];
+  const activeDeck = decks.find((deck) => deck?.id === playerSave?.cards?.activeDeckId) || decks[0];
+  const resolved = (Array.isArray(activeDeck?.cardInstanceIds) ? activeDeck.cardInstanceIds : [])
+    .map((serialId) => bySerialId.get(parseInteger(serialId, 0)))
+    .filter(Boolean);
+  if (resolved.length) {
+    return resolved;
+  }
+  const leader = bySerialId.get(parseInteger(playerSave?.profile?.leaderSerialId, 0));
+  return leader ? [leader] : instances.slice(0, 1);
+}
+
+function applyFairyRewardExperience(playerSave, gainedExp) {
+  const profile = playerSave.profile;
+  const beforeLevel = Math.max(parseInteger(profile.level, 1), 1);
+  const beforeExp = Math.max(parseInteger(profile.exp, 0), 0);
+  const maxLevel = Math.max(parseInteger(profile.maxLevel, beforeLevel), beforeLevel);
+  let afterLevel = beforeLevel;
+  let afterExp = beforeExp + Math.max(parseInteger(gainedExp, 0), 0);
+  let abilityPointsGranted = 0;
+
+  while (afterLevel < maxLevel) {
+    const threshold = getPlayerLevelRow(afterLevel)?.nextExp || 0;
+    if (!threshold || afterExp < threshold) {
+      break;
+    }
+    afterExp -= threshold;
+    afterLevel += 1;
+    abilityPointsGranted += getLevelUpPointGrant(afterLevel, playerSave);
+  }
+
+  profile.level = afterLevel;
+  profile.exp = afterExp;
+  profile.nextExp = getPlayerLevelRow(afterLevel)?.nextExp || 0;
+  profile.percentage = profile.nextExp ? Math.floor((afterExp * 100) / profile.nextExp) : 100;
+  if (abilityPointsGranted > 0) {
+    const abilityPoints = playerSave.progression.abilityPoints;
+    abilityPoints.unspent = Math.max(parseInteger(abilityPoints.unspent, 0) + abilityPointsGranted, 0);
+    abilityPoints.fromLevels = Math.max(parseInteger(abilityPoints.fromLevels, 0) + abilityPointsGranted, 0);
+    playerSave.resources.ap.current = Math.max(parseInteger(playerSave.resources.ap.max, 0), 0);
+    playerSave.resources.bc.current = Math.max(parseInteger(playerSave.resources.bc.max, 0), 0);
+  }
+  return { beforeLevel, afterLevel, beforeExp, afterExp, abilityPointsGranted };
+}
+
+function createFairyBattleSettlement(playerSave, activeFairy, nowMs = Date.now()) {
+  ensureExplorationSaveShape(playerSave);
+  const deckCards = getFairyBattleDeckCards(playerSave);
+  if (!deckCards.length) {
+    throw new Error("fairy battle requires one resolved player deck card");
+  }
+  // ponytail: the recovered response/path does not yet establish the original BC charge or
+  // insufficient-BC failure contract, so this bounded local battle leaves BC unchanged. Upgrade
+  // this together with a captured retry/insufficient-BC edge instead of guessing a cost here.
+  const playerMaxHp = Math.max(deckCards.reduce((sum, card) => sum + Math.max(parseInteger(card.hp, 0), 0), 0), 1);
+  const fairyMaxHp = Math.max(parseInteger(activeFairy.maxHp, 1), 1);
+  const fairyInitialHp = Math.min(Math.max(parseInteger(activeFairy.currentHp, fairyMaxHp), 1), fairyMaxHp);
+  const fairyAttackPower = Math.max(parseInteger(activeFairy.attackPower, 1), 1);
+  const fairyVisualMasterCardId = Math.max(parseInteger(activeFairy.visualMasterCardId, 600), 1);
+  let playerHp = playerMaxHp;
+  let fairyHp = fairyInitialHp;
+  let rounds = 0;
+  const actions = [];
+
+  // ponytail: cap one local autoplay response at 200 rounds so extreme admin values cannot create
+  // unbounded XML/animation. Replace with recovered multi-attempt raid semantics when available.
+  while (playerHp > 0 && fairyHp > 0 && rounds < 200) {
+    rounds += 1;
+    actions.push({ turn: rounds });
+    for (const card of deckCards) {
+      const damage = Math.min(Math.max(parseInteger(card.power, 1), 1), fairyHp);
+      fairyHp -= damage;
+      actions.push({
+        actionPlayer: 0,
+        attackCard: Math.max(parseInteger(card.masterCardId, 1), 1),
+        attackType: 1,
+        attackDamage: damage,
+      });
+      if (fairyHp <= 0) {
+        break;
+      }
+    }
+    if (fairyHp <= 0) {
+      break;
+    }
+    const damage = Math.min(fairyAttackPower, playerHp);
+    playerHp -= damage;
+    actions.push({
+      actionPlayer: 1,
+      attackCard: fairyVisualMasterCardId,
+      attackType: 1,
+      attackDamage: damage,
+    });
+  }
+
+  if (playerHp > 0 && fairyHp > 0) {
+    const playerRatio = playerHp / playerMaxHp;
+    const fairyRatio = fairyHp / fairyMaxHp;
+    if (playerRatio >= fairyRatio) {
+      actions.push({ actionPlayer: 0, attackCard: Math.max(parseInteger(deckCards[0].masterCardId, 1), 1), attackType: 1, attackDamage: fairyHp });
+      fairyHp = 0;
+    } else {
+      actions.push({ actionPlayer: 1, attackCard: fairyVisualMasterCardId, attackType: 1, attackDamage: playerHp });
+      playerHp = 0;
+    }
+  }
+
+  const playerWon = fairyHp <= 0;
+  const beforeGold = Math.max(parseInteger(playerSave.currencies.gold, 0), 0);
+  const rewardGold = playerWon ? Math.max(parseInteger(activeFairy.rewardGold, 0), 0) : 0;
+  const rewardExp = playerWon ? Math.max(parseInteger(activeFairy.rewardExp, 0), 0) : 0;
+  playerSave.currencies.gold = Math.min(beforeGold + rewardGold, 2147483647);
+  const expResult = applyFairyRewardExperience(playerSave, rewardExp);
+  playerSave.battle.wins = Math.max(parseInteger(playerSave.battle.wins, 0) + (playerWon ? 1 : 0), 0);
+  playerSave.battle.losses = Math.max(parseInteger(playerSave.battle.losses, 0) + (playerWon ? 0 : 1), 0);
+
+  const battledAt = new Date(nowMs).toISOString();
+  const resolvedFairy = {
+    ...activeFairy,
+    currentHp: fairyHp,
+    lastBattledAt: battledAt,
+    defeatedAt: playerWon ? battledAt : null,
+  };
+  playerSave.battle.fairy.discovered[String(activeFairy.serialId)] = cloneJson(resolvedFairy);
+  playerSave.battle.fairy.active = playerWon ? null : resolvedFairy;
+  playerSave.battle.fairy.history.push({
+    serialId: String(activeFairy.serialId),
+    won: playerWon,
+    playerDamage: fairyInitialHp - fairyHp,
+    fairyDamage: playerMaxHp - playerHp,
+    rewardGold,
+    rewardExp,
+    battledAt,
+  });
+  if (playerSave.battle.fairy.history.length > 100) {
+    playerSave.battle.fairy.history = playerSave.battle.fairy.history.slice(-100);
+  }
+
+  return {
+    playerSave,
+    fairy: resolvedFairy,
+    deckCards,
+    actions,
+    rounds,
+    playerWon,
+    winner: playerWon ? 0 : 1,
+    playerMaxHp,
+    playerRemainingHp: playerHp,
+    fairyInitialHp,
+    fairyRemainingHp: fairyHp,
+    fairyAttackPower,
+    fairyVisualMasterCardId,
+    beforeGold,
+    afterGold: playerSave.currencies.gold,
+    rewardGold,
+    rewardExp,
+    ...expResult,
+  };
+}
+
+function renderFairyBattleCardXml(card, indent) {
+  return [
+    `${indent}<card_list>`,
+    `${indent}  <master_card_id>${Math.max(parseInteger(card.masterCardId, 1), 1)}</master_card_id>`,
+    `${indent}  <holography>${Math.max(parseInteger(card.holography, 0), 0)}</holography>`,
+    `${indent}  <hp>${Math.max(parseInteger(card.hp, 1), 1)}</hp>`,
+    `${indent}  <power>${Math.max(parseInteger(card.power, 1), 1)}</power>`,
+    `${indent}  <lv>${Math.max(parseInteger(card.level, 1), 1)}</lv>`,
+    `${indent}  <lv_max>${Math.max(parseInteger(card.maxLevel ?? card.level, 1), 1)}</lv_max>`,
+    `${indent}</card_list>`,
+  ];
+}
+
+function renderFairyBattlePlayerXml(player, indent = "      ") {
+  const battleType = Math.max(parseInteger(player.type, 2), 0);
+  const battleSize = Math.max(parseInteger(player.size, 0), 0);
+  return [
+    `${indent}<battle_player_list>`,
+    `${indent}  <player_enemy>${player.enemy ? 1 : 0}</player_enemy>`,
+    `${indent}  <name>${escapeXmlText(player.name)}</name>`,
+    `${indent}  <type>${battleType}</type>`,
+    `${indent}  <size>${battleSize}</size>`,
+    `${indent}  <maxhp>${player.maxHp}</maxhp>`,
+    `${indent}  <hp>${player.hp}</hp>`,
+    ...player.cards.flatMap((card) => renderFairyBattleCardXml(card, `${indent}  `)),
+    `${indent}  <ex>${player.ex}</ex>`,
+    `${indent}  <maxex>100</maxex>`,
+    `${indent}</battle_player_list>`,
+  ];
+}
+
+function renderFairyBattleActionXml(action, indent = "      ") {
+  if (action.turn) {
+    return [`${indent}<battle_action_list><turn>${action.turn}</turn></battle_action_list>`];
+  }
+  return [
+    `${indent}<battle_action_list>`,
+    `${indent}  <action_player>${action.actionPlayer}</action_player>`,
+    `${indent}  <attack_card>${action.attackCard}</attack_card>`,
+    `${indent}  <attack_type>${action.attackType}</attack_type>`,
+    `${indent}  <attack_damage>${action.attackDamage}</attack_damage>`,
+    `${indent}</battle_action_list>`,
+  ];
+}
+
+function createExplorationFairyBattleXml(playerSave, settlement) {
+  if (!settlement) {
+    throw new Error("fairy battle XML requires a settled battle record");
+  }
+  const leaderSerialId = parseInteger(playerSave.profile?.leaderSerialId, 0);
+  const leaderCard = settlement.deckCards.find((card) => parseInteger(card.serialId, 0) === leaderSerialId)
+    || settlement.deckCards[0];
+  const fairyCard = {
+    serialId: parseInteger(settlement.fairy.serialId, 1),
+    masterCardId: settlement.fairyVisualMasterCardId,
+    holography: 0,
+    hp: settlement.fairyInitialHp,
+    power: settlement.fairyAttackPower,
+    critical: 0,
+    level: Math.max(parseInteger(settlement.fairy.level, 1), 1),
+    maxLevel: Math.max(parseInteger(settlement.fairy.level, 1), 1),
+  };
+  const currentFloorKey = String(playerSave.exploration?.currentFloorKey || "");
+  const postBattleProgress = Math.min(Math.max(parseInteger(
+    playerSave.exploration?.floors?.[currentFloorKey]?.progress,
+    0
+  ), 0), 100);
+  return [
+    '<?xml version="1.0" encoding="UTF-8"?>',
+    "<response>",
+    "  <header>",
+    "    <error><code>0</code></error>",
+    "    <session_id>local-fairy-battle</session_id>",
+    ...renderYourDataXml(playerSave),
+    "    <next_scene>4100</next_scene>",
+    "  </header>",
+    "  <body>",
+    "    <battle_vs_info>",
+    "      <player>",
+    `        <user_id>${Math.max(parseInteger(settlement.fairy.discovererId, 1), 1)}</user_id>`,
+    `        <name>${escapeXmlText(playerSave.profile?.name || "Arthur")}</name>`,
+    ...renderUserCardXml(leaderCard, "        "),
+    "        <status_friend>2</status_friend><status_yell>0</status_yell>",
+    "      </player>",
+    "      <player>",
+    `        <user_id>${Math.max(parseInteger(settlement.fairy.masterBossId, 1), 1)}</user_id>`,
+    `        <name>${escapeXmlText(settlement.fairy.name || "小龙女")}</name>`,
+    ...renderUserCardXml(fairyCard, "        "),
+    "        <status_friend>2</status_friend><status_yell>0</status_yell>",
+    "      </player>",
+    "    </battle_vs_info>",
+    "    <battle_battle>",
+    "      <back_id>4</back_id><bgm_name>bgm_battle1</bgm_name>",
+    ...renderFairyBattlePlayerXml({ name: playerSave.profile?.name || "Arthur", enemy: false, type: 2, size: 0, maxHp: settlement.playerMaxHp, hp: settlement.playerMaxHp, cards: settlement.deckCards, ex: Math.max(parseInteger(playerSave.resources?.super?.current, 0), 0) }),
+    ...renderFairyBattlePlayerXml({ name: settlement.fairy.name || "小龙女", enemy: true, type: settlement.fairy.masterBossId, size: 0, maxHp: settlement.fairyInitialHp, hp: settlement.fairyInitialHp, cards: [fairyCard], ex: 0 }),
+    ...settlement.actions.flatMap((action) => renderFairyBattleActionXml(action)),
+    "    </battle_battle>",
+    "    <battle_result>",
+    "      <event_flag>0</event_flag><event_type>1</event_type>",
+    `      <winner>${settlement.winner}</winner>`,
+    "      <get_item_parts_event><event_id>0</event_id></get_item_parts_event>",
+    `      <before_gold>${settlement.beforeGold}</before_gold><after_gold>${settlement.afterGold}</after_gold>`,
+    `      <before_exp>${settlement.beforeExp}</before_exp><after_exp>${settlement.afterExp}</after_exp>`,
+    `      <before_level>${settlement.beforeLevel}</before_level><after_level>${settlement.afterLevel}</after_level>`,
+    "      <arena_battle_result><before_floor>0</before_floor><before_win>0</before_win><before_require_win>0</before_require_win><after_floor>0</after_floor><after_win>0</after_win><after_require_win>0</after_require_win></arena_battle_result>",
+    "      <battle_event_result><battle_point>0</battle_point><bonus_end_time>0</bonus_end_time><bonus_rate>1</bonus_rate><get_point>0</get_point></battle_event_result>",
+    "      <result_scene>4420</result_scene>",
+    "    </battle_result>",
+    // Scene 4420 reuses ExplorationMain. Event 18 is its original area_fairy_dead ->
+    // reward_check_com path; no rare_fairy means an ordinary victory stops at settlement/return.
+    ...renderExplorationExploreBodyXml(postBattleProgress, { gold: 0, getExp: 0 }, playerSave, null, null, 18),
+    "  </body>",
     "</response>",
   ].join("");
 }
@@ -1693,6 +2038,57 @@ function getPlayerSavePath() {
   return (process.env.KSSMA_PLAYER_SAVE_PATH || LOCAL_SAVE_DATA_PATH).trim();
 }
 
+function getRuntimeConfigPath() {
+  return (process.env.KSSMA_RUNTIME_CONFIG_PATH || RUNTIME_CONFIG_DATA_PATH).trim();
+}
+
+function readRuntimeConfig(configPath = getRuntimeConfigPath()) {
+  const saved = readJsonFile(configPath);
+  return mergeJsonObject(DEFAULT_RUNTIME_CONFIG, saved || {});
+}
+
+function readBooleanOverride(name, fallback) {
+  const raw = process.env[name];
+  if (raw === undefined || raw.trim() === "") {
+    return fallback;
+  }
+  return /^(1|true|yes|on)$/i.test(raw.trim());
+}
+
+function getFairyEncounterSettings(runtimeConfig = readRuntimeConfig()) {
+  const defaults = DEFAULT_RUNTIME_CONFIG.fairyEncounter;
+  const saved = runtimeConfig.fairyEncounter || {};
+  const ratePercent = Math.min(Math.max(parseInteger(
+    process.env.KSSMA_FAIRY_ENCOUNTER_RATE ?? saved.ratePercent,
+    defaults.ratePercent
+  ), 0), 100);
+  return {
+    enabled: readBooleanOverride("KSSMA_FAIRY_ENABLED", saved.enabled === true),
+    ratePercent,
+    masterBossId: Math.max(parseInteger(saved.masterBossId, defaults.masterBossId), 1),
+    name: typeof saved.name === "string" && saved.name ? saved.name : defaults.name,
+    level: Math.min(Math.max(parseInteger(process.env.KSSMA_FAIRY_LEVEL ?? saved.level, defaults.level), 1), 999),
+    maxHp: Math.min(Math.max(parseInteger(process.env.KSSMA_FAIRY_MAX_HP ?? saved.maxHp, defaults.maxHp), 1), 2147483647),
+    visualMasterCardId: Math.max(parseInteger(saved.visualMasterCardId, defaults.visualMasterCardId), 1),
+    attackPower: Math.min(Math.max(parseInteger(
+      process.env.KSSMA_FAIRY_ATTACK_POWER ?? saved.attackPower,
+      defaults.attackPower
+    ), 1), 2147483647),
+    rewardGold: Math.min(Math.max(parseInteger(
+      process.env.KSSMA_FAIRY_REWARD_GOLD ?? saved.rewardGold,
+      defaults.rewardGold
+    ), 0), 2147483647),
+    rewardExp: Math.min(Math.max(parseInteger(
+      process.env.KSSMA_FAIRY_REWARD_EXP ?? saved.rewardExp,
+      defaults.rewardExp
+    ), 0), 2147483647),
+    timeLimitSeconds: Math.min(Math.max(parseInteger(
+      process.env.KSSMA_FAIRY_TIME_LIMIT_SECONDS ?? saved.timeLimitSeconds,
+      defaults.timeLimitSeconds
+    ), 60), 86400),
+  };
+}
+
 function createDefaultPlayerSave() {
   return cloneJson(DEFAULT_PLAYER_SAVE);
 }
@@ -1724,7 +2120,70 @@ function ensureExplorationSaveShape(playerSave) {
   playerSave.exploration.movesByFloor = playerSave.exploration.movesByFloor || {};
   playerSave.exploration.regions = playerSave.exploration.regions || {};
   playerSave.exploration.floors = playerSave.exploration.floors || {};
+  playerSave.exploration.encounters = playerSave.exploration.encounters || [];
+  playerSave.battle = playerSave.battle || {};
+  playerSave.battle.fairy = playerSave.battle.fairy || {};
+  playerSave.battle.fairy.discovered = playerSave.battle.fairy.discovered || {};
+  playerSave.battle.fairy.history = playerSave.battle.fairy.history || [];
   playerSave.stats = playerSave.stats || {};
+}
+
+function hasLiveFairyEncounter(playerSave, nowMs = Date.now()) {
+  const active = playerSave.battle?.fairy?.active;
+  if (!active || parseInteger(active.currentHp, 0) <= 0) {
+    return false;
+  }
+  const expiresAt = Date.parse(active.expiresAt || "");
+  return !Number.isFinite(expiresAt) || expiresAt > nowMs;
+}
+
+function shouldCreateFairyEncounter(playerSave, settings) {
+  if (!settings.enabled || hasLiveFairyEncounter(playerSave)) {
+    return false;
+  }
+  if (settings.ratePercent <= 0) {
+    return false;
+  }
+  if (settings.ratePercent >= 100) {
+    return true;
+  }
+  return crypto.randomInt(100) < settings.ratePercent;
+}
+
+function createFairyEncounter(playerSave, settings, floor, nowMs = Date.now()) {
+  ensureExplorationSaveShape(playerSave);
+  const fairySave = playerSave.battle.fairy;
+  const serialNumber = Math.max(parseInteger(fairySave.nextSerialId, 100001), 1);
+  const discoveredAt = new Date(nowMs).toISOString();
+  const encounter = {
+    serialId: String(serialNumber),
+    masterBossId: settings.masterBossId,
+    name: settings.name,
+    level: settings.level,
+    currentHp: settings.maxHp,
+    maxHp: settings.maxHp,
+    visualMasterCardId: settings.visualMasterCardId,
+    attackPower: settings.attackPower,
+    rewardGold: settings.rewardGold,
+    rewardExp: settings.rewardExp,
+    timeLimitSeconds: settings.timeLimitSeconds,
+    discovererId: Math.max(parseInteger(playerSave.account?.userId, 1), 1),
+    rareFlg: 0,
+    eventCharaFlg: 0,
+    discoveredAt,
+    expiresAt: new Date(nowMs + settings.timeLimitSeconds * 1000).toISOString(),
+  };
+
+  fairySave.nextSerialId = serialNumber + 1;
+  fairySave.active = encounter;
+  fairySave.discovered[encounter.serialId] = cloneJson(encounter);
+  playerSave.exploration.encounters.push({
+    type: "fairy",
+    serialId: encounter.serialId,
+    floorKey: getExplorationFloorStateKey(floor),
+    discoveredAt,
+  });
+  return encounter;
 }
 
 function getLevelUpPointGrant(newLevel, playerSave) {
@@ -1985,8 +2444,44 @@ function loadExplorationMovesForRequest(savePath) {
   return { playerSave, moves };
 }
 
+function getAdminState(playerSavePath, runtimeConfigPath = getRuntimeConfigPath()) {
+  const runtimeConfig = readRuntimeConfig(runtimeConfigPath);
+  runtimeConfig.fairyEncounter = getFairyEncounterSettings(runtimeConfig);
+  return createAdminState(readPlayerSave(playerSavePath), {
+    savePath: getLogSafePath(playerSavePath),
+    runtimeConfigPath: getLogSafePath(runtimeConfigPath),
+    listenPorts: LISTEN_PORTS,
+    worldName: worldList[0]?.name || "Local Dev World",
+    routeCount: Object.keys(MAINMENU_ROUTE_STUBS).length,
+    explorationRegionCount: EXPLORATION_REGIONS.length,
+    adminWritePolicy: getAdminToken() ? "token" : "loopback-only",
+  }, runtimeConfig);
+}
+
+function handleRequestFailure(req, res, error) {
+  const disconnected = req.aborted === true
+    || res.destroyed === true
+    || error?.code === "ECONNRESET";
+  logRequest("request_error", {
+    method: req.method || "",
+    path: String(req.url || "").split("?", 1)[0],
+    code: error?.code || "",
+    message: error?.message || String(error),
+    disconnected,
+  });
+  if (disconnected || res.writableEnded) {
+    return;
+  }
+  if (!res.headersSent) {
+    sendText(res, 500, "internal server error\n");
+    return;
+  }
+  res.end();
+}
+
 function createServer() {
   const playerSavePath = getPlayerSavePath();
+  const runtimeConfigPath = getRuntimeConfigPath();
   if ((process.env.KSSMA_EXPLORATION_MOVES_SEED || "").trim()) {
     const seededMoves = applyExplorationSeed(createExplorationMovesFromSave(readPlayerSave(playerSavePath)));
     logRequest("exploration_seed", {
@@ -1998,11 +2493,71 @@ function createServer() {
     path: getLogSafePath(playerSavePath),
     source: fs.existsSync(playerSavePath) ? "file" : "default",
   });
-  const server = http.createServer(async (req, res) => {
+  logRequest("runtime_config", {
+    path: getLogSafePath(runtimeConfigPath),
+    source: fs.existsSync(runtimeConfigPath) ? "file" : "default",
+  });
+  const server = http.createServer((req, res) => {
+    void (async () => {
     const url = new URL(req.url, `http://${req.headers.host || "127.0.0.1"}`);
 
+    if (req.method === "GET" && url.pathname === "/admin") {
+      return sendRedirect(res, "/admin/");
+    }
+
+    if (req.method === "GET" && url.pathname === "/admin/") {
+      return sendHtml(res, 200, ADMIN_UI_HTML);
+    }
+
+    if (req.method === "GET" && url.pathname === "/admin/api/state") {
+      return sendJson(res, 200, getAdminState(playerSavePath, runtimeConfigPath));
+    }
+
+    if (req.method === "POST" && ["/admin/api/player", "/admin/api/fairy"].includes(url.pathname)) {
+      if (!isAdminWriteAuthorized(req)) {
+        logRequest("admin_write_denied", {
+          remoteAddress: req.socket?.remoteAddress || "",
+          policy: getAdminToken() ? "token" : "loopback-only",
+        });
+        return sendJson(res, 403, {
+          ok: false,
+          error: getAdminToken()
+            ? "管理令牌不正确"
+            : "未设置 KSSMA_ADMIN_TOKEN 时，只允许在服务端本机修改",
+        });
+      }
+      if (!String(req.headers["content-type"] || "").toLowerCase().startsWith("application/json")) {
+        return sendJson(res, 415, { ok: false, error: "Content-Type must be application/json" });
+      }
+      const body = await readBody(req);
+      if (Buffer.byteLength(body, "utf8") > 65536) {
+        return sendJson(res, 413, { ok: false, error: "admin update is too large" });
+      }
+      const update = parseMaybeJson(body);
+      if (!update) {
+        return sendJson(res, 400, { ok: false, error: "admin update must be valid JSON" });
+      }
+      try {
+        const isFairyUpdate = url.pathname === "/admin/api/fairy";
+        const targetPath = isFairyUpdate ? runtimeConfigPath : playerSavePath;
+        const updated = isFairyUpdate
+          ? applyAdminFairyUpdate(readRuntimeConfig(runtimeConfigPath), update)
+          : applyAdminPlayerUpdate(readPlayerSave(playerSavePath), update);
+        writeJsonFileAtomic(targetPath, updated);
+        logRequest(isFairyUpdate ? "admin_fairy_update" : "admin_player_update", {
+          fields: Object.keys(update),
+          remoteAddress: req.socket?.remoteAddress || "",
+          savePath: getLogSafePath(targetPath),
+          saved: true,
+        });
+        return sendJson(res, 200, getAdminState(playerSavePath, runtimeConfigPath));
+      } catch (error) {
+        return sendJson(res, 400, { ok: false, error: error.message });
+      }
+    }
+
     if (req.method === "GET" && url.pathname === "/healthz") {
-      return sendJson(res, 200, { ok: true, world: worldList[0] });
+      return sendJson(res, 200, { ok: true, world: worldList[0], admin: "/admin/" });
     }
 
     if (req.method === "GET" && url.pathname.startsWith("/connect/web/")) {
@@ -2245,7 +2800,7 @@ function createServer() {
       }
 
       if (req.method === "POST" && url.pathname === "/connect/app/exploration/explore") {
-        // ponytail: keep this as the no-branch walking candidate; battle/fairy/reward routes stay separate frontiers.
+        // ponytail: ordinary and ordinary-fairy are the only accepted event branches here; rare fairy and battle results stay separate frontiers.
         const { playerSave, moves } = loadExplorationMovesForRequest(playerSavePath);
         const floor = getExplorationFloorForStageAction(params.decrypted.area_id, params.decrypted.floor_id);
         const floorKey = getExplorationFloorStateKey(floor);
@@ -2294,10 +2849,19 @@ function createServer() {
         const movesDone = clampMoveCount((moves.get(floorKey) || 0) + 1, floor);
         moves.set(floorKey, movesDone);
         const levelResult = updateExplorationSaveAfterMove(playerSave, floor, moves);
-        saveExplorationMoves(playerSave, playerSavePath, moves);
         const progress = getExplorationProgress(floor, movesDone);
         const rewards = getExplorationStepRewards(floor);
-        const encrypted = encryptAes128Ecb(createExplorationExploreXml(progress, rewards, playerSave, levelResult), connectAppKey);
+        const fairySettings = getFairyEncounterSettings();
+        const fairyEncounter = !levelResult?.levelUp
+          && progress < 100
+          && shouldCreateFairyEncounter(playerSave, fairySettings)
+          ? createFairyEncounter(playerSave, fairySettings, floor)
+          : null;
+        saveExplorationMoves(playerSave, playerSavePath, moves);
+        const encrypted = encryptAes128Ecb(
+          createExplorationExploreXml(progress, rewards, playerSave, levelResult, fairyEncounter),
+          connectAppKey
+        );
         logRequest("connect_app_response", {
           path: url.pathname,
           mode: "aes-128-ecb",
@@ -2324,6 +2888,77 @@ function createServer() {
           nextExp: parseInteger(playerSave.profile?.nextExp, 0),
           abilityPoints: parseInteger(playerSave.progression?.abilityPoints?.unspent, 0),
           abilityPointsGranted: levelResult?.abilityPointsGranted || 0,
+          fairyEncounter: !!fairyEncounter,
+          fairyEncounterRate: fairySettings.ratePercent,
+          fairySerialId: fairyEncounter?.serialId || "",
+          fairyMasterBossId: fairyEncounter?.masterBossId || 0,
+          fairyLevel: fairyEncounter?.level || 0,
+          fairyMaxHp: fairyEncounter?.maxHp || 0,
+          saved: true,
+          savePath: getLogSafePath(playerSavePath),
+        });
+        sendBinary(res, 200, encrypted);
+        return;
+      }
+
+      if (req.method === "POST" && url.pathname === "/connect/app/exploration/fairybattle") {
+        const playerSave = readPlayerSave(playerSavePath);
+        const activeFairy = playerSave.battle?.fairy?.active || null;
+        const requestedSerialId = String(params.decrypted.serial_id || "");
+        const requestedUserId = parseInteger(params.decrypted.user_id, 0);
+        const encounterMatches = hasLiveFairyEncounter(playerSave)
+          && requestedSerialId === String(activeFairy.serialId || "")
+          && requestedUserId === parseInteger(activeFairy.discovererId, 0);
+        if (!encounterMatches) {
+          logRequest("connect_app_response", {
+            path: url.pathname,
+            status: 409,
+            source: "fairy battle encounter mismatch",
+            requestedSerialId,
+            requestedUserId,
+            activeSerialId: activeFairy?.serialId || "",
+            activeDiscovererId: parseInteger(activeFairy?.discovererId, 0),
+          });
+          return sendText(res, 409, "fairy battle encounter mismatch\n");
+        }
+        const settlement = createFairyBattleSettlement(playerSave, activeFairy);
+        const xml = createExplorationFairyBattleXml(settlement.playerSave, settlement);
+        writeJsonFileAtomic(playerSavePath, settlement.playerSave);
+        const encrypted = encryptAes128Ecb(xml, connectAppKey);
+        logRequest("connect_app_response", {
+          path: url.pathname,
+          mode: "aes-128-ecb",
+          key: connectAppKey,
+          bytes: encrypted.length,
+          source: "local fairy battle settlement",
+          nextScene: 4100,
+          battleScene: 4301,
+          resultScene: 4420,
+          explorationEventType: 18,
+          requestedSerialId,
+          fairyMasterBossId: parseInteger(activeFairy.masterBossId, 0),
+          enemyBattleType: parseInteger(activeFairy.masterBossId, 0),
+          enemyBossImageId: settlement.fairyVisualMasterCardId,
+          fairyLevel: parseInteger(activeFairy.level, 0),
+          fairyInitialHp: settlement.fairyInitialHp,
+          fairyCurrentHp: settlement.fairyRemainingHp,
+          fairyMaxHp: parseInteger(activeFairy.maxHp, 0),
+          fairyAttackPower: settlement.fairyAttackPower,
+          playerMaxHp: settlement.playerMaxHp,
+          playerRemainingHp: settlement.playerRemainingHp,
+          playerWon: settlement.playerWon,
+          winner: settlement.winner,
+          rounds: settlement.rounds,
+          playerDamage: settlement.fairyInitialHp - settlement.fairyRemainingHp,
+          fairyDamage: settlement.playerMaxHp - settlement.playerRemainingHp,
+          goldBefore: settlement.beforeGold,
+          goldReward: settlement.rewardGold,
+          goldAfter: settlement.afterGold,
+          expBefore: settlement.beforeExp,
+          expReward: settlement.rewardExp,
+          expAfter: settlement.afterExp,
+          levelBefore: settlement.beforeLevel,
+          levelAfter: settlement.afterLevel,
           saved: true,
           savePath: getLogSafePath(playerSavePath),
         });
@@ -2469,7 +3104,8 @@ function createServer() {
 
     const body = req.method === "POST" ? await readBody(req) : "";
     logRequest("miss", getRequestDetails(req, url, body));
-    return sendText(res, 404, "not found\n");
+      return sendText(res, 404, "not found\n");
+    })().catch((error) => handleRequestFailure(req, res, error));
   });
 
   server.on("connection", (socket) => {
@@ -2498,6 +3134,12 @@ if (require.main === module) {
 
 module.exports = {
   ADD_USER_KEY,
+  ADMIN_UI_HTML,
+  applyAdminFairyUpdate,
+  applyAdminPlayerUpdate,
+  createFairyBattleSettlement,
+  createFairyEncounter,
+  createAdminState,
   createServer,
   decryptAddUserPassword,
   decryptAes128EcbBase64,
@@ -2506,6 +3148,7 @@ module.exports = {
   createExplorationAreaXml,
   createExplorationApFailXml,
   createExplorationExploreXml,
+  createExplorationFairyBattleXml,
   createExplorationFloorXml,
   createExplorationGetFloorXml,
   createExplorationLockedXml,
@@ -2525,6 +3168,8 @@ module.exports = {
   getMainmenuInformationForPlayer,
   getLoginOkXml,
   getLoginXmlSource,
+  getFairyEncounterSettings,
+  hasLiveFairyEncounter,
   parseConnectAppBody,
   parsePortList,
   CHECK_INSPECTION_OK_XML,
@@ -2540,6 +3185,7 @@ module.exports = {
   GAME_MAINMENU_DATA,
   GAME_PLAYER_LEVEL_EXP_TABLE,
   DEFAULT_PLAYER_SAVE,
+  DEFAULT_RUNTIME_CONFIG,
   SERVER_WORLD_DATA,
   MAINMENU_ROUTE_STUBS,
   MAINMENU_UPDATE_XML,

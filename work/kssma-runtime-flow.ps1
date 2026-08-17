@@ -1835,7 +1835,14 @@ function Invoke-FlowOriginalLogin {
     if ($activityLine -match "com\.test\.RooneyJActivity") {
       if (($now - $lastActionAt).TotalSeconds -ge 6) {
         Add-FlowEvent -Context $Context -Type "login-rooney-title-without-connect-app" -Data ([ordered]@{ activity = $activityLine; attempt = $nativeTitleAttempts + 1 })
-        Invoke-FlowTap -Context $Context -Name "login-native-title-touch-screen" -X 640 -Y 650
+        # ponytail: once RooneyJ is visible and no connect route exists, use a direct bounded tap.
+        # The generic tap's UI-dialog inspection can take several seconds; automatic login may finish
+        # during that delay and turn the intended title tap into an unrelated main-menu action.
+        Add-FlowEvent -Context $Context -Type "tap" -Data ([ordered]@{ name = "login-native-title-touch-screen"; x = 640; y = 650; fast = $true })
+        $titleTap = Invoke-Adb -Arguments @("-s", $Context.serial, "shell", "input", "tap", "640", "650") -TimeoutSeconds 10 -AllowFailure
+        if (-not $titleTap.ok) {
+          Stop-FlowWithFailure -Context $Context -FailureClass "runtime-not-ready" -Step "login-native-title-touch-screen" -Message "ADB title tap failed: $($titleTap.failureClass) $($titleTap.stderr) $($titleTap.stdout)"
+        }
         $nativeTitleAttempts++
         $lastActionAt = Get-Date
         Start-Sleep -Seconds 5
@@ -3172,6 +3179,7 @@ function Get-FlowExplorationCoords {
     floorTopRow = @{ x = 760; y = 260 }
     floorSecondRow = @{ x = 760; y = 395 }
     explorationForward = @{ x = 1090; y = 95 }
+    fairyChallenge = @{ x = 1090; y = 95 }
     explorationNextFloor = @{ x = 1090; y = 95 }
     explorationReturn = @{ x = 1090; y = 585 }
     apShortageBuy = @{ x = 775; y = 340 }
@@ -3282,6 +3290,126 @@ function Invoke-FlowExplorationForwardVisualSmoke {
   Capture-FlowScreenshot -Context $Context -Name "after-forward-1800ms" | Out-Null
   Start-Sleep -Milliseconds 1200
   Capture-FlowScreenshot -Context $Context -Name "after-forward-3000ms" | Out-Null
+}
+
+function Invoke-FlowFairyBattleSmoke {
+  param($Context)
+
+  $coords = Enter-FlowExplorationArea0Main -Context $Context
+  Move-FlowRequestCursorToEnd -Context $Context
+
+  Invoke-FlowFastTapThenWaitProbe -Context $Context -Name "fairy-encounter-forward" -X $coords.explorationForward.x -Y $coords.explorationForward.y -Path "/connect/app/exploration/explore" -Params @{ area_id = "0"; floor_id = "1" } -TimeoutSeconds 25 | Out-Null
+  Wait-FlowServerEvent -Context $Context -Step "fairy-encounter-forward-response" -Tag "connect_app_response" -Path "/connect/app/exploration/explore" -Fields @{
+    regionId = 0
+    floorId = 2
+    areaNo = 1
+    movesDone = 6
+    progress = 60
+    fairyEncounter = $true
+    fairyEncounterRate = 100
+    fairySerialId = "100001"
+    fairyMasterBossId = 30024
+    fairyLevel = 18
+    fairyMaxHp = 6000
+  } -TimeoutSeconds 10 | Out-Null
+  Start-Sleep -Seconds 4
+  Assert-FlowClientAlive -Context $Context -Step "fairy-encounter-visible"
+  $fairyScreenshot = Capture-FlowScreenshot -Context $Context -Name "fairy-encounter"
+  Move-FlowRequestCursorToEnd -Context $Context
+
+  Invoke-FlowTap -Context $Context -Name "fairy-challenge" -X $coords.fairyChallenge.x -Y $coords.fairyChallenge.y
+  $battleProbe = Wait-FlowServerEvent -Context $Context -Step "fairy-challenge-probe" -Tag "connect_app_probe" -Path "/connect/app/exploration/fairybattle" -Params @{
+    user_id = "1"
+    serial_id = "100001"
+  } -TimeoutSeconds 25 -NoEventFailureClass "tap-no-effect"
+  $battleResponse = Wait-FlowServerEvent -Context $Context -Step "fairy-challenge-response" -Tag "connect_app_response" -Path "/connect/app/exploration/fairybattle" -Fields @{
+    source = "local fairy battle settlement"
+    nextScene = 4100
+    battleScene = 4301
+    resultScene = 4420
+    explorationEventType = 18
+    requestedSerialId = "100001"
+    fairyMasterBossId = 30024
+    enemyBattleType = 30024
+    enemyBossImageId = 600
+    fairyLevel = 18
+    fairyInitialHp = 6000
+    fairyCurrentHp = 0
+    fairyMaxHp = 6000
+    fairyAttackPower = 1000
+    playerMaxHp = 5620
+    playerRemainingHp = 4620
+    playerWon = $true
+    winner = 0
+    rounds = 2
+    playerDamage = 6000
+    fairyDamage = 1000
+    goldBefore = 18
+    goldReward = 777
+    goldAfter = 795
+    expBefore = 3
+    expReward = 4
+    expAfter = 7
+    levelBefore = 1
+    levelAfter = 1
+    saved = $true
+  } -TimeoutSeconds 10
+
+  Start-Sleep -Milliseconds 200
+  $battleEarly = Capture-FlowScreenshot -Context $Context -Name "fairy-battle-0200ms"
+  Start-Sleep -Milliseconds 800
+  Capture-FlowScreenshot -Context $Context -Name "fairy-battle-1000ms" | Out-Null
+  Start-Sleep -Seconds 3
+  $battleFourSeconds = Capture-FlowScreenshot -Context $Context -Name "fairy-battle-4000ms"
+  Start-Sleep -Seconds 6
+  $battleTenSeconds = Capture-FlowScreenshot -Context $Context -Name "fairy-battle-10000ms"
+  Start-Sleep -Seconds 8
+  $battleEighteenSeconds = Capture-FlowScreenshot -Context $Context -Name "fairy-battle-18000ms"
+  Assert-FlowClientAlive -Context $Context -Step "fairy-battle-after-response"
+
+  $settledSave = Read-FlowPlayerSave -Context $Context -Step "fairy-battle-settlement-save"
+  $settledFairy = Get-FlowProperty -Object (Get-FlowProperty -Object (Get-FlowProperty -Object $settledSave -Name "battle") -Name "fairy") -Name "active"
+  $history = @((Get-FlowProperty -Object (Get-FlowProperty -Object (Get-FlowProperty -Object $settledSave -Name "battle") -Name "fairy") -Name "history"))
+  $historyTail = if ($history.Count -gt 0) { $history[-1] } else { $null }
+  $saveChecks = [ordered]@{
+    battleWins = Get-FlowProperty -Object (Get-FlowProperty -Object $settledSave -Name "battle") -Name "wins"
+    activeFairy = $settledFairy
+    gold = Get-FlowProperty -Object (Get-FlowProperty -Object $settledSave -Name "currencies") -Name "gold"
+    exp = Get-FlowProperty -Object (Get-FlowProperty -Object $settledSave -Name "profile") -Name "exp"
+    historyWon = Get-FlowProperty -Object $historyTail -Name "won"
+    historyRewardGold = Get-FlowProperty -Object $historyTail -Name "rewardGold"
+    historyRewardExp = Get-FlowProperty -Object $historyTail -Name "rewardExp"
+  }
+  if ([int]$saveChecks.battleWins -ne 1 -or $null -ne $saveChecks.activeFairy -or [int]$saveChecks.gold -ne 795 -or [int]$saveChecks.exp -ne 7 -or $saveChecks.historyWon -ne $true -or [int]$saveChecks.historyRewardGold -ne 777 -or [int]$saveChecks.historyRewardExp -ne 4) {
+    Stop-FlowWithFailure -Context $Context -FailureClass "save-state-mismatch" -Step "fairy-battle-settlement-save" -Message "Fairy battle save did not match the logged settlement: $($saveChecks | ConvertTo-Json -Compress -Depth 5)"
+  }
+
+  $earlyDiff = Get-FlowScreenshotDiffScore -ExpectedPath $fairyScreenshot -ActualPath $battleEarly
+  $fourSecondDiff = Get-FlowScreenshotDiffScore -ExpectedPath $fairyScreenshot -ActualPath $battleFourSeconds
+  $tenSecondDiff = Get-FlowScreenshotDiffScore -ExpectedPath $fairyScreenshot -ActualPath $battleTenSeconds
+  $diffValues = @($earlyDiff, $fourSecondDiff, $tenSecondDiff) | Where-Object { $null -ne $_ }
+  $eighteenSecondDiff = Get-FlowScreenshotDiffScore -ExpectedPath $fairyScreenshot -ActualPath $battleEighteenSeconds
+  $diffValues = (@($diffValues) + @($eighteenSecondDiff)) | Where-Object { $null -ne $_ }
+  $maxDiff = if (@($diffValues).Count -gt 0) {
+    ($diffValues | Measure-Object -Maximum).Maximum
+  } else {
+    $null
+  }
+  if ($null -eq $maxDiff -or [double]$maxDiff -lt 20) {
+    Stop-FlowWithFailure -Context $Context -FailureClass "visual-state-mismatch" -Step "fairy-battle-visual-transition" -Message "The accepted fairybattle response did not visibly leave the fairy encounter page. maxDiff=$maxDiff"
+  }
+  if ($null -eq $eighteenSecondDiff -or [double]$eighteenSecondDiff -lt 5) {
+    Stop-FlowWithFailure -Context $Context -FailureClass "stale-fairy-event" -Step "fairy-battle-post-result-state" -Message "The settled battle replayed or retained the pre-battle fairy encounter surface. eighteenSecondDiff=$eighteenSecondDiff"
+  }
+  Add-FlowEvent -Context $Context -Type "fairy-battle-edge-captured" -Data ([ordered]@{
+      request = [ordered]@{ path = $battleProbe.path; decryptedParams = $battleProbe.decryptedParams }
+      response = $battleResponse.payload
+      scenePath = @(4100, 4301, 4420)
+      screenshots = @($battleEarly, $battleFourSeconds, $battleTenSeconds, $battleEighteenSeconds)
+      diffFromFairy = [ordered]@{ early = $earlyDiff; fourSeconds = $fourSecondDiff; tenSeconds = $tenSecondDiff; eighteenSeconds = $eighteenSecondDiff; maximum = $maxDiff }
+      settlementSave = $saveChecks
+      settlementClaim = "save-verified"
+    })
 }
 
 function Invoke-FlowExplorationFloorClearSmoke {
@@ -3646,7 +3774,9 @@ function Invoke-FlowSelfCheck {
       '[2026-01-01T00:00:10.000Z] connect_app_response {"path":"/connect/app/gacha/buy","source":"gacha buy settlement","command":"gacha_buy","nextScene":9200,"productId":1,"bulk":1,"friendshipBefore":400,"friendshipCost":200,"friendshipAfter":200,"drawnSerialId":2,"drawnMasterCardId":9,"ownerCardCount":2,"cardsDrawn":1,"saved":true}',
       '[2026-01-01T00:00:10.900Z] connect_app_probe {"path":"/connect/app/roundtable/edit","decryptedParams":{"move":"1"}}',
       '[2026-01-01T00:00:11.000Z] connect_app_response {"path":"/connect/app/roundtable/edit","command":"round_table","nextScene":83200,"ownerCardCount":2,"ownerCardSerialIds":[1,2],"ownerCardMasterCardIds":[22,9]}',
-      '[2026-01-01T00:00:12.000Z] connect_app_response {"path":"/connect/app/gacha/buy","source":"gacha buy settlement","command":"gacha_buy","nextScene":9200,"productId":2,"bulk":1,"friendshipBefore":0,"friendshipCost":0,"friendshipAfter":0,"mcBefore":300,"mcCost":300,"mcAfter":0,"drawnSerialId":2,"drawnMasterCardId":9,"ownerCardCount":2,"cardsDrawn":1,"saved":true}'
+      '[2026-01-01T00:00:12.000Z] connect_app_response {"path":"/connect/app/gacha/buy","source":"gacha buy settlement","command":"gacha_buy","nextScene":9200,"productId":2,"bulk":1,"friendshipBefore":0,"friendshipCost":0,"friendshipAfter":0,"mcBefore":300,"mcCost":300,"mcAfter":0,"drawnSerialId":2,"drawnMasterCardId":9,"ownerCardCount":2,"cardsDrawn":1,"saved":true}',
+      '[2026-01-01T00:00:13.000Z] connect_app_probe {"path":"/connect/app/exploration/fairybattle","decryptedParams":{"user_id":"1","serial_id":"100001"}}',
+      '[2026-01-01T00:00:13.100Z] connect_app_response {"path":"/connect/app/exploration/fairybattle","source":"local fairy battle settlement","nextScene":4100,"battleScene":4301,"resultScene":4420,"explorationEventType":18,"requestedSerialId":"100001","fairyMasterBossId":30024,"enemyBattleType":30024,"enemyBossImageId":600,"fairyLevel":18,"fairyInitialHp":6000,"fairyCurrentHp":0,"fairyMaxHp":6000,"fairyAttackPower":1000,"playerMaxHp":5620,"playerRemainingHp":4620,"playerWon":true,"winner":0,"rounds":2,"playerDamage":6000,"fairyDamage":1000,"goldBefore":18,"goldReward":777,"goldAfter":795,"expBefore":3,"expReward":4,"expAfter":7,"levelBefore":1,"levelAfter":1,"saved":true}'
     ) | Set-Content -LiteralPath $ctx.serverOut -Encoding UTF8
     Set-FlowApShortagePlayerSave -Context $ctx
     $initialApShortageSave = Read-FlowPlayerSave -Context $ctx -Step "self-ap-shortage-save-before"
@@ -3797,12 +3927,14 @@ function Invoke-FlowSelfCheck {
     Wait-FlowServerEvent -Context $ctx -Step "self-deck-entry-probe" -Tag "connect_app_probe" -Path "/connect/app/roundtable/edit" -Params @{ move = "1" } -TimeoutSeconds 2 | Out-Null
     Wait-FlowServerEvent -Context $ctx -Step "self-gacha-deck-response" -Tag "connect_app_response" -Path "/connect/app/roundtable/edit" -Fields @{ command = "round_table"; nextScene = 83200; ownerCardCount = 2 } -TimeoutSeconds 2 | Out-Null
     Wait-FlowServerEvent -Context $ctx -Step "self-gacha-paid-settlement-response" -Tag "connect_app_response" -Path "/connect/app/gacha/buy" -Fields @{ source = "gacha buy settlement"; command = "gacha_buy"; nextScene = 9200; productId = 2; bulk = 1; friendshipBefore = 0; friendshipCost = 0; friendshipAfter = 0; mcBefore = 300; mcCost = 300; mcAfter = 0; drawnSerialId = 2; drawnMasterCardId = 9; ownerCardCount = 2; cardsDrawn = 1; saved = $true } -TimeoutSeconds 2 | Out-Null
+    Wait-FlowServerEvent -Context $ctx -Step "self-fairy-battle-probe" -Tag "connect_app_probe" -Path "/connect/app/exploration/fairybattle" -Params @{ user_id = "1"; serial_id = "100001" } -TimeoutSeconds 2 | Out-Null
+    Wait-FlowServerEvent -Context $ctx -Step "self-fairy-battle-response" -Tag "connect_app_response" -Path "/connect/app/exploration/fairybattle" -Fields @{ source = "local fairy battle settlement"; nextScene = 4100; battleScene = 4301; resultScene = 4420; explorationEventType = 18; requestedSerialId = "100001"; enemyBattleType = 30024; enemyBossImageId = 600; playerWon = $true; winner = 0; goldAfter = 795; expAfter = 7; saved = $true } -TimeoutSeconds 2 | Out-Null
     $unexpectedLeaderProbe = Wait-FlowServerEventOptional -Context $ctx -Step "self-deck-leader-no-route" -Tag "connect_app_probe" -Path "" -TimeoutSeconds 1
     if ($unexpectedLeaderProbe) {
       throw "leader-mode quiet-window fixture unexpectedly found $($unexpectedLeaderProbe.path)"
     }
     $scenarioNames = @((Get-FlowScenarioCatalog).name)
-    foreach ($requiredScenario in @("deck-builder-leader-mode-smoke", "deck-builder-edit-smoke", "deck-builder-save-smoke")) {
+    foreach ($requiredScenario in @("deck-builder-leader-mode-smoke", "deck-builder-edit-smoke", "deck-builder-save-smoke", "fairy-battle-smoke")) {
       if ($scenarioNames -notcontains $requiredScenario) {
         throw "$requiredScenario is missing from the flow catalog"
       }
@@ -4097,6 +4229,13 @@ function Get-FlowScenarioCatalog {
       description = "Login to main menu, enter the first exploration stage with seeded progress, advance once, and capture early post-forward frames."
     },
     [ordered]@{
+      name = "fairy-battle-smoke"
+      default = $false
+      startsRuntime = $true
+      ownsServer = $true
+      description = "Force one ordinary fairy encounter, tap its original challenge control, verify fairybattle params/scene metadata, and capture the original battle transition."
+    },
+    [ordered]@{
       name = "exploration-floor-clear-smoke"
       default = $false
       startsRuntime = $true
@@ -4203,7 +4342,7 @@ function Invoke-Flow {
   if ($Scenario -eq "self-check") {
     return Invoke-FlowSelfCheck -Scenario $Scenario -Tag $Tag
   }
-  $supportedRuntimeScenarios = @("mainmenu-faction-smoke", "mainmenu-buttons-route-smoke", "mainmenu-bottom-buttons-smoke", "deck-builder-entry-smoke", "deck-builder-leader-mode-smoke", "deck-builder-edit-smoke", "deck-builder-save-smoke", "gacha-draw-smoke", "gacha-result-smoke", "gacha-result-back-smoke", "gacha-paid-retry-smoke", "gacha-settlement-deck-smoke", "gacha-paid-settlement-deck-smoke", "menu-buttons-route-smoke", "menu-buttons-tail-smoke", "menu-item-parts-smoke", "exploration-smoke", "exploration-walk-smoke", "exploration-forward-visual-smoke", "exploration-floor-clear-smoke", "exploration-ap-shortage-smoke", "exploration-levelup-smoke")
+  $supportedRuntimeScenarios = @("mainmenu-faction-smoke", "mainmenu-buttons-route-smoke", "mainmenu-bottom-buttons-smoke", "deck-builder-entry-smoke", "deck-builder-leader-mode-smoke", "deck-builder-edit-smoke", "deck-builder-save-smoke", "gacha-draw-smoke", "gacha-result-smoke", "gacha-result-back-smoke", "gacha-paid-retry-smoke", "gacha-settlement-deck-smoke", "gacha-paid-settlement-deck-smoke", "menu-buttons-route-smoke", "menu-buttons-tail-smoke", "menu-item-parts-smoke", "exploration-smoke", "exploration-walk-smoke", "exploration-forward-visual-smoke", "fairy-battle-smoke", "exploration-floor-clear-smoke", "exploration-ap-shortage-smoke", "exploration-levelup-smoke")
   if ($Scenario -notin $supportedRuntimeScenarios) {
     $ctx = New-FlowContext -Scenario $Scenario -Tag $Tag
     $supported = (@(Get-FlowScenarioCatalog).name -join ", ")
@@ -4238,8 +4377,18 @@ function Invoke-Flow {
     if ($Scenario -eq "exploration-floor-clear-smoke") {
       $serverEnvironment["KSSMA_EXPLORATION_MOVES_SEED"] = '{"4:6":15}'
     }
-    if ($Scenario -eq "exploration-forward-visual-smoke") {
+    if ($Scenario -in @("exploration-forward-visual-smoke", "fairy-battle-smoke")) {
       $serverEnvironment["KSSMA_EXPLORATION_MOVES_SEED"] = '{"0:2":5}'
+    }
+    if ($Scenario -eq "fairy-battle-smoke") {
+      $serverEnvironment["KSSMA_FAIRY_ENABLED"] = "1"
+      $serverEnvironment["KSSMA_FAIRY_ENCOUNTER_RATE"] = "100"
+      $serverEnvironment["KSSMA_FAIRY_LEVEL"] = "18"
+      $serverEnvironment["KSSMA_FAIRY_MAX_HP"] = "6000"
+      $serverEnvironment["KSSMA_FAIRY_ATTACK_POWER"] = "1000"
+      $serverEnvironment["KSSMA_FAIRY_REWARD_GOLD"] = "777"
+      $serverEnvironment["KSSMA_FAIRY_REWARD_EXP"] = "4"
+      $serverEnvironment["KSSMA_FAIRY_TIME_LIMIT_SECONDS"] = "3600"
     }
     Start-FlowServer -Context $ctx -ExtraEnvironment $serverEnvironment
     Invoke-FlowRuntimeGate -Context $ctx
@@ -4272,6 +4421,7 @@ function Invoke-Flow {
       "exploration-smoke" { Invoke-FlowExplorationSmoke -Context $ctx }
       "exploration-walk-smoke" { Invoke-FlowExplorationWalkSmoke -Context $ctx }
       "exploration-forward-visual-smoke" { Invoke-FlowExplorationForwardVisualSmoke -Context $ctx }
+      "fairy-battle-smoke" { Invoke-FlowFairyBattleSmoke -Context $ctx }
       "exploration-floor-clear-smoke" { Invoke-FlowExplorationFloorClearSmoke -Context $ctx }
       "exploration-ap-shortage-smoke" { Invoke-FlowExplorationApShortageSmoke -Context $ctx }
       "exploration-levelup-smoke" { Invoke-FlowExplorationLevelUpSmoke -Context $ctx }

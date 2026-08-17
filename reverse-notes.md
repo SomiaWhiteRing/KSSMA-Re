@@ -90,6 +90,50 @@ Archive: `docs/reverse-archive/startup-mainmenu-20260624-20260625.md`.
 - `install-apk` only accepts the unique client baseline APK. Old APKs are archived and must not be installed.
 - Native-only changes should use `patch-lib -ApkPath <explicit .so>` and must verify installed/source SHA-256 equality.
 - Frida is not a default probe because it can destabilize ARM19 ADB.
+- Rejected alternate runtime: the user-provided Android 15 emulator at `127.0.0.1:5555` is reachable
+  and healthy as API 35/x86_64, but its 32-bit ABI list contains only `x86`. The unique client APK has
+  only `lib/armeabi/librooneyj.so` (`ELFCLASS32`, `EM_ARM`). Normal install failed with
+  `INSTALL_FAILED_NO_MATCHING_ABIS`; forced `--abi armeabi-v7a` failed with `ABI armeabi-v7a not
+  supported on this device`, and no package was created. This run never reached Activity or network,
+  so `10.0.2.2` is not implicated. Evidence: `work/a15-runtime-compatibility-card-20260817.md`.
+- Accepted alternate runtime candidate: the user-provided Android 12/MuMu emulator at
+  `127.0.0.1:7555` is healthy as API 32/x86_64 and exposes working 32-bit ARM translation. The unique
+  client installed as `primaryCpuAbi=armeabi`; MuMu reported `libhoudini.so` and
+  `RunningArchitecture=armeabi`. Guest route `10.0.2.0/24` confirmed `10.0.2.2` as the host gateway,
+  and device hosts mappings for the two legacy domains reached the existing server on ports 50005/10001.
+  The first native abort named the known missing external resource `save/download/rest/treasurebox`;
+  reusing the accepted minimal resource set removed it. A cold launch then completed
+  `check_inspection -> post_devicetoken -> login`, rendered the main menu, stayed alive through 15 seconds,
+  and a Gacha tap emitted `/connect/app/gacha/select/getcontents` and visibly opened scene 9100. About 269
+  seconds later, however, that process hit a null `SIGSEGV` at `librooneyj.so` PC `0x003657c6` in the
+  `vector<smart_ptr<RewardBoxTagData>>` copy constructor (caller `0x0040b03c`); Android restarted the task,
+  repeated login/web, and returned to a visible main menu. No resource-miss accompanied this crash. A12 is
+  accepted only as a startup/main-menu/manual investigation candidate, not full gameplay acceptance. Compare
+  the same idle-on-gacha-select condition on ARM19 before attributing it to Houdini or changing reward-box state.
+  It does not replace ARM19 or weaken its runtime/flow guards.
+  Evidence: `work/a12-runtime-compatibility-card-20260817.md` and
+  `work/kssma-a12-launch-20260817/summary.json`.
+- Accepted MuMu Android 12 installation path: `work/kssma-mumu-a12.ps1` is an isolated alternate-runtime
+  installer for `127.0.0.1:7555`; it reuses generic process/ADB helpers but does not change the ARM19 runtime
+  configuration or flow gates. `prepare-assets.py -> extract-gacha-pack-resources.py ->
+  build-client-baseline.py -> build-mumu-a12-resource-pack.py` produced APK SHA-256
+  `D22ED62A8C39210FBC22B91FB224FB33F603AF4CF9927B9014098AAF9398429B`, accepted native SHA-256
+  `DEC36585CA0129AA19E68CC53898D95DE41067AA5D380B23218F3E88273CD40F`, and a deterministic static
+  resource TAR containing 6,901 files / 517,599,894 payload bytes with SHA-256
+  `FF60551898A285A355ECEC0E4C38624BA9999A6A19A6CB668CF8C7C9E66519CF`. Mutable
+  `appdata/save_appdata` is excluded and preserved. The installer keeps a stable original-hosts backup,
+  idempotently maps both legacy domains to confirmed guest gateway `10.0.2.2`, verifies the installed native
+  hash, and runs `sha256sum -c` over the full resource payload. The final single-command replay
+  `deploy -StartServer -Launch` passed; after making those final status values mandatory postconditions, the
+  unchanged replay passed again in 67.882s: PackageManager selected `armeabi`, all resource hashes and both
+  device-side `/healthz` probes passed, PID 6701 remained in `com.test.RooneyJActivity` with no 10-second fatal,
+  and `work/kssma-mumu-a12-last-launch.png` showed the main menu. The first replay's final evidence step failed
+  only because local `$pid` collided with PowerShell's read-only `$PID`; installation and full resource hashing
+  had already passed, and the variable was corrected to `$gamePid`. Do not use `database/master_card` as a
+  persistent sentinel because the client removes it after loading, and do not use MuMu's unsupported `nc -z`;
+  the accepted probes are `database/master_boss` and device-side `curl /healthz`. This accepts installation,
+  not the unresolved delayed gacha-select crash or full gameplay on A12. Evidence:
+  `work/mumu-a12-deployment-card-20260817.md`.
 
 Archive: `docs/reverse-archive/runtime-control-arm19-20260625-20260627.md`.
 
@@ -124,6 +168,36 @@ Current accepted flow evidence:
   persisted in the player save.
 - Historical six-area artifacts remain useful for background/value checks, but they predate save-gated unlocking and
   are no longer the default new-player smoke path.
+- Ordinary fairy encounter entry is accepted on ARM19. `event_type=1` plus the native-parsed `<fairy>` object reuses
+  the original `fairy_floor -> scene 6202` path. Artifact
+  `work/kssma-flow-exploration-forward-visual-smoke-20260816-223933` records
+  `/exploration/explore -> /exploration/fairybattle user_id=1 serial_id=100001`; screenshot
+  `screenshots/after-forward-0200ms.png` visibly shows 小龙女 Lv.18 and HP `20000/20000`.
+  Battle candidate 1 removed the 501 but rejected non-constructible `next_scene=4103` at
+  `_SceneControl::create(int)+105`. Static factory evidence and the APK sample corrected the selector to generic
+  VS scene 4100. Artifact `work/kssma-flow-fairy-battle-smoke-scene4100-candidate2-valid` then passed with exact
+  `/exploration/fairybattle(user_id=1,serial_id=100001)`, visible original VS, animated battle, and fairy-result
+  layout across scenes `4100 -> 4301 -> 4420`; RooneyJ stayed alive. Dynamic artifact
+  `work/kssma-flow-fairy-battle-smoke-fairy-battle-dynamic-acceptance` now also accepts player/fairy-owned battle
+  records and atomic settlement: visible 小龙女 `6000 -> 0`, Arthur `5620 -> 4620`, two rounds, gold
+  `18 -> 795`, EXP `3 -> 7`, `wins=1`, cleared active fairy, and matching history, with a resumed Activity and
+  no native crash. The follow-up `work/kssma-flow-fairy-battle-smoke-postbattle-visual-masterboss` artifact accepts
+  the post-result refresh and enemy visual mapping: the response refreshes ExplorationModel with
+  `event_type=0/encounter=0`, the 18s frame differs from the old encounter by `66.52`, and battle type `30024`
+  visibly resolves boss image 600 (小龙女) instead of the generic soldier. Reward presentation and next-click
+  behavior remain separate. Static settlement recovery now proves that the blank frame was the ordinary
+  `event_type=0` branch; original scene 4420 dispatches `event_type=18` through `area_fairy_dead` and then
+  `reward_check_com`, whose `btl_exp` node binds the existing BattleModel Gold/EXP/level fields. The server and
+  flow self-checks pass with the post-battle response changed only to `event_type=18/encounter=0`; path card:
+  `work/fairy-postbattle-settlement-path-card-20260817.md`. Its first ARM19 replay stopped before login at
+  `repair-adb / restart-boot-timeout` with an empty route sequence, artifact
+  `work/kssma-flow-fairy-battle-smoke-fairy-settlement-event18-candidate1`; a permitted repair and later
+  `fast-health` still reported `emulator-5556 offline`. This is runtime-only evidence, not a failed product
+  candidate. Keep the event-18 response candidate and replay it unchanged only after ARM19 health returns.
+  Prior accepted evidence:
+  `work/fairy-encounter-path-card-20260816.md`, `work/fairy-battle-path-card-20260816.md`, and
+  `work/fairy-battle-settlement-schema-card-20260816.md`, plus
+  `work/fairy-postbattle-visual-path-card-20260817.md`.
 
 Accepted native patches/builders:
 
@@ -186,7 +260,9 @@ Archives:
 
 - Flow-first runtime acceptance is now the default project path. Use:
   `powershell -NoProfile -ExecutionPolicy Bypass -File .\work\kssma-runtime.ps1 flow -Scenario exploration-smoke`.
-- Active product frontier is now gacha and deck builder. Do not reopen accepted main-menu black-screen, face,
+- Gacha and deck builder remain accepted/in-progress product lines, but the user's current priority temporarily moves
+  the active product frontier to fairy post-result refresh, BC, drops, reward box, rare fairies, and LAN co-operation.
+  Do not reopen accepted main-menu black-screen, face,
   background, BGM, voice, tapped subtitle, main-button, Menu-page, bottom deck, or bottom friends work without
   new resource-miss, crash, route regression, or screenshot regression evidence.
 - Shared prerequisite for both new systems: player owned-card data, card master data, deck slots, card resources,
@@ -212,6 +288,20 @@ Archives:
 - Gacha result-page back, paid retry, card persistence, and friendship-point/MC spending are accepted. Remaining
   gacha work is original select-list/page evidence and explicit rejection of invalid product, insufficient balance,
   and unsupported bulk requests; keep random pools, 11-pull, comp rewards, and album completion out of scope.
+- Gacha-triggered server exit is fixed at the transport boundary. A truncated
+  `POST /connect/app/gacha/select/getcontents` reproduced Node 24's uncaught `Error: aborted / ECONNRESET` because
+  the async HTTP handler Promise was not observed. `createServer` now catches every request Promise, logs
+  `request_error` for disconnects, and keeps both ports alive. The self-check replays the disconnect, requires a
+  subsequent `/healthz` 200, then continues through both gacha settlements. Manual post-fix replay kept the same
+  PID and returned the next normal gacha-select request. ARM19 reacceptance later passed twice after the slow boot
+  recovered: `gacha-result-back-smoke / gacha-server-disconnect-fix-arm19-retest-2` proved the visible select,
+  RARE draw, result, and return edge; `gacha-settlement-deck-smoke / gacha-funded-settlement-arm19-retest` proved
+  friendship `400 -> 200`, persisted card `serialId=2/masterCardId=9`, history/counter update, and round-table
+  readback. Both runs had empty server stderr and no client fatal. The first resumed attempt had exposed a missing
+  generated `gacha_cp_button`; the accepted `extract-gacha-pack-resources.py` path restored the original pack assets,
+  and `environment.yml` now declares its required `pycryptodome`. The zero-balance result/back smoke still awarded
+  a card while holding friendship at zero, so insufficient-balance semantics remain explicitly unaccepted.
+  Evidence and exact commands: `work/gacha-server-disconnect-crash-card-20260817.md`.
 - Gacha result-page back is accepted: `flow -Scenario gacha-result-back-smoke -Tag gacha-result-back-4` passed on
   ARM19. Route sequence proved `/connect/app/gacha/select/getcontents -> /connect/app/gacha/buy product_id=1
   bulk=1 auto_build=1 -> /connect/app/gacha/select/getcontents` after tapping the visible result-page back button.
@@ -242,9 +332,35 @@ Archives:
   `tBoot=102.733s` with stable identity/boot samples, a successful restart helper, one process group, and both
   ports owned by its `emulator-arm.exe`. Keep the existing 120-second restart wait. The next bounded product round
   is D5.6 current-model response acceptance; D6 persistence remains blocked until that runtime edge passes.
-- Exploration is marked initially complete for now. Keep its smoke/walk/floor-clear/AP-shortage/level-up flows as
-  regression tests, but pause cross-region completion, guardian/battle, event, fairy, and reward branches until the
-  player data model is stronger.
+- Exploration ordinary walking remains accepted. The user has explicitly reopened the fairy branch: ordinary fairy
+  encounter and the original `4100 -> 4301 -> 4420` battle presentation are now accepted. The active edge is
+  `accepted post-battle refresh -> reward presentation/return click -> prove next route`.
+  Dynamic damage, original battle playback, and atomic gold/EXP/counter/history persistence are accepted by
+  `work/kssma-flow-fairy-battle-smoke-fairy-battle-dynamic-acceptance`; see the settlement card for exact values.
+  `work/kssma-flow-fairy-battle-smoke-postbattle-visual-masterboss` further accepts the original-model response fix:
+  a no-event `<explore>` refresh prevents replay of the defeated `HP 6000/6000` encounter, and enemy battle type
+  `30024` visibly selects boss image 600 (小龙女) rather than the generic soldier. The terminal frame exposes the
+  exploration return button, but its click/next route and a dedicated reward summary remain unaccepted.
+  A browser-skill pass for the three added admin values was also stopped before navigation: its Node kernel could
+  not `lstat` `%USERPROFILE%\AppData` in the managed sandbox. The temporary server closed without creating its QA
+  save. Do not treat this as a UI failure; API validation/reload self-checks pass and the accepted M1 responsive grid
+  is unchanged, but the new fields still need one browser regression when host access is restored.
+  Cross-region completion, guardians, rare fairies, and expired/dead fairy handling remain separate frontiers.
+- Advanced-fairy static survey is recorded in `work/fairy-advanced-protocol-survey-card-20260817.md`.
+  Hypothesis: BC gating was client-side. Static result: falsified for the accepted APK—
+  `_ExplorationMain::isBcFull()` at `0x00343274` always returns true, both `BcCheck` handlers always select their
+  `*_max_bc` behaviors, and `battleFairy` sends only `user_id,serial_id`. Therefore BC validation/debit must be
+  server-authoritative and returned through header `your_data/bc`; the original shortage body and exact debit amount
+  remain open. The same survey closes the immediate factor schema (`get_item_parts_event -> event_id -> parts_one ->
+  lake_id/parts/master_card_id/parts_num/parts_have[/user_card]`), reward-box list/claim routes and fields, the
+  sibling `rare_fairy` parser shape, and the shared-fairy selection/floor/history/lose plus attacker-history routes.
+  It also proves reward-box type 1 is card and type 2 is item; types 3..6 are not yet semantically closed. No product
+  response or runtime data was changed by this static round.
+- 2026-08-17 regression: `work/kssma-runtime-flow.ps1 -SelfTest` and `git diff --check` passed. The first bare
+  `node server/test-bootstrap-server.js` invocation stopped at its child `python` with Windows status `9009` because
+  this PowerShell session had no Python on `PATH`; rerunning the identical test with
+  `C:\Users\jsyzd\miniconda3\envs\KSSMA-Re` prepended to `PATH` passed all bootstrap-server checks. This was an
+  invocation-environment failure, not a product assertion or ARM19 permission failure.
 - Current accepted exploration regression artifact after the gacha native baseline promotion:
   `work/kssma-flow-exploration-smoke-gacha-baseline-regression-exploration-1`.
 - Flow-first reset regression artifact:
@@ -291,9 +407,9 @@ Archives:
 - Client baseline uniqueization runtime proof: `start-runtime` now reports `clientBaseline.status=already-matched`.
   `install-check` without `-ApkPath` verifies the unique baseline, and `flow -Scenario exploration-smoke -Tag client-baseline-uniqueization`
   passed with artifact `work/kssma-flow-exploration-smoke-client-baseline-uniqueization`.
-- Former exploration frontier beyond normal walking, floor-clear, and next-floor continuation is now frozen:
-  return behavior from exploration main, cross-region completion, guardian/battle, event, fairy, and reward branches
-  are not active until main-menu/player-data work catches up.
+- The former blanket fairy freeze is superseded by the user's 2026-08-16 reopening and the current fairy cards above.
+  Cross-region completion, guardians, rare fairies, expired/dead fairy handling, and reward-box/card/factor drops stay
+  frozen; do not use this older baseline note to freeze the accepted ordinary-fairy branch again.
 - The active tooling frontier is adding new `flow` scenarios for new systems instead of copying login/server/ADB setup into separate scripts.
 - Detailed pre-flow-first exploration depth, media, ADB, native-baseline, and smoke-run notes were moved to:
   `docs/reverse-archive/exploration-frontiers-before-flow-first-20260628.md`.
@@ -794,6 +910,11 @@ Archives:
   `LayoutScene::showDialog` or `_SceneControl::push(90100)`. Without it, no evidence proves a visible rejection
   dialog, return to `GachaDrawResult`, or route quiet. The candidate XML is not implemented; G2 product, mode, and
   balance rejection remain frozen rather than guessing a wire error contract.
+- Local admin M1 is accepted as a server-only tool. `/admin/` exposes a KSSMA-styled status/player page; its API
+  writes only validated profile/resource/currency/ticket/capacity scalars through the existing atomic save path,
+  keeps exploration/cards/decks read-only, and requires loopback or `KSSMA_ADMIN_TOKEN`. The full server self-check
+  and a real-browser 639px no-overflow render passed without changing gameplay XML, native code, or the real save.
+  Evidence: `work/admin-console-m1-card-20260816.md`; roadmap: `docs/local-revival-roadmap.md`.
 
 ## Fresh-clone startup asset closure
 

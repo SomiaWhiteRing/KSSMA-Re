@@ -2,11 +2,18 @@ const assert = require("node:assert/strict");
 const crypto = require("node:crypto");
 const fs = require("node:fs");
 const http = require("node:http");
+const net = require("node:net");
 const os = require("node:os");
 const path = require("node:path");
 const {
   createServer,
   ADD_USER_KEY,
+  ADMIN_UI_HTML,
+  applyAdminFairyUpdate,
+  applyAdminPlayerUpdate,
+  createFairyBattleSettlement,
+  createFairyEncounter,
+  createAdminState,
   CHECK_INSPECTION_OK_XML,
   decryptAes128EcbBase64,
   encryptAes128Ecb,
@@ -14,6 +21,7 @@ const {
   createExplorationAreaXml,
   createExplorationApFailXml,
   createExplorationExploreXml,
+  createExplorationFairyBattleXml,
   createExplorationFloorXml,
   createExplorationGetFloorXml,
   createExplorationLockedXml,
@@ -42,6 +50,7 @@ const {
   GAME_MAINMENU_DATA,
   GAME_PLAYER_LEVEL_EXP_TABLE,
   DEFAULT_PLAYER_SAVE,
+  DEFAULT_RUNTIME_CONFIG,
   SERVER_WORLD_DATA,
   MAINMENU_ROUTE_STUBS,
   MAINMENU_UPDATE_XML,
@@ -103,6 +112,63 @@ function post(port, path, body) {
           const buffer = Buffer.concat(chunks);
           resolve({
             statusCode: res.statusCode,
+            body: buffer.toString("utf8"),
+            buffer,
+          });
+        });
+      }
+    );
+    req.on("error", reject);
+    req.end(body);
+  });
+}
+
+function abortPost(port, path) {
+  return new Promise((resolve, reject) => {
+    const socket = net.connect(port, "127.0.0.1");
+    socket.once("connect", () => {
+      socket.write(
+        `POST ${path} HTTP/1.1\r\n`
+        + `Host: 127.0.0.1:${port}\r\n`
+        + "Content-Type: application/x-www-form-urlencoded\r\n"
+        + "Content-Length: 4096\r\n"
+        + "Connection: close\r\n"
+        + "\r\n"
+        + "x="
+      );
+      setTimeout(() => socket.destroy(), 20);
+    });
+    socket.once("error", reject);
+    socket.once("close", () => setTimeout(resolve, 30));
+  });
+}
+
+function postJson(port, path, value, token = "") {
+  const body = JSON.stringify(value);
+  return new Promise((resolve, reject) => {
+    const headers = {
+      "Content-Type": "application/json",
+      "Content-Length": Buffer.byteLength(body),
+    };
+    if (token) {
+      headers["X-KSSMA-Admin-Token"] = token;
+    }
+    const req = http.request(
+      {
+        host: "127.0.0.1",
+        port,
+        path,
+        method: "POST",
+        headers,
+      },
+      (res) => {
+        const chunks = [];
+        res.on("data", (chunk) => chunks.push(chunk));
+        res.on("end", () => {
+          const buffer = Buffer.concat(chunks);
+          resolve({
+            statusCode: res.statusCode,
+            headers: res.headers,
             body: buffer.toString("utf8"),
             buffer,
           });
@@ -280,9 +346,14 @@ function saveWithFaction(faction) {
 
 async function main() {
   const previousPlayerSavePath = process.env.KSSMA_PLAYER_SAVE_PATH;
+  const previousRuntimeConfigPath = process.env.KSSMA_RUNTIME_CONFIG_PATH;
   const previousLoginResponse = process.env.LOGIN_RESPONSE;
+  const previousAdminToken = process.env.KSSMA_ADMIN_TOKEN;
   const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "kssma-player-save-"));
   const tempPlayerSavePath = path.join(tempDir, "player-save.json");
+  const tempRuntimeConfigPath = path.join(tempDir, "runtime-config.json");
+  const testRuntimeConfig = JSON.parse(JSON.stringify(DEFAULT_RUNTIME_CONFIG));
+  testRuntimeConfig.fairyEncounter.enabled = false;
 
   for (const relativePath of [
     "server/data/game/exploration.json",
@@ -291,6 +362,7 @@ async function main() {
     "server/data/game/player-level-exp-table.json",
     "server/data/player/default-save.json",
     "server/data/server/masterdata-routes.json",
+    "server/data/server/runtime-config.json",
     "server/data/server/worlds.json",
   ]) {
     assertNoDataMetaFields(path.join(__dirname, "..", relativePath));
@@ -328,6 +400,149 @@ async function main() {
   assert.equal(DEFAULT_PLAYER_SAVE.exploration.regions["0"].unlocked, true);
   assert.equal(DEFAULT_PLAYER_SAVE.exploration.regions["1"].unlocked, false);
   assert.deepEqual(DEFAULT_PLAYER_SAVE.exploration.movesByFloor, {});
+  assert.match(ADMIN_UI_HTML, /KSSMA-Re 管理终端/);
+  assert.match(ADMIN_UI_HTML, /保存玩家设定/);
+  assert.match(ADMIN_UI_HTML, /妖精遭遇管制/);
+  assert.match(ADMIN_UI_HTML, /保存妖精设定/);
+  assert.match(ADMIN_UI_HTML, /妖精攻击力/);
+  assert.match(ADMIN_UI_HTML, /胜利金币/);
+  assert.match(ADMIN_UI_HTML, /胜利经验/);
+  assert.match(ADMIN_UI_HTML, /复原边界/);
+  assert.doesNotMatch(ADMIN_UI_HTML, /https?:\/\//);
+  const adminSourceSave = JSON.parse(JSON.stringify(DEFAULT_PLAYER_SAVE));
+  adminSourceSave.profile.countryId = 1;
+  const adminUpdatedSave = applyAdminPlayerUpdate(adminSourceSave, {
+    name: "本地亚瑟",
+    faction: "magic",
+    level: 17,
+    exp: 950,
+    nextExp: 1900,
+    apCurrent: 30,
+    apMax: 35,
+    bcCurrent: 20,
+    bcMax: 40,
+    gold: 9000,
+    mc: 600,
+    friendshipPoint: 400,
+    gachaTicket: 3,
+    cardMax: 400,
+  });
+  assert.equal(adminSourceSave.profile.name, "Arthur", "admin updater must not mutate its input");
+  assert.equal(adminUpdatedSave.profile.name, "本地亚瑟");
+  assert.equal(adminUpdatedSave.profile.faction, "magic");
+  assert.equal(adminUpdatedSave.profile.countryId, undefined);
+  assert.equal(adminUpdatedSave.profile.percentage, 50);
+  assert.equal(adminUpdatedSave.resources.ap.current, 30);
+  assert.equal(adminUpdatedSave.resources.ap.max, 35);
+  assert.equal(adminUpdatedSave.resources.bc.current, 20);
+  assert.equal(adminUpdatedSave.resources.bc.max, 40);
+  assert.equal(adminUpdatedSave.currencies.gold, 9000);
+  assert.equal(adminUpdatedSave.currencies.mc, 600);
+  assert.equal(adminUpdatedSave.currencies.friendshipPoint, 400);
+  assert.equal(adminUpdatedSave.items.gachaTicket, 3);
+  assert.equal(adminUpdatedSave.cards.max, 400);
+  assert.throws(() => applyAdminPlayerUpdate(DEFAULT_PLAYER_SAVE, { apCurrent: 26 }), /apCurrent cannot exceed apMax/);
+  assert.throws(() => applyAdminPlayerUpdate(DEFAULT_PLAYER_SAVE, { unknownField: 1 }), /unsupported player field/);
+  assert.throws(() => applyAdminPlayerUpdate(DEFAULT_PLAYER_SAVE, { cardMax: 0 }), /cardMax must be an integer/);
+  const adminFairySource = JSON.parse(JSON.stringify(testRuntimeConfig));
+  const adminFairyConfig = applyAdminFairyUpdate(adminFairySource, {
+    fairyEnabled: true,
+    fairyEncounterRate: 100,
+    fairyLevel: 12,
+    fairyMaxHp: 6000,
+    fairyAttackPower: 1000,
+    fairyRewardGold: 777,
+    fairyRewardExp: 4,
+    fairyTimeLimitSeconds: 3600,
+  });
+  assert.equal(adminFairySource.fairyEncounter.enabled, false, "fairy updater must not mutate its input");
+  assert.deepEqual(adminFairyConfig.fairyEncounter, {
+    enabled: true,
+    ratePercent: 100,
+    masterBossId: 30024,
+    name: "小龙女",
+    level: 12,
+    maxHp: 6000,
+    visualMasterCardId: 600,
+    attackPower: 1000,
+    rewardGold: 777,
+    rewardExp: 4,
+    timeLimitSeconds: 3600,
+  });
+  assert.throws(
+    () => applyAdminFairyUpdate(DEFAULT_RUNTIME_CONFIG, { fairyEncounterRate: 101 }),
+    /fairyEncounterRate must be an integer/
+  );
+  assert.throws(
+    () => applyAdminFairyUpdate(DEFAULT_RUNTIME_CONFIG, { fairyEnabled: 1 }),
+    /fairyEnabled must be true or false/
+  );
+  const adminState = createAdminState(adminUpdatedSave, {
+    savePath: "data/player/test.json",
+    listenPorts: [50005, 10001],
+    worldName: "Test World",
+    routeCount: 64,
+    explorationRegionCount: 6,
+    adminWritePolicy: "token",
+  }, adminFairyConfig);
+  assert.equal(adminState.player.name, "本地亚瑟");
+  assert.equal(adminState.system.adminWritePolicy, "token");
+  assert.equal(adminState.fairy.encounterRate, 100);
+  assert.equal(adminState.fairy.level, 12);
+  assert.equal(adminState.fairy.attackPower, 1000);
+  assert.equal(adminState.fairy.rewardGold, 777);
+  assert.equal(adminState.boundaries.length, 4);
+  assert.doesNotMatch(JSON.stringify(adminState), /13800138000|testpass1/);
+  const encounterSave = JSON.parse(JSON.stringify(DEFAULT_PLAYER_SAVE));
+  const encounter = createFairyEncounter(
+    encounterSave,
+    adminFairyConfig.fairyEncounter,
+    EXPLORATION_FLOORS[0],
+    Date.parse("2026-08-16T12:00:00.000Z")
+  );
+  assert.equal(encounter.serialId, "100001");
+  assert.equal(encounter.masterBossId, 30024);
+  assert.equal(encounterSave.battle.fairy.active.maxHp, 6000);
+  assert.equal(encounterSave.battle.fairy.active.attackPower, 1000);
+  assert.equal(encounterSave.battle.fairy.nextSerialId, 100002);
+  assert.equal(encounterSave.exploration.encounters.at(-1).floorKey, "0:2");
+  const encounterXml = createExplorationExploreXml(
+    10,
+    { gold: 18, getExp: 3 },
+    encounterSave,
+    { levelUp: false, isLimit: false },
+    encounter
+  );
+  assert.match(encounterXml, /<event_type>1<\/event_type>/);
+  assert.match(encounterXml, /<encounter>1<\/encounter>/);
+  assert.match(encounterXml, /<fairy>[\s\S]*<serial_id>100001<\/serial_id>/);
+  assert.match(encounterXml, /<master_boss_id>30024<\/master_boss_id>/);
+  assert.match(encounterXml, /<name>小龙女<\/name>/);
+  assert.match(encounterXml, /<lv>12<\/lv>[\s\S]*<hp>6000<\/hp>[\s\S]*<hp_max>6000<\/hp_max>/);
+  const fairySettlement = createFairyBattleSettlement(encounterSave, encounter, Date.parse("2026-08-16T12:05:00.000Z"));
+  assert.equal(fairySettlement.playerWon, true);
+  assert.equal(fairySettlement.rounds, 2);
+  assert.equal(fairySettlement.fairyRemainingHp, 0);
+  assert.equal(fairySettlement.playerRemainingHp, 4620);
+  assert.equal(fairySettlement.afterGold, 777);
+  assert.equal(fairySettlement.afterExp, 4);
+  assert.equal(encounterSave.battle.wins, 1);
+  assert.equal(encounterSave.battle.fairy.active, null);
+  assert.equal(encounterSave.battle.fairy.history.at(-1).rewardGold, 777);
+  const fairyBattleXml = createExplorationFairyBattleXml(encounterSave, fairySettlement);
+  assert.match(fairyBattleXml, /<next_scene>4100<\/next_scene>/);
+  assert.match(fairyBattleXml, /<battle_vs_info>/);
+  assert.match(fairyBattleXml, /<battle_battle>/);
+  assert.match(fairyBattleXml, /<battle_result>/);
+  assert.match(fairyBattleXml, /<name>Arthur<\/name>[\s\S]*<master_card_id>22<\/master_card_id>/);
+  assert.match(fairyBattleXml, /<name>小龙女<\/name>[\s\S]*<master_card_id>600<\/master_card_id>/);
+  assert.match(fairyBattleXml, /<battle_player_list>\s*<player_enemy>0<\/player_enemy>[\s\S]*?<type>2<\/type>\s*<size>0<\/size>/);
+  assert.match(fairyBattleXml, /<battle_player_list>\s*<player_enemy>1<\/player_enemy>[\s\S]*?<type>30024<\/type>\s*<size>0<\/size>/);
+  assert.match(fairyBattleXml, /<winner>0<\/winner>/);
+  assert.match(fairyBattleXml, /<before_gold>0<\/before_gold><after_gold>777<\/after_gold>/);
+  assert.match(fairyBattleXml, /<result_scene>4420<\/result_scene>/);
+  assert.match(fairyBattleXml, /<explore>[\s\S]*?<event_type>18<\/event_type>[\s\S]*?<encounter>0<\/encounter>[\s\S]*?<\/explore>/);
+  assert.doesNotMatch(fairyBattleXml, /<explore>[\s\S]*?<fairy>/);
   const level17Row = GAME_PLAYER_LEVEL_EXP_TABLE.levels.find((row) => row.level === 17);
   const level18Row = GAME_PLAYER_LEVEL_EXP_TABLE.levels.find((row) => row.level === 18);
   const level10Row = GAME_PLAYER_LEVEL_EXP_TABLE.levels.find((row) => row.level === 10);
@@ -665,6 +880,8 @@ async function main() {
   process.env.CHECK_INSPECTION_KEY = CONNECT_APP_KEY;
   process.env.CONNECT_APP_KEY = CONNECT_APP_KEY;
   process.env.KSSMA_PLAYER_SAVE_PATH = tempPlayerSavePath;
+  process.env.KSSMA_RUNTIME_CONFIG_PATH = tempRuntimeConfigPath;
+  process.env.KSSMA_ADMIN_TOKEN = "test-admin-token";
   process.env.LOGIN_RESPONSE = "sample";
   delete process.env.KSSMA_EXPLORATION_MOVES_SEED;
   const syncedSave = JSON.parse(JSON.stringify(DEFAULT_PLAYER_SAVE));
@@ -681,6 +898,7 @@ async function main() {
   syncedSave.currencies.mc = 300;
   syncedSave.cards.max = 222;
   fs.writeFileSync(tempPlayerSavePath, JSON.stringify(syncedSave), "utf8");
+  fs.writeFileSync(tempRuntimeConfigPath, JSON.stringify(testRuntimeConfig), "utf8");
   const serverLogs = [];
   const originalWrite = process.stdout.write;
   process.stdout.write = function writeServerCapture(chunk, encoding, callback) {
@@ -692,6 +910,89 @@ async function main() {
   const port = server.address().port;
 
   try {
+    const adminRedirect = await get(port, "/admin");
+    assert.equal(adminRedirect.statusCode, 302);
+    assert.equal(adminRedirect.headers.location, "/admin/");
+    const adminPage = await get(port, "/admin/");
+    assert.equal(adminPage.statusCode, 200);
+    assert.match(adminPage.headers["content-type"], /^text\/html/);
+    assert.match(adminPage.headers["content-security-policy"], /frame-ancestors 'none'/);
+    assert.match(adminPage.body, /KSSMA-Re 管理终端/);
+    const adminInitialState = await get(port, "/admin/api/state");
+    assert.equal(adminInitialState.statusCode, 200);
+    assert.equal(adminInitialState.headers["cache-control"], "no-store");
+    const adminInitialJson = JSON.parse(adminInitialState.body);
+    assert.equal(adminInitialJson.system.adminWritePolicy, "token");
+    assert.equal(adminInitialJson.system.worldName, "Local Dev World");
+    assert.equal(adminInitialJson.system.explorationRegionCount, 6);
+    assert.equal(adminInitialJson.system.runtimeConfigPath, "runtime-config.json");
+    assert.equal(adminInitialJson.player.faction, "technique");
+    assert.equal(adminInitialJson.player.apCurrent, 19);
+    assert.equal(adminInitialJson.fairy.enabled, false);
+    assert.equal(adminInitialJson.fairy.masterBossId, 30024);
+    assert.equal(adminInitialJson.fairy.attackPower, 1200);
+    assert.equal(adminInitialJson.fairy.rewardGold, 300);
+    assert.equal(adminInitialJson.fairy.rewardExp, 5);
+    const saveBeforeAdminRejects = fs.readFileSync(tempPlayerSavePath, "utf8");
+    const adminDenied = await postJson(port, "/admin/api/player", { gold: 9999 });
+    assert.equal(adminDenied.statusCode, 403);
+    assert.match(JSON.parse(adminDenied.body).error, /令牌/);
+    const adminInvalid = await postJson(
+      port,
+      "/admin/api/player",
+      { apCurrent: 50, apMax: 40 },
+      "test-admin-token"
+    );
+    assert.equal(adminInvalid.statusCode, 400);
+    assert.match(JSON.parse(adminInvalid.body).error, /apCurrent cannot exceed apMax/);
+    assert.equal(fs.readFileSync(tempPlayerSavePath, "utf8"), saveBeforeAdminRejects);
+    const fairyDenied = await postJson(
+      port,
+      "/admin/api/fairy",
+      { fairyEnabled: true, fairyEncounterRate: 100 }
+    );
+    assert.equal(fairyDenied.statusCode, 403);
+    const fairyInvalid = await postJson(
+      port,
+      "/admin/api/fairy",
+      { fairyMaxHp: 0 },
+      "test-admin-token"
+    );
+    assert.equal(fairyInvalid.statusCode, 400);
+    const fairySaved = await postJson(
+      port,
+      "/admin/api/fairy",
+      {
+        fairyEnabled: true,
+        fairyEncounterRate: 100,
+        fairyLevel: 21,
+        fairyMaxHp: 77777,
+        fairyAttackPower: 3333,
+        fairyRewardGold: 888,
+        fairyRewardExp: 9,
+        fairyTimeLimitSeconds: 5400,
+      },
+      "test-admin-token"
+    );
+    assert.equal(fairySaved.statusCode, 200);
+    const fairySavedState = JSON.parse(fairySaved.body);
+    assert.equal(fairySavedState.fairy.enabled, true);
+    assert.equal(fairySavedState.fairy.encounterRate, 100);
+    assert.equal(fairySavedState.fairy.level, 21);
+    assert.equal(fairySavedState.fairy.maxHp, 77777);
+    assert.equal(fairySavedState.fairy.attackPower, 3333);
+    assert.equal(fairySavedState.fairy.rewardGold, 888);
+    assert.equal(fairySavedState.fairy.rewardExp, 9);
+    assert.equal(JSON.parse(fs.readFileSync(tempRuntimeConfigPath, "utf8")).fairyEncounter.timeLimitSeconds, 5400);
+    fs.writeFileSync(tempRuntimeConfigPath, JSON.stringify(testRuntimeConfig), "utf8");
+    delete process.env.KSSMA_ADMIN_TOKEN;
+    const adminLoopbackWrite = await postJson(port, "/admin/api/player", { gold: 321 });
+    assert.equal(adminLoopbackWrite.statusCode, 200);
+    assert.equal(JSON.parse(adminLoopbackWrite.body).system.adminWritePolicy, "loopback-only");
+    assert.equal(JSON.parse(adminLoopbackWrite.body).player.gold, 321);
+    process.env.KSSMA_ADMIN_TOKEN = "test-admin-token";
+    fs.writeFileSync(tempPlayerSavePath, saveBeforeAdminRejects, "utf8");
+
     const worldList = await post(port, "/world_list.php", "data_str=%7B%7D");
     assert.equal(worldList.statusCode, 200);
     const worlds = JSON.parse(worldList.body);
@@ -822,6 +1123,13 @@ async function main() {
     assert.match(gachaResponseLog, /"command":"gacha"/);
     assert.match(gachaResponseLog, /"nextScene":9100/);
     assert.match(gachaResponseLog, /"gachaPage":"main"/);
+
+    await abortPost(port, "/connect/app/gacha/select/getcontents?cyt=1");
+    const healthAfterAbortedGacha = await get(port, "/healthz");
+    assert.equal(healthAfterAbortedGacha.statusCode, 200);
+    const abortedGachaLog = serverLogs.find((line) => line.includes("request_error") && line.includes('"path":"/connect/app/gacha/select/getcontents"'));
+    assert.match(abortedGachaLog, /"code":"ECONNRESET"/);
+    assert.match(abortedGachaLog, /"disconnected":true/);
 
     const gachaBuy = await post(port, "/connect/app/gacha/buy?cyt=1", connectAppBody({ product_id: 1, bulk: 1, auto_build: 1 }));
     assert.equal(gachaBuy.statusCode, 200);
@@ -1577,11 +1885,112 @@ async function main() {
       process.env.KSSMA_PLAYER_SAVE_PATH = tempPlayerSavePath;
     }
 
+    fs.writeFileSync(tempRuntimeConfigPath, JSON.stringify(adminFairyConfig), "utf8");
+    const fairyEncounterExplore = await post(
+      port,
+      "/connect/app/exploration/explore?cyt=1",
+      connectAppBody({ area_id: 0, auto_build: 1, floor_id: 1 })
+    );
+    assert.equal(fairyEncounterExplore.statusCode, 200);
+    const fairyEncounterDecoded = decryptAes128EcbBase64(
+      fairyEncounterExplore.buffer.toString("base64"),
+      CONNECT_APP_KEY
+    );
+    assert.match(fairyEncounterDecoded, /<event_type>1<\/event_type>/);
+    assert.match(fairyEncounterDecoded, /<fairy>[\s\S]*<master_boss_id>30024<\/master_boss_id>/);
+    assert.match(fairyEncounterDecoded, /<lv>12<\/lv>[\s\S]*<hp_max>6000<\/hp_max>/);
+    const saveAfterFairyEncounter = JSON.parse(fs.readFileSync(tempPlayerSavePath, "utf8"));
+    assert.equal(saveAfterFairyEncounter.battle.fairy.active.masterBossId, 30024);
+    assert.equal(saveAfterFairyEncounter.battle.fairy.active.currentHp, 6000);
+    assert.equal(saveAfterFairyEncounter.battle.fairy.active.attackPower, 1000);
+    assert.equal(saveAfterFairyEncounter.exploration.encounters.at(-1).type, "fairy");
+    const fairyBattleMismatch = await post(
+      port,
+      "/connect/app/exploration/fairybattle?cyt=1",
+      connectAppBody({ user_id: 1, serial_id: "999999" })
+    );
+    assert.equal(fairyBattleMismatch.statusCode, 409);
+    const fairyBattle = await post(
+      port,
+      "/connect/app/exploration/fairybattle?cyt=1",
+      connectAppBody({
+        user_id: saveAfterFairyEncounter.battle.fairy.active.discovererId,
+        serial_id: saveAfterFairyEncounter.battle.fairy.active.serialId,
+      })
+    );
+    assert.equal(fairyBattle.statusCode, 200);
+    const fairyBattleDecoded = decryptAes128EcbBase64(
+      fairyBattle.buffer.toString("base64"),
+      CONNECT_APP_KEY
+    );
+    assert.match(fairyBattleDecoded, /<next_scene>4100<\/next_scene>/);
+    assert.match(fairyBattleDecoded, /<battle_vs_info>/);
+    assert.match(fairyBattleDecoded, /<battle_battle>/);
+    assert.match(fairyBattleDecoded, /<battle_result>[\s\S]*<result_scene>4420<\/result_scene>/);
+    assert.match(fairyBattleDecoded, /<winner>0<\/winner>/);
+    assert.match(fairyBattleDecoded, /<master_card_id>600<\/master_card_id>/);
+    assert.match(fairyBattleDecoded, /<battle_player_list>\s*<player_enemy>1<\/player_enemy>[\s\S]*?<type>30024<\/type>\s*<size>0<\/size>/);
+    assert.match(fairyBattleDecoded, /<explore>[\s\S]*?<event_type>18<\/event_type>[\s\S]*?<encounter>0<\/encounter>[\s\S]*?<\/explore>/);
+    const saveAfterFairyBattle = JSON.parse(fs.readFileSync(tempPlayerSavePath, "utf8"));
+    assert.equal(saveAfterFairyBattle.battle.wins, 1);
+    assert.equal(saveAfterFairyBattle.battle.fairy.active, null);
+    assert.equal(saveAfterFairyBattle.currencies.gold, saveAfterFairyEncounter.currencies.gold + 777);
+    assert.equal(saveAfterFairyBattle.profile.exp, saveAfterFairyEncounter.profile.exp + 4);
+    assert.equal(saveAfterFairyBattle.battle.fairy.history.at(-1).rewardGold, 777);
+    fs.writeFileSync(tempRuntimeConfigPath, JSON.stringify(testRuntimeConfig), "utf8");
+
     const webStub = await get(port, "/connect/web/?S=session-1");
     assert.equal(webStub.statusCode, 302);
     assert.equal(webStub.headers.location, WEB_SCENETO_LOCATION);
     assert.equal(webStub.body, "");
     assert.match(WEB_STUB_HTML, /sceneto:\/\/2100/);
+
+    const health = await get(port, "/healthz");
+    assert.equal(health.statusCode, 200);
+    assert.equal(JSON.parse(health.body).admin, "/admin/");
+
+    const adminSave = await postJson(
+      port,
+      "/admin/api/player",
+      {
+        name: "局域网亚瑟",
+        faction: "magic",
+        level: 12,
+        exp: 750,
+        nextExp: 1500,
+        apCurrent: 30,
+        apMax: 35,
+        bcCurrent: 20,
+        bcMax: 40,
+        gold: 9000,
+        mc: 600,
+        friendshipPoint: 500,
+        gachaTicket: 4,
+        cardMax: 400,
+      },
+      "test-admin-token"
+    );
+    assert.equal(adminSave.statusCode, 200);
+    const adminSavedState = JSON.parse(adminSave.body);
+    assert.equal(adminSavedState.player.name, "局域网亚瑟");
+    assert.equal(adminSavedState.player.faction, "magic");
+    assert.equal(adminSavedState.player.apCurrent, 30);
+    assert.equal(adminSavedState.player.gold, 9000);
+    assert.equal(adminSavedState.progress.ownedCards, 3);
+    const saveAfterAdmin = JSON.parse(fs.readFileSync(tempPlayerSavePath, "utf8"));
+    assert.equal(saveAfterAdmin.profile.name, "局域网亚瑟");
+    assert.equal(saveAfterAdmin.profile.faction, "magic");
+    assert.equal(saveAfterAdmin.profile.percentage, 50);
+    assert.equal(saveAfterAdmin.resources.ap.current, 30);
+    assert.equal(saveAfterAdmin.resources.ap.max, 35);
+    assert.equal(saveAfterAdmin.resources.bc.current, 20);
+    assert.equal(saveAfterAdmin.resources.bc.max, 40);
+    assert.equal(saveAfterAdmin.currencies.gold, 9000);
+    assert.equal(saveAfterAdmin.currencies.mc, 600);
+    assert.equal(saveAfterAdmin.currencies.friendshipPoint, 500);
+    assert.equal(saveAfterAdmin.items.gachaTicket, 4);
+    assert.equal(saveAfterAdmin.cards.max, 400);
+    assert.doesNotMatch(adminSave.body, /test-admin-token/);
 
     process.stdout.write("bootstrap-server self-check passed\n");
   } finally {
@@ -1592,10 +2001,20 @@ async function main() {
     } else {
       process.env.KSSMA_PLAYER_SAVE_PATH = previousPlayerSavePath;
     }
+    if (previousRuntimeConfigPath === undefined) {
+      delete process.env.KSSMA_RUNTIME_CONFIG_PATH;
+    } else {
+      process.env.KSSMA_RUNTIME_CONFIG_PATH = previousRuntimeConfigPath;
+    }
     if (previousLoginResponse === undefined) {
       delete process.env.LOGIN_RESPONSE;
     } else {
       process.env.LOGIN_RESPONSE = previousLoginResponse;
+    }
+    if (previousAdminToken === undefined) {
+      delete process.env.KSSMA_ADMIN_TOKEN;
+    } else {
+      process.env.KSSMA_ADMIN_TOKEN = previousAdminToken;
     }
     fs.rmSync(tempDir, { recursive: true, force: true });
   }

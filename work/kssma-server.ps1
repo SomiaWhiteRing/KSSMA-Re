@@ -85,7 +85,8 @@ function Test-Health {
 
 function Get-ServerFingerprint {
   $paths = @()
-  $paths += Get-Item -LiteralPath $serverScript -ErrorAction Stop
+  $serverDir = Split-Path $serverScript -Parent
+  $paths += Get-ChildItem -LiteralPath $serverDir -File -Filter *.js -ErrorAction Stop
 
   foreach ($relativeDir in @("server\data\game", "server\data\server")) {
     $dataDir = Join-Path $repo $relativeDir
@@ -141,6 +142,7 @@ function Show-Status {
     FingerprintOk = [bool]($process -and $storedFingerprint -and $storedFingerprint -eq $currentFingerprint)
     StdoutLog    = $stdoutLog
     StderrLog    = $stderrLog
+    AdminUrl     = "http://127.0.0.1:50005/admin/"
   } | Format-List
 }
 

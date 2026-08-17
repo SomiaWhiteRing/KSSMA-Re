@@ -1,0 +1,9 @@
+name: KSSMA-Re
+channels:
+  - conda-forge
+dependencies:
+  - python=3.12
+  - pillow
+  - pycryptodome
+  - capstone
+  - pyelftools

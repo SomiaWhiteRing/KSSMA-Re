@@ -28,6 +28,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\work\kssma-runtime.ps1 flo
 powershell -NoProfile -ExecutionPolicy Bypass -File .\work\kssma-runtime.ps1 flow -Scenario exploration-smoke
 powershell -NoProfile -ExecutionPolicy Bypass -File .\work\kssma-runtime.ps1 flow -Scenario exploration-walk-smoke
 powershell -NoProfile -ExecutionPolicy Bypass -File .\work\kssma-runtime.ps1 flow -Scenario exploration-forward-visual-smoke
+powershell -NoProfile -ExecutionPolicy Bypass -File .\work\kssma-runtime.ps1 flow -Scenario fairy-battle-smoke
 powershell -NoProfile -ExecutionPolicy Bypass -File .\work\kssma-runtime.ps1 flow -Scenario exploration-floor-clear-smoke
 powershell -NoProfile -ExecutionPolicy Bypass -File .\work\kssma-runtime.ps1 flow -Scenario exploration-ap-shortage-smoke
 powershell -NoProfile -ExecutionPolicy Bypass -File .\work\kssma-runtime.ps1 flow -Scenario exploration-levelup-smoke
@@ -135,6 +136,17 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\work\kssma-runtime.ps1 flo
   visibly return to it.
 - Deep exploration scenarios may use `KSSMA_EXPLORATION_MOVES_SEED`, but the seed is only an
   initial minimum; it must not overwrite higher progress saved during the same run.
+- `fairy-battle-smoke` seeds the first floor at five moves and forces one ordinary Lv18 小龙女
+  encounter at 100%. It requires `/exploration/explore -> /exploration/fairybattle` with exact
+  `user_id=1, serial_id=100001`, then checks the accepted `4100 -> 4301 -> 4420` scene metadata.
+  Its isolated server uses HP 6000, attack 1000, victory gold 777, and victory EXP 4: the starter
+  card must win in two rounds with 4620 HP remaining. The response log and artifact save must agree
+  on zero fairy HP, one battle win, no active fairy, gold `18 -> 795`, EXP `3 -> 7`, and a matching
+  history row. It also requires `enemyBattleType=30024 -> enemyBossImageId=600`, a visible 小龙女
+  battle resource, and `explorationEventType=0`; the 18-second frame must differ from the pre-battle
+  encounter so a defeated ordinary fairy cannot replay its appearance event. Screenshots at the
+  encounter, VS/battle, and result milestones plus a live Activity are required; server-only
+  settlement is not acceptance.
 - `exploration-ap-shortage-smoke` writes an artifact-local AP=0 save before starting the server,
   enters the first stage, taps forward, then accepts either the real client-local AP shortage page
   or a server `/exploration/explore` AP shortage response. It also taps the AP shortage back

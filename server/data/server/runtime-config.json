@@ -1,0 +1,15 @@
+{
+  "fairyEncounter": {
+    "enabled": true,
+    "ratePercent": 100,
+    "masterBossId": 30024,
+    "name": "小龙女",
+    "level": 1,
+    "maxHp": 9660,
+    "visualMasterCardId": 600,
+    "attackPower": 1200,
+    "rewardGold": 300,
+    "rewardExp": 5,
+    "timeLimitSeconds": 7200
+  }
+}

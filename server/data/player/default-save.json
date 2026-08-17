@@ -181,6 +181,8 @@
       "protectedPieces": []
     },
     "fairy": {
+      "nextSerialId": 100001,
+      "active": null,
       "discovered": {},
       "history": []
     }
