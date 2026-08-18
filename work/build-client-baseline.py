@@ -4,8 +4,10 @@ import hashlib
 import json
 import os
 import shutil
+import struct
 import subprocess
 import zipfile
+import zlib
 from pathlib import Path
 
 
@@ -20,12 +22,22 @@ TEMP_UNSIGNED_APK = OUT_DIR / f"KSSMA-Re-client-baseline.{os.getpid()}.unsigned.
 TEMP_SIGNED_APK = OUT_DIR / f"KSSMA-Re-client-baseline.{os.getpid()}.signed.apk"
 TEMP_MANIFEST = OUT_DIR / f"client-baseline.{os.getpid()}.json"
 LIB_ENTRY = "lib/armeabi/librooneyj.so"
+CLASSES_ENTRY = "classes.dex"
 DEBUG_KEYSTORE = Path.home() / ".android" / "debug.keystore"
 DEBUG_ALIAS = "androiddebugkey"
 DEBUG_PASSWORD = "android"
 
 EXPECTED_BASE_SHA256 = "4F6A854C49D1AF59BB5500828D2BDDA0767F4D6A9FCFA8D4D6E46EA9257C58A7"
 EXPECTED_LIB_SHA256 = "DEC36585CA0129AA19E68CC53898D95DE41067AA5D380B23218F3E88273CD40F"
+EXPECTED_CLASSES_SHA256 = "985D4105968A95EC9DFE9BCC3711597A324A90F472700DF7435CA7D25A2087C6"
+
+# Diagnostic-only DEX method-reference substitutions. Both call sites already have
+# the exact (String, Object[]) descriptor; redirecting them to Debug.err activates
+# the otherwise compiled-out texture-path log without changing control flow.
+TEXTURE_PATH_DIAGNOSTIC_PATCHES = (
+    (273780, bytes.fromhex("D007"), bytes.fromhex("CC07"), "TextureLoader.loadTexture path"),
+    (273902, bytes.fromhex("CB07"), bytes.fromhex("CC07"), "TextureLoader.loadTextureWithRect path"),
+)
 
 
 def sha256_file(path: Path) -> str:
@@ -68,7 +80,27 @@ def copy_entry(src_zip: zipfile.ZipFile, src_info: zipfile.ZipInfo, dst_zip: zip
             shutil.copyfileobj(src, dst, length=1024 * 1024)
 
 
-def build_unsigned(accepted_lib: bytes) -> None:
+def build_texture_path_diagnostic(classes_dex: bytes) -> bytes:
+    if sha256_bytes(classes_dex) != EXPECTED_CLASSES_SHA256:
+        raise SystemExit("classes.dex hash mismatch; refusing offset-based diagnostic patch")
+
+    patched = bytearray(classes_dex)
+    for offset, expected, replacement, label in TEXTURE_PATH_DIAGNOSTIC_PATCHES:
+        actual = bytes(patched[offset : offset + len(expected)])
+        if actual != expected:
+            raise SystemExit(
+                f"{label} bytes mismatch at {offset}: got {actual.hex().upper()}, "
+                f"expected {expected.hex().upper()}"
+            )
+        patched[offset : offset + len(expected)] = replacement
+
+    # DEX header signature covers bytes 32..EOF; checksum covers bytes 12..EOF.
+    patched[12:32] = hashlib.sha1(patched[32:]).digest()
+    patched[8:12] = struct.pack("<I", zlib.adler32(patched[12:]) & 0xFFFFFFFF)
+    return bytes(patched)
+
+
+def build_unsigned(accepted_lib: bytes, classes_dex: bytes | None = None) -> None:
     TEMP_UNSIGNED_APK.unlink(missing_ok=True)
     TEMP_SIGNED_APK.unlink(missing_ok=True)
 
@@ -77,6 +109,8 @@ def build_unsigned(accepted_lib: bytes) -> None:
             if should_strip_signature(src_info.filename):
                 continue
             payload = accepted_lib if src_info.filename == LIB_ENTRY else None
+            if src_info.filename == CLASSES_ENTRY and classes_dex is not None:
+                payload = classes_dex
             copy_entry(src_zip, src_info, dst_zip, payload)
 
 
@@ -137,14 +171,19 @@ def sign_apk() -> None:
     subprocess.run([jarsigner, "-verify", "-certs", str(TEMP_SIGNED_APK)], check=True, stdout=subprocess.DEVNULL)
 
 
-def verify_apk(apk_path: Path) -> None:
+def verify_apk(apk_path: Path, expected_classes_sha256: str) -> None:
     with zipfile.ZipFile(apk_path, "r") as apk:
         lib_hash = sha256_bytes(apk.read(LIB_ENTRY))
+        classes_hash = sha256_bytes(apk.read(CLASSES_ENTRY))
     if lib_hash != EXPECTED_LIB_SHA256:
         raise SystemExit(f"baseline APK lib hash mismatch: got {lib_hash}, expected {EXPECTED_LIB_SHA256}")
+    if classes_hash != expected_classes_sha256:
+        raise SystemExit(
+            f"baseline APK classes.dex hash mismatch: got {classes_hash}, expected {expected_classes_sha256}"
+        )
 
 
-def write_manifest() -> dict:
+def write_manifest(*, classes_sha256: str, texture_path_diagnostic: bool) -> dict:
     baseline_hash = sha256_file(OUT_APK)
     manifest = {
         "schema": 1,
@@ -159,6 +198,12 @@ def write_manifest() -> dict:
             "entry": LIB_ENTRY,
             "sha256": EXPECTED_LIB_SHA256,
             "bytes": ACCEPTED_LIB.stat().st_size,
+        },
+        "classesDex": {
+            "entry": CLASSES_ENTRY,
+            "sourceSha256": EXPECTED_CLASSES_SHA256,
+            "sha256": classes_sha256,
+            "texturePathDiagnostic": texture_path_diagnostic,
         },
         "baselineApk": {
             "path": str(OUT_APK.relative_to(REPO)).replace("/", "\\"),
@@ -182,15 +227,27 @@ def main() -> None:
         require_hash(BASE_APK, EXPECTED_BASE_SHA256, "base APK")
         require_hash(ACCEPTED_LIB, EXPECTED_LIB_SHA256, "accepted librooneyj.so")
         accepted_lib = ACCEPTED_LIB.read_bytes()
-        build_unsigned(accepted_lib)
+        texture_path_diagnostic = os.environ.get("KSSMA_TEXTURE_PATH_DIAGNOSTIC", "") == "1"
+        with zipfile.ZipFile(BASE_APK, "r") as base_apk:
+            source_classes = base_apk.read(CLASSES_ENTRY)
+        if sha256_bytes(source_classes) != EXPECTED_CLASSES_SHA256:
+            raise SystemExit("base APK classes.dex hash mismatch")
+        classes_dex = build_texture_path_diagnostic(source_classes) if texture_path_diagnostic else source_classes
+        classes_sha256 = sha256_bytes(classes_dex)
+        build_unsigned(accepted_lib, classes_dex)
         sign_apk()
-        verify_apk(TEMP_SIGNED_APK)
+        verify_apk(TEMP_SIGNED_APK, classes_sha256)
         TEMP_SIGNED_APK.replace(OUT_APK)
-        manifest = write_manifest()
+        manifest = write_manifest(
+            classes_sha256=classes_sha256,
+            texture_path_diagnostic=texture_path_diagnostic,
+        )
         print(f"base={BASE_APK}")
         print(f"acceptedLib={ACCEPTED_LIB}")
         print(f"baselineApk={OUT_APK}")
         print(f"manifest={MANIFEST}")
+        print(f"classesSha256={classes_sha256}")
+        print(f"texturePathDiagnostic={texture_path_diagnostic}")
         print(f"baselineSha256={manifest['baselineApk']['sha256']}")
     finally:
         TEMP_UNSIGNED_APK.unlink(missing_ok=True)

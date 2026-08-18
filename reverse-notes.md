@@ -134,6 +134,98 @@ Archive: `docs/reverse-archive/startup-mainmenu-20260624-20260625.md`.
   the accepted probes are `database/master_boss` and device-side `curl /healthz`. This accepts installation,
   not the unresolved delayed gacha-select crash or full gameplay on A12. Evidence:
   `work/mumu-a12-deployment-card-20260817.md`.
+- MuMu A12 now has an isolated automated-flow entry:
+  `powershell -NoProfile -ExecutionPolicy Bypass -File .\work\kssma-mumu-a12.ps1 flow -Scenario <name> -Tag <tag>`.
+  It reuses the accepted login/server/artifact/scenario plumbing through a process-local A12 runtime gate and keeps
+  ARM19 unchanged. The current gate is read-only for display: it requires physical `1440x2560` / density 360 with
+  no `wm` override, scales only host-side taps/swipes by 2, and retains native 2560x1440 screenshots plus 1280x720
+  comparison copies. An earlier `exploration-walk-smoke` passed in 137.536s under a temporary display override with route sequence
+  `post_devicetoken -> login -> area -> floor -> get_floor -> explore -> explore -> area -> floor`, two persisted
+  moves, and 20% readback; it is historical compatibility evidence, not native-display acceptance. Artifact:
+  `work/kssma-flow-exploration-walk-smoke-mumu-a12-qualification-exploration-walk-2`.
+- The same qualification rejects promotion of A12 to full gameplay acceptance. An inherited admin fairy rate of
+  100% first exposed `adv_chara0` missing in the fairy event path, followed by Android 12 strict-JNI null
+  `GetObjectClass` and `SIGABRT`; ordinary exploration/progress flows now explicitly isolate random fairy encounters,
+  while `fairy-battle-smoke` remains explicitly enabled. More importantly,
+  `gacha-settlement-deck-smoke` reached `/gacha/buy product_id=1 bulk=1 auto_build=1` and atomically saved
+  friendship `400 -> 200`, serial 2/master card 9, and `cardsDrawn=1`, but the client then loaded missing
+  `thumbnail_chara_0` even though `thumbnail_chara_9` exists and aborted through the same strict-JNI path. Do not
+  add guessed zero-name placeholders; recover why the accepted fairy/card data paths resolve to zero. The first
+  gacha replay's 11.730s `script-error` was harness-only (`StrictMode Latest` versus optional result properties) and
+  was removed without changing client/server behavior; the evidentiary rerun failed as `client-crash` in 88.501s.
+  Evidence: `work/mumu-a12-flow-qualification-card-20260818.md`,
+  `work/kssma-flow-exploration-walk-smoke-mumu-a12-qualification-exploration-walk`, and
+  `work/kssma-flow-gacha-settlement-deck-smoke-mumu-a12-qualification-gacha-settlement-2`.
+- Native-display diagnosis on 2026-08-18 falsified both display scaling and consumed `master_card` restoration as
+  causes of the zero-ID failures. `gacha-settlement-deck-smoke` at untouched 1440x2560/360 restored the original
+  260249-byte `database/master_card`, received and persisted master card 9, then still requested
+  `thumbnail_chara_0` and strict-JNI aborted. `fairy-battle-smoke` reached the exact fairybattle request; the server
+  settled `playerWon=true`, `winner=0`, fairy HP 6000 -> 0, player HP 5620 -> 4620, Gold 18 -> 795 and EXP 3 -> 7,
+  but the A12 client requested `adv_chara0` and aborted before rendering any battle/result screen. Later timed
+  screenshots therefore show MuMu Store after focus fallback and are not gameplay evidence. Artifacts:
+  `work/kssma-flow-gacha-settlement-deck-smoke-mumu-a12-native-resolution-master-card` and
+  `work/kssma-flow-fairy-battle-smoke-mumu-a12-native-resolution-settlement-diagnosis`. The original bundled
+  `local_battle_result.xml` has local `player_enemy=0` losing and `winner=1`; this once suggested that `winner` was
+  a player index, but the inference remained conditional on a visible client result and is superseded below.
+- A user-driven native-display A12 battle on 2026-08-18 reached
+  `/exploration/fairybattle(user_id=1,serial_id=100007)` and the server atomically settled a local victory
+  (`winner=0`, fairy HP `9660 -> 0`, player HP `5620 -> 3220`, Gold `2575 -> 2875`, EXP `42 -> 47`). The client
+  then aborted in `GLRenderer.nativeMain` because Android 12 strict JNI rejected a null `GetObjectClass` while
+  MediaPlayer was resetting/starting an MP3 decoder. This exact manual window had no `JResourceLoader`, missing-file,
+  `adv_chara0`, or `thumbnail_chara_0` line. A read-only device audit matched all 507 sound/voice files to the package
+  checksum list and all static files except the known client-consumed `database/master_card`; media volume was
+  speaker 100/100 and unmuted. The actual packaging gap was `appdata/save_appdata`: the A12 copy was 2,849 all-zero
+  bytes (`E2C2D56F...AA6ADAD`), while the original ZIP/dump contains initialized data. The A12 builder now emits a
+  patched `mainbg_70_sp -> mainbg_an` seed and the installer applies it only when the player file is missing or all
+  zero, preserving a backup and any nonzero player data. The live one-variable seed changed the device hash to
+  `FCA2045D...C973D59`; audio/battle replay is pending the user's manual click.
+  Server self-check remains green. Its gacha layout subprocess now resolves the existing project Conda interpreter
+  at `miniconda3/envs/KSSMA-Re/python.exe` (or `KSSMA_RE_PYTHON`) before falling back to `python`; this removes the
+  Windows Store execution-alias exit 9009 without changing any response XML.
+- The clean user replay after that seed proved the two symptoms were separate: music now plays, while fairy battle
+  still aborts. `/exploration/fairybattle(user_id=1,serial_id=100008)` settled a local victory (`winner=0`, fairy HP
+  `9660 -> 0`, player HP `5620 -> 3220`, Gold `2910 -> 3210`, EXP `53 -> 58`), then the client explicitly threw
+  `JResourceLoader` "file cannot be opened" for `save/download/image/adv/adv_chara0` before strict-JNI
+  `GetObjectClass(null)` and `SIGABRT`. `save_appdata` retained the repaired nonzero hash, so audio is accepted and
+  is no longer the battle frontier. The fairybattle response contains valid `master_card_id=600`, enemy
+  `type=30024`, and the package has `adv_chara600`; gacha independently maps valid master card 9 to
+  `thumbnail_chara_0` on A12. The common frontier is therefore card-master initialization, not a missing zero-name
+  asset. Historical startup evidence proves the original client can issue `/masterdata/card/update`; the next
+  bounded classifier will advertise only a newer `card_rev` and leave every other revision and response unchanged.
+- The A12 card-master refresh transport classifier made the client send the original `/masterdata/card/update`
+  with local `revision=231`; the server returned the complete 260,249-byte recovered binary cache, and main menu
+  remained alive. The next user-driven fairy battle still
+  requested `adv_chara0` and strict-JNI aborted, while the server correctly settled serial `100009` as a local
+  victory with `master_card_id=600`, enemy type 30024, and image id 600. The diagnostic override was removed and
+  the server again advertises revision zero. Native inspection then proved the response contract is wrong:
+  `ResourceDownloader::parseMasterCardTagData` at `0x003923BD` treats the body as XML through `_TXmlParser` and
+  `_MasterDataTagParser`, creates card objects, and only then calls `updateMasterCardList`; it does not consume the
+  serialized `database/master_card` cache. The unchanged device `save_version` corroborates that the update was
+  not accepted. Do not retry revision values or add a zero-name placeholder; recover the parser-backed card-update
+  XML and rerun the same trigger with only the payload representation changed. Evidence:
+  `work/mumu-a12-master-card-refresh-card-20260818.md` and
+  `work/mumu-a12-master-card-refresh-rejected-20260818`.
+- The parser-backed card update is now implemented as the one-variable follow-up. The server pins the recovered
+  `database/master_card` hash, consumes all 480 serialized records to their exact boundaries, and renders the full
+  `_CardTagParser` field set under `<master_data><master_card_data><update_type>1`; it no longer sends the binary
+  cache as wire plaintext. Static checks confirm master 9 -> image `9/5009`, master 22 -> `22/5022`, and master
+  600 -> `600/5600`; the encrypted live endpoint is 862,160 bytes and logs `recordCount=480/updateType=1`.
+  `node .\server\test-bootstrap-server.js` passes, including an HTTP/decrypt round trip. MuMu still has revision
+  231, no external `master_card`, and the server is currently running with only `card_rev=232`; live client
+  acceptance and the next user-driven battle are pending. Evidence/schema:
+  `work/master-card-update-schema-card-20260818.md` and
+  `work/mumu-a12-master-card-xml-live-20260818`.
+- The full 480-card XML live run did not initialize the card manager. Login requested card revision 231 and the
+  server returned the complete 862,160-byte encrypted XML, but `save_version` retained SHA-256 `EFEA36BB...925C5`
+  and no external `database/master_card` appeared. The next user-driven edge created fairy `100010`; tapping battle
+  again attempted `adv_chara0`, strict-JNI aborted at `GetObjectClass(null)`, and only then did the already queued
+  `/exploration/fairybattle` reach the server and settle a victory. Thus neither HTTP completion nor the later
+  settlement proves the battle scene was entered. Stop changing card field names: the schema/root/tag path is
+  statically closed and the generated XML parses as 480 records. The next experiment must be a callback classifier,
+  not another field scan; use the statically recovered `imagedl_list -> requestDlMCardImage` branch or a bounded
+  payload-size/card-count differential to prove whether the callback parsed any card before altering battle data.
+  Artifact: `work/mumu-a12-master-card-xml-live-20260818` (`server.stdout.log`, `logcat.txt`,
+  `activity-after-battle.txt`, `device-master-state.txt`).
 
 Archive: `docs/reverse-archive/runtime-control-arm19-20260625-20260627.md`.
 
@@ -260,6 +352,9 @@ Archives:
 
 - Flow-first runtime acceptance is now the default project path. Use:
   `powershell -NoProfile -ExecutionPolicy Bypass -File .\work\kssma-runtime.ps1 flow -Scenario exploration-smoke`.
+  ARM19 remains the only complete acceptance runtime. MuMu A12's isolated flow can pass ordinary exploration, but
+  its fairy/card-result zero-ID resource fatals currently reject promotion; see
+  `work/mumu-a12-flow-qualification-card-20260818.md`.
 - Gacha and deck builder remain accepted/in-progress product lines, but the user's current priority temporarily moves
   the active product frontier to fairy post-result refresh, BC, drops, reward box, rare fairies, and LAN co-operation.
   Do not reopen accepted main-menu black-screen, face,
@@ -915,6 +1010,42 @@ Archives:
   keeps exploration/cards/decks read-only, and requires loopback or `KSSMA_ADMIN_TOKEN`. The full server self-check
   and a real-browser 639px no-overflow render passed without changing gameplay XML, native code, or the real save.
   Evidence: `work/admin-console-m1-card-20260816.md`; roadmap: `docs/local-revival-roadmap.md`.
+- A12 card-master bounded classifier absence inference is rejected by the subsequent exact-path capture. The
+  revision-232 response selected exact recovered ids 9/22/600, contained three records, and was 5,568 encrypted
+  bytes, but neither `save_version` nor an external card table changed. A temporary DEX path logger on the next
+  login/reproduction proved fairy serial 100012 still entered
+  `JResourceLoader.loadFile -> loadBitmap -> TextureLoader.loadTexture` with exact path
+  `save/download/image/adv/adv_chara0`, then aborted at `GetObjectClass(null)`. The earlier run's lack of printed
+  `adv_chara0` was incomplete log evidence, not in-memory card-manager acceptance; the adjacent MediaPlayer
+  transition is not the root cause. The XML responses did not prevent the downstream null card, but external
+  `database/master_card` absence is no longer treated as rejection evidence: the earlier accepted A12 deployment
+  already records that the client removes this preload after reading it. Native recovery closes the callback as
+  `clearMasterCardList -> updateMasterCardList -> serializeMasterCardList` and closes direct XML children
+  `update_type`, repeated `card`, and `imagedl_list`; `_CardTagParser` directly recognizes
+  `master_card_id`, `country_id`, and the remaining emitted native field names. The next bounded classifier restores
+  the accepted serialized cache (device/source SHA-256 `7B121D...B3A56BDF`) before process start and removes the
+  diagnostic revision override. A missing `adv_chara0` will move the fix to repeatable A12 launch-time master-table
+  restoration; the same exact path will end this branch and move to battle user-card binding. Do not create a fake
+  image zero or continue resource/audio/XML-field work. Evidence:
+  `work/master-card-update-schema-card-20260818.md` and
+  `work/mumu-a12-texture-null-path-live-20260818/`.
+- A12 texture-null classifier is complete. Static JNI recovery showed the accepted native library's only direct
+  `GetObjectClass` calls are in
+  `jni_loadTexture` (`0x001b0fd0`) and `jni_loadTextureWithRect` (`0x001b1192`), immediately after Java
+  `TextureLoader` returns. Device hashes for flow-relevant `adv_chara9/22/600/5009/5022/5600` and
+  `boss_full600/5600` exactly match the recovered package; all decrypt into valid PNGs, so bulk resource reinstall
+  is rejected. The builder's opt-in `KSSMA_TEXTURE_PATH_DIAGNOSTIC=1` mode verifies the stock DEX hash, redirects
+  only the two silent same-signature path logs to `Debug.err`, recomputes both DEX header checks, and records the
+  diagnostic in the unique baseline manifest. Parsed patched DEX self-check passed and A12 install preserved the
+  accepted native SHA-256. The one authorized reproduction identified ordinary `loadTexture(String,float)` and
+  exact `adv_chara0`; restore the normal baseline before a product fix. Evidence:
+  `work/a12-texture-null-path-card-20260818.md`.
+- The first A12 battle to survive into the result screen rejects the old winner-index inference. Fairy serial
+  `100013` was a real local victory: server and persisted save agree on fairy HP `9660 -> 0`, player HP
+  `5620 -> 3220`, `playerWon=true`, Gold `4620 -> 4920`, EXP `34 -> 39`, and `wins +1`; nevertheless the response's
+  `<winner>0</winner>` visibly rendered `YOU LOSE`. Therefore the result scene treats `winner` as a local-result
+  flag: `1=local victory`, `0=local defeat`. The server mapping, API assertions, flow fixture/gate, and settlement
+  schema are updated together; gameplay rewards and persisted win/loss calculation remain driven by `playerWon`.
 
 ## Fresh-clone startup asset closure
 

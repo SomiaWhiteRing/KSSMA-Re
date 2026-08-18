@@ -17,7 +17,6 @@ const {
   CHECK_INSPECTION_OK_XML,
   decryptAes128EcbBase64,
   encryptAes128Ecb,
-  encryptAes128EcbBuffer,
   createExplorationAreaXml,
   createExplorationApFailXml,
   createExplorationExploreXml,
@@ -27,6 +26,7 @@ const {
   createExplorationLockedXml,
   createGachaBuyXml,
   createGachaSelectSkeletonXml,
+  createMasterCardUpdateXml,
   createMenuCardCollectionSkeletonXml,
   createMenuFairySelectSkeletonXml,
   createMenuFriendListSkeletonXml,
@@ -61,6 +61,9 @@ const {
   LOGIN_MAINMENU_XML,
   LOGIN_TUTORIAL_XML,
   MASTERDATA_SAMPLES,
+  MASTER_CARD_UPDATE,
+  MASTER_CARD_SOURCE_SHA256,
+  parseSerializedMasterCards,
   parseConnectAppBody,
   parsePortList,
   WEB_SCENETO_LOCATION,
@@ -521,6 +524,7 @@ async function main() {
   assert.match(encounterXml, /<lv>12<\/lv>[\s\S]*<hp>6000<\/hp>[\s\S]*<hp_max>6000<\/hp_max>/);
   const fairySettlement = createFairyBattleSettlement(encounterSave, encounter, Date.parse("2026-08-16T12:05:00.000Z"));
   assert.equal(fairySettlement.playerWon, true);
+  assert.equal(fairySettlement.winner, 1);
   assert.equal(fairySettlement.rounds, 2);
   assert.equal(fairySettlement.fairyRemainingHp, 0);
   assert.equal(fairySettlement.playerRemainingHp, 4620);
@@ -538,19 +542,41 @@ async function main() {
   assert.match(fairyBattleXml, /<name>小龙女<\/name>[\s\S]*<master_card_id>600<\/master_card_id>/);
   assert.match(fairyBattleXml, /<battle_player_list>\s*<player_enemy>0<\/player_enemy>[\s\S]*?<type>2<\/type>\s*<size>0<\/size>/);
   assert.match(fairyBattleXml, /<battle_player_list>\s*<player_enemy>1<\/player_enemy>[\s\S]*?<type>30024<\/type>\s*<size>0<\/size>/);
-  assert.match(fairyBattleXml, /<winner>0<\/winner>/);
+  assert.match(fairyBattleXml, /<winner>1<\/winner>/);
   assert.match(fairyBattleXml, /<before_gold>0<\/before_gold><after_gold>777<\/after_gold>/);
   assert.match(fairyBattleXml, /<result_scene>4420<\/result_scene>/);
   assert.match(fairyBattleXml, /<explore>[\s\S]*?<event_type>18<\/event_type>[\s\S]*?<encounter>0<\/encounter>[\s\S]*?<\/explore>/);
   assert.doesNotMatch(fairyBattleXml, /<explore>[\s\S]*?<fairy>/);
+  const losingSave = JSON.parse(JSON.stringify(DEFAULT_PLAYER_SAVE));
+  const losingEncounter = createFairyEncounter(
+    losingSave,
+    { ...adminFairyConfig.fairyEncounter, maxHp: 10000, attackPower: 10000 },
+    EXPLORATION_FLOORS[0],
+    Date.parse("2026-08-16T13:00:00.000Z")
+  );
+  const losingSettlement = createFairyBattleSettlement(
+    losingSave,
+    losingEncounter,
+    Date.parse("2026-08-16T13:05:00.000Z")
+  );
+  assert.equal(losingSettlement.playerWon, false);
+  assert.equal(losingSettlement.winner, 0);
+  assert.equal(losingSave.battle.losses, 1);
+  assert.equal(losingSave.battle.fairy.active.serialId, "100001");
+  assert.match(createExplorationFairyBattleXml(losingSave, losingSettlement), /<winner>0<\/winner>/);
   const level17Row = GAME_PLAYER_LEVEL_EXP_TABLE.levels.find((row) => row.level === 17);
   const level18Row = GAME_PLAYER_LEVEL_EXP_TABLE.levels.find((row) => row.level === 18);
   const level10Row = GAME_PLAYER_LEVEL_EXP_TABLE.levels.find((row) => row.level === 10);
   assert.equal(level17Row.nextExp, 2000);
   assert.equal(level18Row.nextExp, 2100);
   assert.equal(level10Row.nextExp, 1300);
+  const projectPython = process.platform === "win32"
+    ? path.join(os.homedir(), "miniconda3", "envs", "KSSMA-Re", "python.exe")
+    : path.join(os.homedir(), "miniconda3", "envs", "KSSMA-Re", "bin", "python");
+  const pythonExecutable = process.env.KSSMA_RE_PYTHON
+    || (fs.existsSync(projectPython) ? projectPython : "python");
   const gachaLayoutCheck = require("node:child_process").spawnSync(
-    "python",
+    pythonExecutable,
     [path.join(__dirname, "..", "work", "render-gacha-select-layout-html.py"), "--check"],
     { encoding: "utf8" }
   );
@@ -742,12 +768,24 @@ async function main() {
   assert.equal(getLoginOkXml(), LOGIN_TUTORIAL_XML);
   assert.equal(getLoginXmlSource(getLoginOkXml()), "assets/bundle/local_forward_tutorial.xml");
   process.env.LOGIN_RESPONSE = "sample";
+  const previousCardRevisionOverride = process.env.KSSMA_CARD_REVISION_OVERRIDE;
+  delete process.env.KSSMA_CARD_REVISION_OVERRIDE;
   const loginOkSampleXml = getLoginOkXml();
   assert.equal(getLoginXmlSource(loginOkSampleXml), "assets/bundle/local_battle_player.xml + mainmenu bg");
   assertPlayerHeader(loginOkSampleXml, { countryId: 1 });
   assertMainmenuInformation(loginOkSampleXml, { fairyPose: 1, fairyFace: 4 });
   assert.doesNotMatch(loginOkSampleXml, /<card_rev>[1-9]/);
   assert.doesNotMatch(loginOkSampleXml, /<resource_rev>[\s\S]*?<revision>[1-9]/);
+  process.env.KSSMA_CARD_REVISION_OVERRIDE = "232";
+  const loginCardRefreshXml = createLoginMainmenuXml();
+  assert.match(loginCardRefreshXml, /<card_rev>232<\/card_rev>/);
+  assert.doesNotMatch(loginCardRefreshXml, /<(boss_rev|item_rev|card_category_rev|gacha_rev|privilege_rev)>[1-9]/);
+  assert.doesNotMatch(loginCardRefreshXml, /<resource_rev>[\s\S]*?<revision>[1-9]/);
+  if (previousCardRevisionOverride === undefined) {
+    delete process.env.KSSMA_CARD_REVISION_OVERRIDE;
+  } else {
+    process.env.KSSMA_CARD_REVISION_OVERRIDE = previousCardRevisionOverride;
+  }
   assert.equal(MAINMENU_ROUTE_STUBS["/connect/app/gacha/select/getcontents"].nextScene, 9100);
   assert.match(createMainmenuRouteXml("/connect/app/gacha/select/getcontents", DEFAULT_PLAYER_SAVE), /<next_scene>9100<\/next_scene>/);
   assertGachaSelectContent(createMainmenuRouteXml("/connect/app/gacha/select/getcontents", DEFAULT_PLAYER_SAVE));
@@ -869,12 +907,51 @@ async function main() {
     { login_id: "13800138000", password: "testpass1" }
   );
   assert.ok(MASTERDATA_SAMPLES["/connect/app/masterdata/card/update"].bytes?.length > 0);
-  assert.equal(
-    encryptAes128EcbBuffer(
-      MASTERDATA_SAMPLES["/connect/app/masterdata/card/update"].bytes,
-      "rBwj1MIAivVN222b"
-    ).length % 16,
-    0
+  const parsedMasterCards = parseSerializedMasterCards(
+    MASTERDATA_SAMPLES["/connect/app/masterdata/card/update"].bytes
+  );
+  assert.equal(parsedMasterCards.length, 480);
+  assert.deepEqual(
+    Object.fromEntries(
+      [9, 22, 600].map((masterCardId) => {
+        const card = parsedMasterCards.find((entry) => entry.master_card_id === masterCardId);
+        return [masterCardId, {
+          name: card.name,
+          maxLv: card.max_lv,
+          image1Id: card.image1_id,
+          image2Id: card.image2_id,
+          characterId: card.character_id,
+        }];
+      })
+    ),
+    {
+      9: { name: "支援型依缇尔", maxLv: 15, image1Id: 9, image2Id: 5009, characterId: 9 },
+      22: { name: "特异型恺撒", maxLv: 36, image1Id: 22, image2Id: 5022, characterId: 22 },
+      600: { name: "特异型小龙女", maxLv: 50, image1Id: 600, image2Id: 5600, characterId: 600 },
+    }
+  );
+  assert.equal(MASTER_CARD_UPDATE.sourceSha256, MASTER_CARD_SOURCE_SHA256);
+  assert.equal(MASTER_CARD_UPDATE.cards.length, 480);
+  assert.equal(MASTER_CARD_UPDATE.sourceRecordCount, 480);
+  assert.deepEqual(MASTER_CARD_UPDATE.selectedMasterCardIds, []);
+  assert.equal(MASTER_CARD_UPDATE.updateType, 1);
+  assert.equal(createMasterCardUpdateXml(MASTERDATA_SAMPLES["/connect/app/masterdata/card/update"].bytes).xml, MASTER_CARD_UPDATE.xml);
+  assert.match(MASTER_CARD_UPDATE.xml, /^<\?xml version="1\.0" encoding="UTF-8"\?>\n<master_data>/);
+  assert.match(MASTER_CARD_UPDATE.xml, /<master_card_data>\s*<update_type>1<\/update_type>/);
+  assert.equal((MASTER_CARD_UPDATE.xml.match(/<card>/g) || []).length, 480);
+  assert.match(MASTER_CARD_UPDATE.xml, /<master_card_id>600<\/master_card_id>[\s\S]*?<name>特异型小龙女<\/name>[\s\S]*?<max_lv>50<\/max_lv>[\s\S]*?<image1_id>600<\/image1_id>[\s\S]*?<image2_id>5600<\/image2_id>[\s\S]*?<character_id>600<\/character_id>/);
+  const boundedMasterCardUpdate = createMasterCardUpdateXml(
+    MASTERDATA_SAMPLES["/connect/app/masterdata/card/update"].bytes,
+    [9, 22, 600]
+  );
+  assert.deepEqual(boundedMasterCardUpdate.cards.map((card) => card.master_card_id), [9, 22, 600]);
+  assert.deepEqual(boundedMasterCardUpdate.selectedMasterCardIds, [9, 22, 600]);
+  assert.equal((boundedMasterCardUpdate.xml.match(/<card>/g) || []).length, 3);
+  assert.ok(Buffer.byteLength(boundedMasterCardUpdate.xml, "utf8") < 10000);
+  assert.match(boundedMasterCardUpdate.xml, /<update_type>1<\/update_type>/);
+  assert.throws(
+    () => createMasterCardUpdateXml(MASTERDATA_SAMPLES["/connect/app/masterdata/card/update"].bytes, [999999]),
+    /unknown master_card ids requested/
   );
 
   process.env.CHECK_INSPECTION_KEY = CONNECT_APP_KEY;
@@ -1054,6 +1131,25 @@ async function main() {
     const loginResponseLog = serverLogs.find((line) => line.includes('"path":"/connect/app/login"') && line.includes("connect_app_response"));
     assert.match(loginResponseLog, /"mainmenu":\{"countryId":2,"fairyCharacterId":120,"fairyPose":1,"fairyFace":8\}/);
     assert.doesNotMatch(loginDecoded, /<ap>[\s\S]*<current>27<\/current>/);
+
+    const masterCardUpdate = await post(
+      port,
+      "/connect/app/masterdata/card/update?cyt=1",
+      connectAppBody({ revision: 231 })
+    );
+    assert.equal(masterCardUpdate.statusCode, 200);
+    const masterCardUpdateDecoded = decryptAes128EcbBase64(
+      masterCardUpdate.buffer.toString("base64"),
+      CONNECT_APP_KEY
+    );
+    assert.match(masterCardUpdateDecoded, /^<\?xml version="1\.0" encoding="UTF-8"\?>\n<master_data>/);
+    assert.equal((masterCardUpdateDecoded.match(/<card>/g) || []).length, 480);
+    assert.match(masterCardUpdateDecoded, /<master_card_id>22<\/master_card_id>[\s\S]*?<max_lv>36<\/max_lv>[\s\S]*?<image2_id>5022<\/image2_id>/);
+    assert.match(masterCardUpdateDecoded, /<master_card_id>600<\/master_card_id>[\s\S]*?<max_lv>50<\/max_lv>[\s\S]*?<image2_id>5600<\/image2_id>/);
+    const masterCardUpdateLog = serverLogs.find((line) => line.includes('"path":"/connect/app/masterdata/card/update"') && line.includes("connect_app_response"));
+    assert.match(masterCardUpdateLog, /"source":"recovered master-card XML"/);
+    assert.match(masterCardUpdateLog, /"recordCount":480/);
+    assert.match(masterCardUpdateLog, /"updateType":1/);
 
     const mainmenuUpdate = await post(
       port,
@@ -1927,7 +2023,7 @@ async function main() {
     assert.match(fairyBattleDecoded, /<battle_vs_info>/);
     assert.match(fairyBattleDecoded, /<battle_battle>/);
     assert.match(fairyBattleDecoded, /<battle_result>[\s\S]*<result_scene>4420<\/result_scene>/);
-    assert.match(fairyBattleDecoded, /<winner>0<\/winner>/);
+    assert.match(fairyBattleDecoded, /<winner>1<\/winner>/);
     assert.match(fairyBattleDecoded, /<master_card_id>600<\/master_card_id>/);
     assert.match(fairyBattleDecoded, /<battle_player_list>\s*<player_enemy>1<\/player_enemy>[\s\S]*?<type>30024<\/type>\s*<size>0<\/size>/);
     assert.match(fairyBattleDecoded, /<explore>[\s\S]*?<event_type>18<\/event_type>[\s\S]*?<encounter>0<\/encounter>[\s\S]*?<\/explore>/);

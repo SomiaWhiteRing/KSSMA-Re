@@ -34,6 +34,20 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\work\kssma-runtime.ps1 flo
 powershell -NoProfile -ExecutionPolicy Bypass -File .\work\kssma-runtime.ps1 flow -Scenario exploration-levelup-smoke
 ```
 
+ARM19 remains the default acceptance runtime. For isolated MuMu Android 12 compatibility investigation, the same
+scenario implementations can be invoked through its stricter alternate-runtime gate:
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File .\work\kssma-mumu-a12.ps1 flow -Scenario exploration-walk-smoke -Tag a12-check
+```
+
+The MuMu entry uses a distinct artifact tag, verifies its own ABI/native/hosts/resource/server baseline, and
+requires the untouched physical `1440x2560` / 360 dpi display with no `wm` override. It scales only automation
+coordinates to the native 2560x1440 landscape surface and retains both native screenshots and 1280x720 comparison
+copies. It does not weaken or replace the ARM19 gate. Current A12 promotion is rejected because representative
+fairy and gacha-result paths terminate on client lookups for `adv_chara0` and `thumbnail_chara_0`; see
+`work/mumu-a12-flow-qualification-card-20260818.md`.
+
 ## Scenario Contract
 
 - `list` and `self-check` must not touch ARM19 or the local server.
@@ -41,6 +55,9 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\work\kssma-runtime.ps1 flo
 - Runtime gameplay scenarios call the shared runtime gate and login-to-main-menu stage before gameplay taps.
 - Runtime gameplay scenarios use an artifact-local player save. The default exploration smoke
   starts like a new player: only `人魚の断崖` and its first unlocked floor are visible.
+- Ordinary exploration/progress scenarios explicitly disable random fairy encounters in their owned server
+  process, so a mutable admin encounter rate cannot change their contract. `fairy-battle-smoke` keeps its explicit
+  enabled/rate/level/HP/attack/reward environment; the special forward-visual scenario is also left unchanged.
 - `mainmenu-faction-smoke` writes an artifact-local `technique` player save before starting
   the server, logs into the main menu, verifies the server response advertises
   `countryId=2`, `fairyCharacterId=120`, `fairyPose=1`, and `fairyFace=8`, then saves a

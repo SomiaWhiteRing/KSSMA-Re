@@ -29,8 +29,10 @@ The complete `assets/bundle/local_battle_result.xml` and the three native tag pa
   turn delimiter contains `turn`. The bundled sample visibly executes these records in scene 4301.
 - `battle_result` contains `event_flag`, `event_type`, `winner`, before/after gold/exp/level values,
   the two shipped result subrecords, and `result_scene`. The accepted result selector is 4420.
-- In the bundled sample the local player (player_enemy 0) is destroyed by enemy actions and
-  `winner=1`; therefore the deterministic local-player victory value is `winner=0`.
+- The bundled sample alone did not establish whether `winner` was a player index or a local-result flag. The first
+  A12 run that visibly reached the result screen settled a real local victory but rendered `YOU LOSE` with
+  `winner=0`. This direct client observable supersedes the action-list inference: `winner=1` is local victory and
+  `winner=0` is local defeat.
 
 ## Dynamic local contract
 

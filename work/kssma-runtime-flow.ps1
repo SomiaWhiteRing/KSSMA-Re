@@ -27,6 +27,8 @@ function New-FlowContext {
     startedAt = Get-Date
     serverProcess = $null
     serial = $script:KssmaRuntimeConfig.PrimarySerial
+    coordinateScale = 1.0
+    screenshotScale = 1.0
     requestCursor = 0
     normalizedLineCount = 0
     requestEvents = @()
@@ -1231,14 +1233,26 @@ function Invoke-FlowTap {
     $Context,
     [string]$Name,
     [int]$X,
-    [int]$Y
+    [int]$Y,
+    [switch]$DeviceCoordinates
   )
 
+  $scale = if ($DeviceCoordinates) { 1.0 } else { [double]$Context.coordinateScale }
+  $deviceX = [int][Math]::Round($X * $scale)
+  $deviceY = [int][Math]::Round($Y * $scale)
   Ensure-FlowNoSystemAnr -Context $Context -Step "before-$Name"
-  Add-FlowEvent -Context $Context -Type "tap" -Data ([ordered]@{ name = $Name; x = $X; y = $Y })
+  Add-FlowEvent -Context $Context -Type "tap" -Data ([ordered]@{
+      name = $Name
+      x = $X
+      y = $Y
+      deviceX = $deviceX
+      deviceY = $deviceY
+      coordinateScale = $scale
+      deviceCoordinates = [bool]$DeviceCoordinates
+    })
   $stage = $null
   for ($attempt = 1; $attempt -le 3; $attempt++) {
-    $stage = Invoke-Adb -Arguments @("-s", $Context.serial, "shell", "input", "tap", "$X", "$Y") -TimeoutSeconds 30 -AllowFailure
+    $stage = Invoke-Adb -Arguments @("-s", $Context.serial, "shell", "input", "tap", "$deviceX", "$deviceY") -TimeoutSeconds 30 -AllowFailure
     if ($stage.ok) {
       Start-Sleep -Milliseconds 800
       return
@@ -1305,7 +1319,8 @@ function Invoke-FlowTapNode {
   if (-not $center) {
     return $false
   }
-  Invoke-FlowTap -Context $Context -Name $Name -X $center.x -Y $center.y
+  # UIAutomator bounds already use physical device pixels and must not be scaled.
+  Invoke-FlowTap -Context $Context -Name $Name -X $center.x -Y $center.y -DeviceCoordinates
   return $true
 }
 
@@ -1339,17 +1354,19 @@ function Capture-FlowScreenshot {
   $safeName = $Name -replace "[^A-Za-z0-9_.-]", "-"
   $remote = "/data/local/tmp/kssma-flow-$safeName.png"
   $local = Join-Path $Context.screenshotsDir "$safeName.png"
-  Add-FlowEvent -Context $Context -Type "screenshot-start" -Data ([ordered]@{ name = $Name; path = $local })
+  $scale = [double]$Context.screenshotScale
+  $pulled = if ($scale -eq 1.0) { $local } else { Join-Path $Context.screenshotsDir "$safeName.native.png" }
+  Add-FlowEvent -Context $Context -Type "screenshot-start" -Data ([ordered]@{ name = $Name; path = $local; nativePath = $pulled; screenshotScale = $scale })
   $pull = $null
   $size = 0
   for ($attempt = 1; $attempt -le 3; $attempt++) {
-    if (Test-Path -LiteralPath $local) {
-      Remove-Item -LiteralPath $local -Force -ErrorAction SilentlyContinue
+    if (Test-Path -LiteralPath $pulled) {
+      Remove-Item -LiteralPath $pulled -Force -ErrorAction SilentlyContinue
     }
     Invoke-Adb -Arguments @("-s", $Context.serial, "shell", "screencap", "-p", $remote) -TimeoutSeconds 20 -AllowFailure | Out-Null
-    $pull = Invoke-Adb -Arguments @("-s", $Context.serial, "pull", $remote, $local) -TimeoutSeconds 30 -AllowFailure
-    $size = if (Test-Path -LiteralPath $local) { (Get-Item -LiteralPath $local).Length } else { 0 }
-    Add-FlowEvent -Context $Context -Type "screenshot-attempt" -Data ([ordered]@{ name = $Name; attempt = $attempt; path = $local; bytes = $size; adbOk = $pull.ok })
+    $pull = Invoke-Adb -Arguments @("-s", $Context.serial, "pull", $remote, $pulled) -TimeoutSeconds 30 -AllowFailure
+    $size = if (Test-Path -LiteralPath $pulled) { (Get-Item -LiteralPath $pulled).Length } else { 0 }
+    Add-FlowEvent -Context $Context -Type "screenshot-attempt" -Data ([ordered]@{ name = $Name; attempt = $attempt; path = $pulled; bytes = $size; adbOk = $pull.ok })
     if ($size -gt 0) {
       break
     }
@@ -1357,7 +1374,37 @@ function Capture-FlowScreenshot {
     # screencap succeeds; retry keeps visual gates from failing on capture noise.
     Start-Sleep -Seconds 2
   }
-  Add-FlowEvent -Context $Context -Type "screenshot" -Data ([ordered]@{ name = $Name; path = $local; ok = [bool]($size -gt 0); bytes = $size; adbOk = $pull.ok })
+  if ($size -gt 0 -and $scale -ne 1.0) {
+    Add-Type -AssemblyName System.Drawing
+    $source = $null
+    $target = $null
+    $graphics = $null
+    try {
+      $source = [System.Drawing.Bitmap]::FromFile((Resolve-Path -LiteralPath $pulled))
+      $width = [int][Math]::Round($source.Width / $scale)
+      $height = [int][Math]::Round($source.Height / $scale)
+      $target = New-Object System.Drawing.Bitmap($width, $height)
+      $graphics = [System.Drawing.Graphics]::FromImage($target)
+      $graphics.InterpolationMode = [System.Drawing.Drawing2D.InterpolationMode]::HighQualityBicubic
+      $graphics.DrawImage($source, 0, 0, $width, $height)
+      $target.Save($local, [System.Drawing.Imaging.ImageFormat]::Png)
+    } finally {
+      if ($graphics) { $graphics.Dispose() }
+      if ($target) { $target.Dispose() }
+      if ($source) { $source.Dispose() }
+    }
+  }
+  $normalizedSize = if (Test-Path -LiteralPath $local) { (Get-Item -LiteralPath $local).Length } else { 0 }
+  Add-FlowEvent -Context $Context -Type "screenshot" -Data ([ordered]@{
+      name = $Name
+      path = $local
+      nativePath = $pulled
+      ok = [bool]($normalizedSize -gt 0)
+      bytes = $normalizedSize
+      nativeBytes = $size
+      screenshotScale = $scale
+      adbOk = $pull.ok
+    })
   return $local
 }
 
@@ -1838,8 +1885,10 @@ function Invoke-FlowOriginalLogin {
         # ponytail: once RooneyJ is visible and no connect route exists, use a direct bounded tap.
         # The generic tap's UI-dialog inspection can take several seconds; automatic login may finish
         # during that delay and turn the intended title tap into an unrelated main-menu action.
-        Add-FlowEvent -Context $Context -Type "tap" -Data ([ordered]@{ name = "login-native-title-touch-screen"; x = 640; y = 650; fast = $true })
-        $titleTap = Invoke-Adb -Arguments @("-s", $Context.serial, "shell", "input", "tap", "640", "650") -TimeoutSeconds 10 -AllowFailure
+        $titleX = [int][Math]::Round(640 * [double]$Context.coordinateScale)
+        $titleY = [int][Math]::Round(650 * [double]$Context.coordinateScale)
+        Add-FlowEvent -Context $Context -Type "tap" -Data ([ordered]@{ name = "login-native-title-touch-screen"; x = 640; y = 650; deviceX = $titleX; deviceY = $titleY; coordinateScale = $Context.coordinateScale; fast = $true })
+        $titleTap = Invoke-Adb -Arguments @("-s", $Context.serial, "shell", "input", "tap", "$titleX", "$titleY") -TimeoutSeconds 10 -AllowFailure
         if (-not $titleTap.ok) {
           Stop-FlowWithFailure -Context $Context -FailureClass "runtime-not-ready" -Step "login-native-title-touch-screen" -Message "ADB title tap failed: $($titleTap.failureClass) $($titleTap.stderr) $($titleTap.stdout)"
         }
@@ -2179,9 +2228,14 @@ function Invoke-FlowSwipe {
     [int]$DurationMs = 450
   )
 
+  $scale = [double]$Context.coordinateScale
+  $deviceX1 = [int][Math]::Round($X1 * $scale)
+  $deviceY1 = [int][Math]::Round($Y1 * $scale)
+  $deviceX2 = [int][Math]::Round($X2 * $scale)
+  $deviceY2 = [int][Math]::Round($Y2 * $scale)
   Ensure-FlowNoSystemAnr -Context $Context -Step "before-$Name"
-  Add-FlowEvent -Context $Context -Type "swipe" -Data ([ordered]@{ name = $Name; x1 = $X1; y1 = $Y1; x2 = $X2; y2 = $Y2; durationMs = $DurationMs })
-  $stage = Invoke-Adb -Arguments @("-s", $Context.serial, "shell", "input", "swipe", "$X1", "$Y1", "$X2", "$Y2", "$DurationMs") -TimeoutSeconds 30 -AllowFailure
+  Add-FlowEvent -Context $Context -Type "swipe" -Data ([ordered]@{ name = $Name; x1 = $X1; y1 = $Y1; x2 = $X2; y2 = $Y2; deviceX1 = $deviceX1; deviceY1 = $deviceY1; deviceX2 = $deviceX2; deviceY2 = $deviceY2; coordinateScale = $scale; durationMs = $DurationMs })
+  $stage = Invoke-Adb -Arguments @("-s", $Context.serial, "shell", "input", "swipe", "$deviceX1", "$deviceY1", "$deviceX2", "$deviceY2", "$DurationMs") -TimeoutSeconds 30 -AllowFailure
   if (-not $stage.ok) {
     Stop-FlowWithFailure -Context $Context -FailureClass "tap-no-effect" -Step $Name -Message "ADB swipe failed: $($stage.failureClass)"
   }
@@ -3163,8 +3217,11 @@ function Invoke-FlowFastTapThenWaitProbe {
   )
 
   Assert-FlowClientAlive -Context $Context -Step "$Name-before-tap"
-  Add-FlowEvent -Context $Context -Type "tap" -Data ([ordered]@{ name = $Name; x = $X; y = $Y; fast = $true })
-  $stage = Invoke-Adb -Arguments @("-s", $Context.serial, "shell", "input", "tap", "$X", "$Y") -TimeoutSeconds 10 -AllowFailure
+  $scale = [double]$Context.coordinateScale
+  $deviceX = [int][Math]::Round($X * $scale)
+  $deviceY = [int][Math]::Round($Y * $scale)
+  Add-FlowEvent -Context $Context -Type "tap" -Data ([ordered]@{ name = $Name; x = $X; y = $Y; deviceX = $deviceX; deviceY = $deviceY; coordinateScale = $scale; fast = $true })
+  $stage = Invoke-Adb -Arguments @("-s", $Context.serial, "shell", "input", "tap", "$deviceX", "$deviceY") -TimeoutSeconds 10 -AllowFailure
   if (-not $stage.ok) {
     Stop-FlowWithFailure -Context $Context -FailureClass "runtime-not-ready" -Step $Name -Message "ADB fast tap failed: $($stage.failureClass) $($stage.stderr) $($stage.stdout)"
   }
@@ -3340,7 +3397,7 @@ function Invoke-FlowFairyBattleSmoke {
     playerMaxHp = 5620
     playerRemainingHp = 4620
     playerWon = $true
-    winner = 0
+    winner = 1
     rounds = 2
     playerDamage = 6000
     fairyDamage = 1000
@@ -3776,7 +3833,7 @@ function Invoke-FlowSelfCheck {
       '[2026-01-01T00:00:11.000Z] connect_app_response {"path":"/connect/app/roundtable/edit","command":"round_table","nextScene":83200,"ownerCardCount":2,"ownerCardSerialIds":[1,2],"ownerCardMasterCardIds":[22,9]}',
       '[2026-01-01T00:00:12.000Z] connect_app_response {"path":"/connect/app/gacha/buy","source":"gacha buy settlement","command":"gacha_buy","nextScene":9200,"productId":2,"bulk":1,"friendshipBefore":0,"friendshipCost":0,"friendshipAfter":0,"mcBefore":300,"mcCost":300,"mcAfter":0,"drawnSerialId":2,"drawnMasterCardId":9,"ownerCardCount":2,"cardsDrawn":1,"saved":true}',
       '[2026-01-01T00:00:13.000Z] connect_app_probe {"path":"/connect/app/exploration/fairybattle","decryptedParams":{"user_id":"1","serial_id":"100001"}}',
-      '[2026-01-01T00:00:13.100Z] connect_app_response {"path":"/connect/app/exploration/fairybattle","source":"local fairy battle settlement","nextScene":4100,"battleScene":4301,"resultScene":4420,"explorationEventType":18,"requestedSerialId":"100001","fairyMasterBossId":30024,"enemyBattleType":30024,"enemyBossImageId":600,"fairyLevel":18,"fairyInitialHp":6000,"fairyCurrentHp":0,"fairyMaxHp":6000,"fairyAttackPower":1000,"playerMaxHp":5620,"playerRemainingHp":4620,"playerWon":true,"winner":0,"rounds":2,"playerDamage":6000,"fairyDamage":1000,"goldBefore":18,"goldReward":777,"goldAfter":795,"expBefore":3,"expReward":4,"expAfter":7,"levelBefore":1,"levelAfter":1,"saved":true}'
+      '[2026-01-01T00:00:13.100Z] connect_app_response {"path":"/connect/app/exploration/fairybattle","source":"local fairy battle settlement","nextScene":4100,"battleScene":4301,"resultScene":4420,"explorationEventType":18,"requestedSerialId":"100001","fairyMasterBossId":30024,"enemyBattleType":30024,"enemyBossImageId":600,"fairyLevel":18,"fairyInitialHp":6000,"fairyCurrentHp":0,"fairyMaxHp":6000,"fairyAttackPower":1000,"playerMaxHp":5620,"playerRemainingHp":4620,"playerWon":true,"winner":1,"rounds":2,"playerDamage":6000,"fairyDamage":1000,"goldBefore":18,"goldReward":777,"goldAfter":795,"expBefore":3,"expReward":4,"expAfter":7,"levelBefore":1,"levelAfter":1,"saved":true}'
     ) | Set-Content -LiteralPath $ctx.serverOut -Encoding UTF8
     Set-FlowApShortagePlayerSave -Context $ctx
     $initialApShortageSave = Read-FlowPlayerSave -Context $ctx -Step "self-ap-shortage-save-before"
@@ -3928,7 +3985,7 @@ function Invoke-FlowSelfCheck {
     Wait-FlowServerEvent -Context $ctx -Step "self-gacha-deck-response" -Tag "connect_app_response" -Path "/connect/app/roundtable/edit" -Fields @{ command = "round_table"; nextScene = 83200; ownerCardCount = 2 } -TimeoutSeconds 2 | Out-Null
     Wait-FlowServerEvent -Context $ctx -Step "self-gacha-paid-settlement-response" -Tag "connect_app_response" -Path "/connect/app/gacha/buy" -Fields @{ source = "gacha buy settlement"; command = "gacha_buy"; nextScene = 9200; productId = 2; bulk = 1; friendshipBefore = 0; friendshipCost = 0; friendshipAfter = 0; mcBefore = 300; mcCost = 300; mcAfter = 0; drawnSerialId = 2; drawnMasterCardId = 9; ownerCardCount = 2; cardsDrawn = 1; saved = $true } -TimeoutSeconds 2 | Out-Null
     Wait-FlowServerEvent -Context $ctx -Step "self-fairy-battle-probe" -Tag "connect_app_probe" -Path "/connect/app/exploration/fairybattle" -Params @{ user_id = "1"; serial_id = "100001" } -TimeoutSeconds 2 | Out-Null
-    Wait-FlowServerEvent -Context $ctx -Step "self-fairy-battle-response" -Tag "connect_app_response" -Path "/connect/app/exploration/fairybattle" -Fields @{ source = "local fairy battle settlement"; nextScene = 4100; battleScene = 4301; resultScene = 4420; explorationEventType = 18; requestedSerialId = "100001"; enemyBattleType = 30024; enemyBossImageId = 600; playerWon = $true; winner = 0; goldAfter = 795; expAfter = 7; saved = $true } -TimeoutSeconds 2 | Out-Null
+    Wait-FlowServerEvent -Context $ctx -Step "self-fairy-battle-response" -Tag "connect_app_response" -Path "/connect/app/exploration/fairybattle" -Fields @{ source = "local fairy battle settlement"; nextScene = 4100; battleScene = 4301; resultScene = 4420; explorationEventType = 18; requestedSerialId = "100001"; enemyBattleType = 30024; enemyBossImageId = 600; playerWon = $true; winner = 1; goldAfter = 795; expAfter = 7; saved = $true } -TimeoutSeconds 2 | Out-Null
     $unexpectedLeaderProbe = Wait-FlowServerEventOptional -Context $ctx -Step "self-deck-leader-no-route" -Tag "connect_app_probe" -Path "" -TimeoutSeconds 1
     if ($unexpectedLeaderProbe) {
       throw "leader-mode quiet-window fixture unexpectedly found $($unexpectedLeaderProbe.path)"
@@ -4389,6 +4446,12 @@ function Invoke-Flow {
       $serverEnvironment["KSSMA_FAIRY_REWARD_GOLD"] = "777"
       $serverEnvironment["KSSMA_FAIRY_REWARD_EXP"] = "4"
       $serverEnvironment["KSSMA_FAIRY_TIME_LIMIT_SECONDS"] = "3600"
+    }
+    if ($Scenario -in @("exploration-smoke", "exploration-walk-smoke", "exploration-floor-clear-smoke", "exploration-ap-shortage-smoke", "exploration-levelup-smoke")) {
+      # Flow saves and server processes are isolated; the adjustable admin
+      # fairy switch must be isolated too or ordinary exploration ceases to
+      # be a deterministic scenario.
+      $serverEnvironment["KSSMA_FAIRY_ENABLED"] = "0"
     }
     Start-FlowServer -Context $ctx -ExtraEnvironment $serverEnvironment
     Invoke-FlowRuntimeGate -Context $ctx

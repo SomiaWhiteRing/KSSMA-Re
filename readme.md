@@ -314,6 +314,17 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\work\kssma-mumu-a12.ps1 in
 powershell -NoProfile -ExecutionPolicy Bypass -File .\work\kssma-mumu-a12.ps1 launch -StartServer
 ```
 
+MuMu 也有隔离的兼容性 flow 入口，可复用现有场景做定向调查：
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File .\work\kssma-mumu-a12.ps1 flow -Scenario exploration-walk-smoke -Tag a12-check
+```
+
+它不会放宽 ARM19 门禁；会独占本地 server、使用 artifact 内玩家存档，并只读校验 MuMu 保持物理
+`1440x2560` / density `360`、没有任何 `wm` override。自动点击仅在主机侧把既有 `1280x720`
+逻辑坐标换算为原生横屏 `2560x1440` 坐标；截图同时保留 `.native.png` 原图和供既有判定器使用的
+`1280x720` 对照副本。脚本不会修改模拟器分辨率或 density。
+
 hosts 修复会在设备上保留原始备份 `/system/etc/hosts.kssma-re-original`。只有需要撤销旧域名映射时才运行：
 
 ```powershell
@@ -321,9 +332,13 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\work\kssma-mumu-a12.ps1 re
 ```
 
 生成的约 499 MiB TAR、校验表和 manifest 位于 `work\mumu-a12-package\`，均可由脚本重新生成，
-无需手工解包或逐文件 `adb push`。MuMu Android 12 目前已验收到登录、主菜单和即时页面导航；
-扭蛋选择页闲置约 269 秒后的 reward-box 路径崩溃尚未归因，因此它是安装/人工调查候选，暂不替代
-ARM19 的自动玩法验收。
+无需手工解包或逐文件 `adb push`。MuMu Android 12 曾在临时显示 override 下通过普通探索行走；
+该历史结果不能作为原生分辨率验收。原生显示下的路由/点击适配已能进入抽卡和妖精战斗请求，
+但 A12 尚不能替代 ARM19。扭蛋结算在
+服务端正确保存 `masterCardId=9` 后，客户端错误请求缺失的 `thumbnail_chara_0` 并被 Android 12
+严格 JNI 以 `SIGABRT` 终止；妖精事件也发现 `adv_chara0` 的同类确定性崩溃。此前约 269 秒的
+扭蛋选择页 reward-box 路径崩溃仍待复核。完整证据和晋级条件见
+`work/mumu-a12-flow-qualification-card-20260818.md`。
 
 ## ARM19 运行时
 

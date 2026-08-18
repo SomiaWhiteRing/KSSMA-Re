@@ -8,11 +8,15 @@ param(
     "ensure-hosts",
     "restore-hosts",
     "install-resources",
-    "launch"
+    "repair-appdata",
+    "launch",
+    "flow"
   )]
   [string]$Command = "deploy",
   [string]$Serial = "127.0.0.1:7555",
   [string]$GuestHost = "10.0.2.2",
+  [string]$Scenario = "exploration-smoke",
+  [string]$Tag = "",
   [switch]$Rebuild,
   [switch]$StartServer,
   [switch]$Launch
@@ -21,13 +25,20 @@ param(
 $ErrorActionPreference = "Stop"
 Set-StrictMode -Version Latest
 . (Join-Path $PSScriptRoot "kssma-runtime-lib.ps1")
+. (Join-Path $PSScriptRoot "kssma-runtime-flow.ps1")
 
 $script:MumuConfig = [ordered]@{
   Package = "com.square_enix.million_cn"
   Activity = "com.test.enter.LogoActivity"
   ExpectedRelease = "12"
   ExpectedSdk = @("31", "32")
+  FlowPhysicalDisplaySize = "1440x2560"
+  FlowPhysicalDisplayDensity = "360"
+  FlowLandscapeScreenshotSize = "2560x1440"
+  FlowCoordinateScale = 2.0
   DeviceSaveDir = "/storage/emulated/0/Android/data/com.square_enix.million_cn/files/save"
+  SaveAppDataPath = "/storage/emulated/0/Android/data/com.square_enix.million_cn/files/save/appdata/save_appdata"
+  SaveAppDataBackupPath = "/storage/emulated/0/Android/data/com.square_enix.million_cn/files/save/appdata/save_appdata.before-kssma-re-seed"
   RemoteResourcePack = "/data/local/tmp/kssma-mumu-a12-resources.tar"
   RemoteChecksums = "/data/local/tmp/kssma-mumu-a12-resources.sha256"
   RemoteVerifyScript = "/data/local/tmp/kssma-mumu-a12-verify.sh"
@@ -167,13 +178,15 @@ function Get-MumuArtifacts {
   $nativePath = Resolve-MumuRepoPath ($client.nativeLib.path -as [string])
   $packPath = Resolve-MumuRepoPath ($resources.resourcePack.path -as [string])
   $checksumsPath = Resolve-MumuRepoPath ($resources.checksums.path -as [string])
-  foreach ($path in @($apkPath, $nativePath, $packPath, $checksumsPath)) { Require-File $path }
+  $saveAppDataSeedPath = Resolve-MumuRepoPath ($resources.saveAppDataSeed.path -as [string])
+  foreach ($path in @($apkPath, $nativePath, $packPath, $checksumsPath, $saveAppDataSeedPath)) { Require-File $path }
 
   $checks = @(
     @{ name = "client APK"; path = $apkPath; expected = ($client.baselineApk.sha256 -as [string]) },
     @{ name = "accepted native library"; path = $nativePath; expected = ($client.nativeLib.sha256 -as [string]) },
     @{ name = "resource pack"; path = $packPath; expected = ($resources.resourcePack.sha256 -as [string]) },
-    @{ name = "resource checksum list"; path = $checksumsPath; expected = ($resources.checksums.sha256 -as [string]) }
+    @{ name = "resource checksum list"; path = $checksumsPath; expected = ($resources.checksums.sha256 -as [string]) },
+    @{ name = "save_appdata seed"; path = $saveAppDataSeedPath; expected = ($resources.saveAppDataSeed.sha256 -as [string]) }
   )
   foreach ($check in $checks) {
     $actual = (Get-FileHash -Algorithm SHA256 -LiteralPath $check.path).Hash
@@ -188,6 +201,11 @@ function Get-MumuArtifacts {
   if (@($resources.excludedMutable) -notcontains "appdata/save_appdata") {
     throw "Resource pack must explicitly exclude mutable appdata/save_appdata."
   }
+  if (($resources.saveAppDataSeed.devicePath -as [string]) -ne "appdata/save_appdata" -or
+      ($resources.saveAppDataSeed.applyWhen -as [string]) -ne "missing-or-all-zero" -or
+      [int]$resources.saveAppDataSeed.bytes -ne 2849) {
+    throw "Resource manifest has an invalid save_appdata seed contract."
+  }
   [ordered]@{
     clientManifest = $client
     resourceManifest = $resources
@@ -195,6 +213,7 @@ function Get-MumuArtifacts {
     nativePath = $nativePath
     packPath = $packPath
     checksumsPath = $checksumsPath
+    saveAppDataSeedPath = $saveAppDataSeedPath
   }
 }
 
@@ -464,6 +483,74 @@ sha256sum -c "$2" >"$3" 2>&1
   $path
 }
 
+function Get-MumuZeroPayloadSha256 {
+  param([int]$Length)
+  if ($Length -le 0) { throw "Cannot hash a non-positive zero payload length." }
+  $sha = [System.Security.Cryptography.SHA256]::Create()
+  try {
+    ([System.BitConverter]::ToString($sha.ComputeHash([byte[]]::new($Length)))).Replace("-", "")
+  } finally {
+    $sha.Dispose()
+  }
+}
+
+function Invoke-MumuRepairSaveAppData {
+  param($Context, $Artifacts)
+  $seed = $Artifacts.resourceManifest.saveAppDataSeed
+  $expected = ($seed.sha256 -as [string]).ToUpperInvariant()
+  $zeroHash = Get-MumuZeroPayloadSha256 -Length ([int]$seed.bytes)
+  $target = $script:MumuConfig.SaveAppDataPath
+  $backup = $script:MumuConfig.SaveAppDataBackupPath
+
+  $before = Invoke-MumuAdbStage -Context $Context -Name "hash-save-appdata-before-seed" -Arguments @("shell", "sha256sum", $target) -TimeoutSeconds 20 -AllowFailure
+  $beforeMatch = [regex]::Match(($before.stdout -as [string]), "(?im)^([0-9a-f]{64})\s+")
+  $beforeExists = $beforeMatch.Success
+  $beforeHash = if ($beforeExists) { $beforeMatch.Groups[1].Value.ToUpperInvariant() } else { "" }
+  if ($beforeExists -and $beforeHash -ne $zeroHash) {
+    return [ordered]@{
+      repaired = $false
+      reason = "preserved-nonzero-player-data"
+      devicePath = $target
+      beforeSha256 = $beforeHash
+      afterSha256 = $beforeHash
+      backupPath = ""
+    }
+  }
+
+  Invoke-MumuAdbStage -Context $Context -Name "force-stop-before-save-appdata-seed" -Arguments @("shell", "am", "force-stop", $script:MumuConfig.Package) -TimeoutSeconds 10 -AllowFailure | Out-Null
+  Invoke-MumuAdbStage -Context $Context -Name "mkdir-save-appdata-parent" -Arguments @("shell", "mkdir", "-p", "$($script:MumuConfig.DeviceSaveDir)/appdata") -TimeoutSeconds 10 | Out-Null
+
+  $backupPath = ""
+  if ($beforeExists) {
+    $existingBackup = Invoke-MumuAdbStage -Context $Context -Name "check-save-appdata-backup" -Arguments @("shell", "sha256sum", $backup) -TimeoutSeconds 20 -AllowFailure
+    $backupMatch = [regex]::Match(($existingBackup.stdout -as [string]), "(?im)^([0-9a-f]{64})\s+")
+    if (-not $backupMatch.Success) {
+      Invoke-MumuAdbStage -Context $Context -Name "backup-save-appdata" -Arguments @("shell", "cp", "-p", $target, $backup) -TimeoutSeconds 20 | Out-Null
+      $verifiedBackup = Invoke-MumuAdbStage -Context $Context -Name "verify-save-appdata-backup" -Arguments @("shell", "sha256sum", $backup) -TimeoutSeconds 20
+      if (($verifiedBackup.stdout -as [string]) -notmatch "(?im)^$([regex]::Escape($beforeHash))\s+") {
+        throw "save_appdata backup hash did not match the pre-seed file."
+      }
+    }
+    $backupPath = $backup
+  }
+
+  Invoke-MumuAdbStage -Context $Context -Name "push-save-appdata-seed" -Arguments @("push", $Artifacts.saveAppDataSeedPath, $target) -TimeoutSeconds 30 | Out-Null
+  $after = Invoke-MumuAdbStage -Context $Context -Name "hash-save-appdata-after-seed" -Arguments @("shell", "sha256sum", $target) -TimeoutSeconds 20
+  $afterHash = @($after.stdout -split "\s+")[0].ToUpperInvariant()
+  if ($afterHash -ne $expected) {
+    throw "save_appdata seed hash mismatch: got $afterHash, expected $expected"
+  }
+
+  [ordered]@{
+    repaired = $true
+    reason = if ($beforeExists) { "replaced-all-zero-placeholder" } else { "seeded-missing-file" }
+    devicePath = $target
+    beforeSha256 = $beforeHash
+    afterSha256 = $afterHash
+    backupPath = $backupPath
+  }
+}
+
 function Invoke-MumuInstallResources {
   param($Context, $Artifacts)
   $manifest = $Artifacts.resourceManifest
@@ -483,11 +570,13 @@ function Invoke-MumuInstallResources {
       $tail = Invoke-MumuAdbStage -Context $Context -Name "resource-verification-failure-tail" -Arguments @("shell", "tail", "-n", "40", $script:MumuConfig.RemoteVerifyLog) -TimeoutSeconds 20 -AllowFailure
       throw "Static resource checksum verification failed: $($tail.stdout) $($tail.stderr)"
     }
+    $saveAppData = Invoke-MumuRepairSaveAppData -Context $Context -Artifacts $Artifacts
     [ordered]@{
       fileCount = $expectedFiles
       payloadBytes = [int64]$manifest.resourcePack.payloadBytes
       packSha256 = ($manifest.resourcePack.sha256 -as [string])
       mutableSavePreserved = "appdata/save_appdata"
+      saveAppData = $saveAppData
       deviceSaveDir = $script:MumuConfig.DeviceSaveDir
     }
   } finally {
@@ -508,6 +597,7 @@ function Get-MumuStatus {
   }
   $sentinels = @()
   $resourcesOk = $true
+  $saveAppDataStatus = [ordered]@{ ok = $false; actual = ""; zeroPayloadSha256 = "" }
   if ($Artifacts) {
     foreach ($sentinel in @($Artifacts.resourceManifest.sentinels)) {
       $remotePath = "$($script:MumuConfig.DeviceSaveDir)/$($sentinel.path)"
@@ -517,6 +607,12 @@ function Get-MumuStatus {
       $resourcesOk = $resourcesOk -and $matches
       $sentinels += [ordered]@{ path = $sentinel.path; ok = $matches; expected = $sentinel.sha256; actual = $actual }
     }
+    $saveAppDataHash = Invoke-MumuAdbStage -Context $Context -Name "status-save-appdata" -Arguments @("shell", "sha256sum", $script:MumuConfig.SaveAppDataPath) -TimeoutSeconds 20 -AllowFailure
+    $saveAppDataActual = if ($saveAppDataHash.ok) { @($saveAppDataHash.stdout -split "\s+")[0].ToUpperInvariant() } else { "" }
+    $saveAppDataZero = Get-MumuZeroPayloadSha256 -Length ([int]$Artifacts.resourceManifest.saveAppDataSeed.bytes)
+    $saveAppDataOk = $saveAppDataHash.ok -and $saveAppDataActual -ne $saveAppDataZero
+    $resourcesOk = $resourcesOk -and $saveAppDataOk
+    $saveAppDataStatus = [ordered]@{ ok = $saveAppDataOk; actual = $saveAppDataActual; zeroPayloadSha256 = $saveAppDataZero }
   } else {
     $resourcesOk = $false
   }
@@ -528,9 +624,69 @@ function Get-MumuStatus {
     hostsOk = $hostsOk
     resourcesOk = $resourcesOk
     resourceSentinels = $sentinels
+    saveAppData = $saveAppDataStatus
     server50005Reachable = ($tcp50005.ok -and $tcp50005.stdout -match '"ok"\s*:\s*true')
     server10001Reachable = ($tcp10001.ok -and $tcp10001.stdout -match '"ok"\s*:\s*true')
   }
+}
+
+function Invoke-MumuFlowRuntimeGate {
+  param($Context)
+
+  $gate = New-MumuContext -Name "flow-runtime-gate"
+  try {
+    $artifacts = Get-MumuArtifacts -Context $gate
+    $device = Invoke-MumuDeviceGate -Context $gate
+    $status = Get-MumuStatus -Context $gate -Artifacts $artifacts -Device $device
+    if (-not $status.packageInstalled -or -not $status.hostsOk -or -not $status.resourcesOk) {
+      throw "MuMu flow baseline failed: package=$($status.packageInstalled); hosts=$($status.hostsOk); resources=$($status.resourcesOk)"
+    }
+    if (-not $status.server50005Reachable -or -not $status.server10001Reachable) {
+      throw "MuMu flow cannot reach its owned server: port50005=$($status.server50005Reachable); port10001=$($status.server10001Reachable)"
+    }
+    $client = Invoke-MumuVerifyInstalledClient -Context $gate -Artifacts $artifacts
+
+    $size = Invoke-MumuAdbStage -Context $gate -Name "verify-flow-display-size" -Arguments @("shell", "wm", "size") -TimeoutSeconds 10
+    $density = Invoke-MumuAdbStage -Context $gate -Name "verify-flow-display-density" -Arguments @("shell", "wm", "density") -TimeoutSeconds 10
+    if ($size.stdout -notmatch "Physical size:\s*$([regex]::Escape($script:MumuConfig.FlowPhysicalDisplaySize))" -or
+        $density.stdout -notmatch "Physical density:\s*$([regex]::Escape($script:MumuConfig.FlowPhysicalDisplayDensity))" -or
+        $size.stdout -match "Override size:" -or $density.stdout -match "Override density:") {
+      throw "MuMu flow requires the untouched 1440x2560/360dpi physical display with no wm override: size=$($size.stdout.Trim()); density=$($density.stdout.Trim())"
+    }
+
+    $Context.serial = $Serial
+    $Context.coordinateScale = [double]$script:MumuConfig.FlowCoordinateScale
+    $Context.screenshotScale = [double]$script:MumuConfig.FlowCoordinateScale
+    Add-FlowEvent -Context $Context -Type "runtime-mumu-a12-gate" -Data ([ordered]@{
+        serial = $Serial
+        release = $device.release
+        sdk = $device.sdk
+        abi = $device.abi
+        abiList32 = $device.abiList32
+        nativeBridge = $device.nativeBridge
+        primaryCpuAbi = $client.primaryCpuAbi
+        installedLibSha256 = $client.installedLibSha256
+        packageInstalled = $status.packageInstalled
+        hostsOk = $status.hostsOk
+        resourcesOk = $status.resourcesOk
+        server50005Reachable = $status.server50005Reachable
+        server10001Reachable = $status.server10001Reachable
+        physicalDisplaySize = $script:MumuConfig.FlowPhysicalDisplaySize
+        landscapeScreenshotSize = $script:MumuConfig.FlowLandscapeScreenshotSize
+        density = $script:MumuConfig.FlowPhysicalDisplayDensity
+        coordinateScale = $script:MumuConfig.FlowCoordinateScale
+        displayMutation = $false
+      })
+  } catch {
+    Stop-FlowWithFailure -Context $Context -FailureClass "runtime-not-ready" -Step "mumu-a12-runtime-gate" -Message $_.Exception.Message
+  }
+}
+
+# This process-local override is loaded only by the MuMu controller. The ARM19
+# entry keeps the original Invoke-FlowRuntimeGate implementation unchanged.
+function Invoke-FlowRuntimeGate {
+  param($Context)
+  Invoke-MumuFlowRuntimeGate -Context $Context
 }
 
 function Invoke-MumuStartServer {
@@ -574,16 +730,43 @@ function Invoke-MumuSelfCheck {
       throw "Hosts merge did not produce exactly one mapping for $domain."
     }
   }
-  foreach ($path in @($script:MumuConfig.DeviceSaveDir, $script:MumuConfig.RemoteResourcePack, $script:MumuConfig.HostsBackupPath)) {
+  foreach ($path in @(
+      $script:MumuConfig.DeviceSaveDir,
+      $script:MumuConfig.SaveAppDataPath,
+      $script:MumuConfig.SaveAppDataBackupPath,
+      $script:MumuConfig.RemoteResourcePack,
+      $script:MumuConfig.HostsBackupPath
+    )) {
     if (-not $path.StartsWith("/storage/emulated/0/Android/data/com.square_enix.million_cn/") -and -not $path.StartsWith("/data/local/tmp/kssma-") -and -not $path.StartsWith("/system/etc/hosts.kssma-")) {
       throw "Unsafe device mutation path in MuMu config: $path"
     }
   }
-  Add-MumuStage $Context "self-check" ([ordered]@{ ok = $true; elapsedMs = 0; details = "IPv4, hosts idempotence, alias preservation, and exact mutation paths passed." })
-  [ordered]@{ checks = 7; hosts = $merged }
+  if ($script:MumuConfig.FlowPhysicalDisplaySize -ne "1440x2560" -or
+      $script:MumuConfig.FlowPhysicalDisplayDensity -ne "360" -or
+      $script:MumuConfig.FlowCoordinateScale -ne 2.0) {
+    throw "MuMu flow must preserve the native 1440x2560/360dpi display and scale only automation coordinates."
+  }
+  Add-MumuStage $Context "self-check" ([ordered]@{ ok = $true; elapsedMs = 0; details = "IPv4, hosts idempotence, alias preservation, exact mutation paths, and native-display-only flow passed." })
+  [ordered]@{ checks = 8; hosts = $merged; flowPhysicalDisplaySize = $script:MumuConfig.FlowPhysicalDisplaySize; flowPhysicalDisplayDensity = $script:MumuConfig.FlowPhysicalDisplayDensity; flowCoordinateScale = $script:MumuConfig.FlowCoordinateScale }
+}
+
+function Invoke-MumuFlow {
+  # The shared accepted flow predates StrictMode and intentionally reads
+  # optional ADB result properties. Keep the MuMu installer strict, but invoke
+  # the unchanged flow in its original compatibility mode.
+  Set-StrictMode -Off
+  $script:KssmaRuntimeConfig.PrimarySerial = $Serial
+  $script:KssmaRuntimeConfig.ExpectedAbi = "x86_64"
+  $script:KssmaRuntimeConfig.ExpectedRelease = $script:MumuConfig.ExpectedRelease
+  $script:KssmaRuntimeConfig.DisplaySize = $script:MumuConfig.FlowPhysicalDisplaySize
+  $script:KssmaRuntimeConfig.DisplayDensity = $script:MumuConfig.FlowPhysicalDisplayDensity
+  $script:DeviceSaveDir = $script:MumuConfig.DeviceSaveDir
+  $flowTag = if ($Tag) { "mumu-a12-$Tag" } else { "mumu-a12-" + (Get-Date -Format "yyyyMMdd-HHmmss") }
+  Invoke-Flow -Scenario $Scenario -Tag $flowTag
 }
 
 $ctx = New-MumuContext -Name $Command
+$directResult = $null
 try {
   $resultData = switch ($Command) {
     "self-check" { Invoke-MumuSelfCheck -Context $ctx }
@@ -634,14 +817,27 @@ try {
       $device = Invoke-MumuDeviceGate -Context $ctx
       [ordered]@{ device = $device; resources = (Invoke-MumuInstallResources -Context $ctx -Artifacts $artifacts) }
     }
+    "repair-appdata" {
+      $artifacts = Ensure-MumuArtifacts -Context $ctx -ForceRebuild:$Rebuild
+      $device = Invoke-MumuDeviceGate -Context $ctx
+      [ordered]@{ device = $device; saveAppData = (Invoke-MumuRepairSaveAppData -Context $ctx -Artifacts $artifacts) }
+    }
     "launch" {
       $device = Invoke-MumuDeviceGate -Context $ctx
       if ($StartServer) { Invoke-MumuStartServer -Context $ctx }
       [ordered]@{ device = $device; launch = (Invoke-MumuLaunch -Context $ctx) }
     }
+    "flow" {
+      $directResult = Invoke-MumuFlow
+      [ordered]@{}
+    }
   }
-  foreach ($key in $resultData.Keys) { $ctx.data[$key] = $resultData[$key] }
-  $result = Complete-MumuResult -Context $ctx -Ok $true
+  if ($null -ne $directResult) {
+    $result = $directResult
+  } else {
+    foreach ($key in $resultData.Keys) { $ctx.data[$key] = $resultData[$key] }
+    $result = Complete-MumuResult -Context $ctx -Ok $true
+  }
 } catch {
   $ctx.data["error"] = $_.Exception.Message
   $result = Complete-MumuResult -Context $ctx -Ok $false -FailureClass "mumu-a12-deploy-failed" -Message $_.Exception.Message

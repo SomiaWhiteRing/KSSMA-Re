@@ -1180,7 +1180,8 @@ function createFairyBattleSettlement(playerSave, activeFairy, nowMs = Date.now()
     actions,
     rounds,
     playerWon,
-    winner: playerWon ? 0 : 1,
+    // The result scene treats winner as a local-victory flag, not a player_enemy index.
+    winner: playerWon ? 1 : 0,
     playerMaxHp,
     playerRemainingHp: playerHp,
     fairyInitialHp,
@@ -1946,6 +1947,183 @@ const MASTERDATA_SAMPLES = Object.fromEntries(
   ])
 );
 
+const MASTER_CARD_UPDATE_ROUTE = "/connect/app/masterdata/card/update";
+const MASTER_CARD_SOURCE_SHA256 = "7B121DE5626DD3B9820022C698A1FF754F87CAC4B64E563B70138F68B3A56BDF";
+const MASTER_CARD_STRING_FIELDS = [
+  "name",
+  "char_description",
+  "skill_kana",
+  "skill_name",
+  "skill_description",
+  "illustrator",
+];
+const MASTER_CARD_NUMBER_FIELDS = [
+  "cost",
+  "rarity",
+  "extra",
+  "eye_y",
+  "sale_price",
+  "compound_target_id",
+  "compound_result_id",
+  "base_hp",
+  "base_power",
+  "max_lv",
+  "image1_id",
+  "image2_id",
+  "character_id",
+  "evolution_base_price",
+  "data_type",
+  "grow_type",
+];
+const MASTER_CARD_TRAILING_NUMBER_FIELDS = [
+  "skill_type",
+  "form_id",
+  "distinction",
+  "card_version",
+  "attack_type",
+  "lvmax_hp",
+  "lvmax_power",
+  "base_holo_hp",
+  "base_holo_power",
+  "lvmax_holo_hp",
+  "lvmax_holo_power",
+  "max_lv_holo",
+  "compound_type",
+];
+const MASTER_CARD_WIRE_FIELDS = [
+  "master_card_id",
+  "country_id",
+  ...MASTER_CARD_STRING_FIELDS,
+  ...MASTER_CARD_NUMBER_FIELDS,
+  "grow_name",
+  "growth_rate_text",
+  ...MASTER_CARD_TRAILING_NUMBER_FIELDS,
+];
+
+function parseSerializedMasterCards(buffer) {
+  if (!Buffer.isBuffer(buffer) || buffer.length < 8) {
+    throw new Error("master_card sample is missing or too short");
+  }
+  const sourceSha256 = crypto.createHash("sha256").update(buffer).digest("hex").toUpperCase();
+  if (sourceSha256 !== MASTER_CARD_SOURCE_SHA256) {
+    throw new Error(`master_card source SHA-256 changed: ${sourceSha256}`);
+  }
+
+  const count = buffer.readUInt32BE(0);
+  if (count !== 480 || 4 + count * 4 > buffer.length) {
+    throw new Error(`unexpected master_card record count: ${count}`);
+  }
+  const offsets = Array.from({ length: count }, (_, index) => buffer.readUInt32BE(4 + index * 4));
+  if (offsets[0] !== 4 + count * 4 || offsets.some((offset, index) => (
+    offset >= buffer.length || (index > 0 && offset <= offsets[index - 1])
+  ))) {
+    throw new Error("invalid master_card record offsets");
+  }
+
+  const cards = offsets.map((start, index) => {
+    const end = index + 1 < count ? offsets[index + 1] : buffer.length;
+    let position = start;
+    const card = {};
+
+    function readU32() {
+      if (position + 4 > end) {
+        throw new Error(`master_card record ${index + 1} integer exceeds its boundary`);
+      }
+      const value = buffer.readUInt32BE(position);
+      position += 4;
+      return value;
+    }
+
+    function readString() {
+      const length = readU32();
+      if (position + length > end) {
+        throw new Error(`master_card record ${index + 1} string exceeds its boundary`);
+      }
+      const value = buffer.subarray(position, position + length).toString("utf8");
+      position += length;
+      return value;
+    }
+
+    card.master_card_id = readU32();
+    card.country_id = readU32();
+    for (const field of MASTER_CARD_STRING_FIELDS) {
+      card[field] = readString();
+    }
+    for (const field of MASTER_CARD_NUMBER_FIELDS) {
+      card[field] = readU32();
+    }
+    card.grow_name = readString();
+    card.growth_rate_text = readString();
+    for (const field of MASTER_CARD_TRAILING_NUMBER_FIELDS) {
+      card[field] = readU32();
+    }
+    if (position !== end) {
+      throw new Error(`master_card record ${index + 1} was not consumed exactly`);
+    }
+    return card;
+  });
+
+  if (new Set(cards.map((card) => card.master_card_id)).size !== cards.length) {
+    throw new Error("master_card ids are not unique");
+  }
+  return cards;
+}
+
+function createMasterCardUpdateXml(buffer, selectedMasterCardIds = []) {
+  const allCards = parseSerializedMasterCards(buffer);
+  const selectedIds = [...new Set(selectedMasterCardIds.map(Number).filter((value) => Number.isSafeInteger(value) && value > 0))];
+  const selectedSet = new Set(selectedIds);
+  const cards = selectedIds.length > 0
+    ? allCards.filter((card) => selectedSet.has(card.master_card_id))
+    : allCards;
+  if (cards.length !== (selectedIds.length || allCards.length)) {
+    const foundIds = new Set(cards.map((card) => card.master_card_id));
+    throw new Error(`unknown master_card ids requested: ${selectedIds.filter((id) => !foundIds.has(id)).join(",")}`);
+  }
+  const lines = [
+    '<?xml version="1.0" encoding="UTF-8"?>',
+    "<master_data>",
+    "  <master_card_data>",
+    "    <update_type>1</update_type>",
+  ];
+  for (const card of cards) {
+    lines.push("    <card>");
+    for (const field of MASTER_CARD_WIRE_FIELDS) {
+      lines.push(`      <${field}>${escapeXmlText(card[field])}</${field}>`);
+    }
+    lines.push("    </card>");
+  }
+  lines.push("  </master_card_data>", "</master_data>");
+  return {
+    xml: lines.join("\n"),
+    cards,
+    sourceRecordCount: allCards.length,
+    selectedMasterCardIds: selectedIds,
+    sourceSha256: MASTER_CARD_SOURCE_SHA256,
+    updateType: 1,
+  };
+}
+
+const MASTER_CARD_UPDATE = MASTERDATA_SAMPLES[MASTER_CARD_UPDATE_ROUTE]?.bytes
+  ? createMasterCardUpdateXml(MASTERDATA_SAMPLES[MASTER_CARD_UPDATE_ROUTE].bytes)
+  : null;
+
+function getConfiguredMasterCardUpdate() {
+  const raw = (process.env.KSSMA_CARD_UPDATE_IDS || "").trim();
+  if (!raw) {
+    return MASTER_CARD_UPDATE;
+  }
+  if (!/^\d+(?:,\d+)*$/.test(raw)) {
+    throw new Error("KSSMA_CARD_UPDATE_IDS must be a comma-separated list of positive integers");
+  }
+  // ponytail: diagnostic-only bounded payload for distinguishing callback parsing from full-payload rejection.
+  // The default product response remains the complete recovered 480-card update.
+  return createMasterCardUpdateXml(
+    MASTERDATA_SAMPLES[MASTER_CARD_UPDATE_ROUTE]?.bytes,
+    raw.split(",").map(Number)
+  );
+}
+
 function withMainmenuBg(xml, playerSave = createDefaultPlayerSave()) {
   const body = [
     "<body>",
@@ -1962,9 +2140,24 @@ function createLoginMainmenuXml(playerSave = createDefaultPlayerSave()) {
 
 function suppressLoginUpdates(xml) {
   // ponytail: the 140330 save dump is preloaded; advertising newer revisions only wakes a broken CDN pack updater.
-  return xml
+  const suppressed = xml
     .replace(/<(card_rev|boss_rev|item_rev|card_category_rev|gacha_rev|privilege_rev)>\d+<\/\1>/g, "<$1>0</$1>")
     .replace(/<revision>\d+<\/revision>/g, "<revision>0</revision>");
+  const cardRevision = getAdvertisedCardRevision();
+  return cardRevision > 0
+    ? suppressed.replace(/<card_rev>0<\/card_rev>/, `<card_rev>${cardRevision}</card_rev>`)
+    : suppressed;
+}
+
+function getAdvertisedCardRevision() {
+  // ponytail: diagnostic-only escape hatch for replaying the original card-master updater on A12.
+  // It defaults off; promote it only after the native update callback is identified and accepted.
+  const raw = (process.env.KSSMA_CARD_REVISION_OVERRIDE || "").trim();
+  if (!/^\d+$/.test(raw)) {
+    return 0;
+  }
+  const revision = Number(raw);
+  return Number.isSafeInteger(revision) && revision > 0 && revision <= 0x7fffffff ? revision : 0;
 }
 
 function getLoginOkXml(playerSave = createDefaultPlayerSave()) {
@@ -2482,6 +2675,7 @@ function handleRequestFailure(req, res, error) {
 function createServer() {
   const playerSavePath = getPlayerSavePath();
   const runtimeConfigPath = getRuntimeConfigPath();
+  const masterCardUpdate = getConfiguredMasterCardUpdate();
   if ((process.env.KSSMA_EXPLORATION_MOVES_SEED || "").trim()) {
     const seededMoves = applyExplorationSeed(createExplorationMovesFromSave(readPlayerSave(playerSavePath)));
     logRequest("exploration_seed", {
@@ -2496,6 +2690,11 @@ function createServer() {
   logRequest("runtime_config", {
     path: getLogSafePath(runtimeConfigPath),
     source: fs.existsSync(runtimeConfigPath) ? "file" : "default",
+  });
+  logRequest("login_revision_config", {
+    advertisedCardRevision: getAdvertisedCardRevision(),
+    masterCardUpdateRecordCount: masterCardUpdate?.cards.length || 0,
+    selectedMasterCardIds: masterCardUpdate?.selectedMasterCardIds || [],
   });
   const server = http.createServer((req, res) => {
     void (async () => {
@@ -2668,6 +2867,7 @@ function createServer() {
           key: connectAppKey,
           bytes: encrypted.length,
           source: getLoginXmlSource(loginXml),
+          advertisedCardRevision: getAdvertisedCardRevision(),
           mainmenu: getMainmenuInformationForPlayer(playerSave),
         });
         sendBinary(res, 200, encrypted);
@@ -3073,6 +3273,31 @@ function createServer() {
         return;
       }
 
+      if (req.method === "POST" && url.pathname === MASTER_CARD_UPDATE_ROUTE) {
+        if (!masterCardUpdate) {
+          logRequest("connect_app_response_miss", {
+            path: url.pathname,
+            source: MASTERDATA_SAMPLES[url.pathname]?.relativePath || "database/master_card",
+          });
+          return sendText(res, 500, "masterdata sample missing\n");
+        }
+        const encrypted = encryptAes128Ecb(masterCardUpdate.xml, connectAppKey);
+        logRequest("connect_app_response", {
+          path: url.pathname,
+          mode: "aes-128-ecb",
+          key: connectAppKey,
+          bytes: encrypted.length,
+          source: "recovered master-card XML",
+          sourceSha256: masterCardUpdate.sourceSha256,
+          sourceRecordCount: masterCardUpdate.sourceRecordCount,
+          recordCount: masterCardUpdate.cards.length,
+          selectedMasterCardIds: masterCardUpdate.selectedMasterCardIds,
+          updateType: masterCardUpdate.updateType,
+        });
+        sendBinary(res, 200, encrypted);
+        return;
+      }
+
       const masterdataSample = MASTERDATA_SAMPLES[url.pathname];
       if (req.method === "POST" && masterdataSample) {
         if (!masterdataSample.bytes) {
@@ -3154,6 +3379,7 @@ module.exports = {
   createExplorationLockedXml,
   createGachaBuyXml,
   createGachaSelectSkeletonXml,
+  createMasterCardUpdateXml,
   createMenuCardCollectionSkeletonXml,
   createMenuFairySelectSkeletonXml,
   createMenuFriendListSkeletonXml,
@@ -3166,9 +3392,11 @@ module.exports = {
   createTownLvupStatusXml,
   createTownPointsettingXml,
   getMainmenuInformationForPlayer,
+  getAdvertisedCardRevision,
   getLoginOkXml,
   getLoginXmlSource,
   getFairyEncounterSettings,
+  getConfiguredMasterCardUpdate,
   hasLiveFairyEncounter,
   parseConnectAppBody,
   parsePortList,
@@ -3194,6 +3422,10 @@ module.exports = {
   LOGIN_MAINMENU_XML,
   MASTERDATA_ROUTE_FILES,
   MASTERDATA_SAMPLES,
+  MASTER_CARD_UPDATE,
+  MASTER_CARD_UPDATE_ROUTE,
+  MASTER_CARD_SOURCE_SHA256,
+  parseSerializedMasterCards,
   WEB_SCENETO_LOCATION,
   WEB_STUB_HTML,
   readContentFile,

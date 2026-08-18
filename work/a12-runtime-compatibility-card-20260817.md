@@ -126,6 +126,16 @@ ARM19-specific. Before promotion, add an explicit alternate-runtime profile inst
 then reproduce or reject the delayed gacha-select crash on ARM19 and run at least one complete existing gameplay
 scenario with normalized 2560x1440 coordinates and an isolated artifact bundle.
 
+## 2026-08-18 follow-up
+
+The requested isolated profile now exists. The first complete `exploration-walk-smoke` pass used a temporary
+1280x720 display override and is retained only as historical compatibility evidence. The profile now requires the
+untouched physical `1440x2560` / 360 dpi display and scales only host-side automation coordinates. Promotion is
+still rejected: under the native display a fairy battle deterministically aborted after resolving to missing
+`adv_chara0`, and a correctly persisted gacha draw for `masterCardId=9` aborted after resolving to missing
+`thumbnail_chara_0` despite `thumbnail_chara_9` being present. Full evidence, commands, artifacts, and promotion gates are in
+`work/mumu-a12-flow-qualification-card-20260818.md`.
+
 ## Installation automation follow-up
 
 The alternate runtime now has an isolated, hash-verified installer without changing any ARM19 gate. See
