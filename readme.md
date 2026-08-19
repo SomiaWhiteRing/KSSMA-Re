@@ -144,9 +144,21 @@ http://127.0.0.1:50005/admin/
 
 首版后台使用接近原作王城界面的本地样式，可以查看运行状态、探索/卡牌摘要，并修改已经被
 客户端协议验证过的玩家字段：名称、阵营、等级/经验、AP/BC、金币、MC、友情点、扭蛋券和
-持卡上限。“探索妖精”区可单独控制启用状态、遭遇概率、等级、最大 HP、攻击力、存活时限以及
-胜利金币/经验奖励；数值在新妖精生成时快照，不会中途改写已在战斗的实例。探索进度、持卡实例及卡组槽位
-暂时保持只读，避免生成客户端无法消费的不一致存档。
+持卡上限。账号区可以手动创建登录账号、为每个账号建立独立存档，并切换后台当前编辑的账号；
+客户端注册保持关闭，密码仅保存 scrypt 哈希且不会在后台响应或服务端日志中回显。“探索妖精”区可单独
+控制启用状态、遭遇概率、等级、最大 HP、攻击力、存活时限、胜利金币/经验奖励、每个奖励位的掉卡概率、
+加权掉落卡池、每位贡献者奖励位数和击杀者额外奖励位数；数值在新妖精生成时快照，不会中途改写已在战斗的实例。
+“扭蛋产品与卡池”区覆盖友情点单抽、MC 单抽、扭蛋券单抽和 MC 11 连，可分别调整价格与加权卡池。
+卡池每行使用 `master_card_id:权重`，后台会显示归一化百分比并拒绝重复、空池或不存在于 480 张恢复主表的卡牌。
+价格/卡池保存后新请求立即生效，无需重启服务端；产品 ID、货币类型和抽取张数保持协议固定，不在后台开放重映射。
+探索进度、持卡实例及卡组槽位暂时保持只读，避免生成客户端无法消费的不一致存档。状态区会只读显示
+当前账号可见的存活妖精数、待领奖励数以及“当前卡组 COST / 当前 BC”。
+
+账号登录响应会签发账号绑定的 `kssma_session` Cookie。静态恢复证明原客户端所有玩法请求共用同一个
+Java `DefaultHttpClient` 与 `CookieStore`，因此同一客户端会在后续 `/connect/app/*` 请求中自动回传该
+Cookie；服务端按请求解析账号和独立存档，不再依赖来源 IP 或“最近一次登录”的全局账号。两客户端并发
+HTTP 自检已经覆盖不同主界面、独立探索/AP 落盘和非法 Cookie 拒绝。未携带 Cookie 的旧调试请求仍保留
+最近登录账号兼容；两台真实客户端的最终可见协战验收仍需在后台创建第二账号后执行。
 
 默认只有服务端本机可以写入。从局域网其他设备管理时，启动 server 前设置管理令牌，并在
 页面底部输入同一令牌：
@@ -185,11 +197,20 @@ cmd /c install-mumu-a12.cmd self-test
 当前可体验内容：主菜单、角色点击互动/BGM/语音、主按钮入口、Menu 页入口、底部卡组/好友入口、
 探索秘境列表、楼层列表、进入关卡、关卡前进、AP 消耗、进度保存、按顺序开放下一区域、
 完成演出、AP 不足页、普通升级与 AP/BC 分配、返回秘境列表，以及友情点/付费单抽、结果页返回与
-付费再抽、持卡落盘、友情点/MC 消耗和可见卡组编辑入口。普通妖精遭遇与原生 VS/战斗/结果演出已验收；
+付费再抽、持卡落盘、友情点/MC 消耗和可见卡组编辑入口。扭蛋服务端现覆盖友情点单抽、MC 单抽、
+扭蛋券单抽和 MC 11 连：每类拥有独立价格与加权卡池，11 连会一次性预检货币/持卡空间并原子写入 11 张卡；
+友情点与 MC 单抽的既有 ARM19 可见流程保持已验收，新增券抽和 11 连入口/多卡结果仍需客户端 flow 验收。
+普通妖精遭遇与原生 VS/战斗/结果演出已验收；
 动态伤害、金币/经验结算及原子存档也已由 ARM19 实机 `fairy-battle-smoke` 验收。战斗敌方现按
 `master_boss_id` 显示具体妖精贴图，普通妖精死亡后也不会再误播旧的“妖精出现”事件。奖励展示与返回点击
-尚未完整验收；罕见妖精、多人协作、卡牌/因子碎片掉落、奖励箱和原作 BC 扣除/不足契约仍未实现；
-静态协议边界见 `work/fairy-advanced-protocol-survey-card-20260817.md`。
+尚未完整验收。妖精战斗现在按当前卡组各卡牌 COST 总和原子扣除 BC，默认卡组实机已验证 `25 -> 15`；
+BC 不足会在服务端拒绝且不改写妖精/奖励/胜负，但客户端原有的无 BC 提示入口仍需恢复。罕见妖精、
+因子碎片掉落仍未实现。服务端现已实现单账号最多一只存活妖精、失败后继续挂载并抑制新遭遇、
+所有实际攻击者的贡献记录、好友顺序协战、击杀后按奖励位独立判定的掉卡概率、加权卡池、击杀额外奖励位，
+以及奖励箱的幂等领取。没有命中掉率的奖励位不会创建空奖励；同一贡献者命中的相同卡牌会合并为一条奖励箱通知。
+`menu/fairyselect -> exploration/fairy_floor` 和奖励箱 XML 使用已静态闭合的原生 parser 结构；这些好友/领奖
+页面还需单独做客户端 flow 可见验收，不能只凭服务端 200 宣布完成。证据见
+`work/fairy-battle-bc-card-20260819.md` 和 `work/fairy-shared-raid-account-path-card-20260819.md`。
 
 卡组入口 D1、队长模式 D2 和单卡内存编辑 D4 已验收：`/roundtable/edit move=1` 进入 scene `83200` 的 DeckScene，点击
 队长控件会在 server quiet 状态下进入本地 `change_mode_leader_select`；scene `10100` 只是圆桌查看页。
@@ -203,7 +224,8 @@ push 一个不识别 `save_deck_card` 的新 DeckScene。`next_scene == 0` 到�
 均一致。因此保留 120 秒等待，不改 runtime；下一轮只恢复一次 D5.6 无 `next_scene` response-only 实验，
 不落盘。该唯一重放的精确响应在 165ms 后触发了 `/connect/app/mainmenu`，违反计划要求的三秒 route
 quiet；artifact save 仍逐字节不变。实验已撤回，当前保持 D5 capture-only 并冻结 D6。扭蛋失败契约 G1
-也因 generic error model 到可见 dialog scene 的 push 边未闭合而停止，G2-G4 未实现。
+仍因 generic error model 到可见 dialog scene 的 push 边未闭合；服务端已经在任何写入前拒绝余额不足、
+卡位不足和非法产品，但尚不能声称原客户端会显示正确失败弹窗。
 
 ## 开发验收入口
 
@@ -295,6 +317,8 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\work\kssma-mumu-a12.ps1 de
   `dlc.game-CBT.ma.sdo.com` 指向 `10.0.2.2`；
 - 将完整静态资源包安装到应用外部存储，并逐文件校验；已有
   `appdata/save_appdata` 玩家存档不会进入资源包，也不会被删除；
+- 在每次控制器启动客户端前停止旧进程，补回并校验会被客户端消费的精确
+  `database/master_card` 卡表种子；
 - 可选启动双端口本地服务、拉起客户端，并在 10 秒存活检查后保存截图。
 
 第一次准备资源和 APK，或需要明确重建全部安装产物时运行：
@@ -311,8 +335,13 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\work\kssma-mumu-a12.ps1 st
 powershell -NoProfile -ExecutionPolicy Bypass -File .\work\kssma-mumu-a12.ps1 install-client
 powershell -NoProfile -ExecutionPolicy Bypass -File .\work\kssma-mumu-a12.ps1 ensure-hosts
 powershell -NoProfile -ExecutionPolicy Bypass -File .\work\kssma-mumu-a12.ps1 install-resources
+powershell -NoProfile -ExecutionPolicy Bypass -File .\work\kssma-mumu-a12.ps1 repair-master-card
 powershell -NoProfile -ExecutionPolicy Bypass -File .\work\kssma-mumu-a12.ps1 launch -StartServer
 ```
+
+`launch`、`install-client` 和 MuMu flow 都会自动执行卡表补种；`repair-master-card` 用于希望随后由玩家
+手动点图标启动的情况，它会先停止游戏并只准备卡表，不会替玩家点击。直接从 MuMu 桌面启动、但没有先走
+上述任一入口时，控制器无法介入第三方 Activity 启动，因此不保证补种。
 
 MuMu 也有隔离的兼容性 flow 入口，可复用现有场景做定向调查：
 
@@ -334,10 +363,10 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\work\kssma-mumu-a12.ps1 re
 生成的约 499 MiB TAR、校验表和 manifest 位于 `work\mumu-a12-package\`，均可由脚本重新生成，
 无需手工解包或逐文件 `adb push`。MuMu Android 12 曾在临时显示 override 下通过普通探索行走；
 该历史结果不能作为原生分辨率验收。原生显示下的路由/点击适配已能进入抽卡和妖精战斗请求，
-但 A12 尚不能替代 ARM19。扭蛋结算在
-服务端正确保存 `masterCardId=9` 后，客户端错误请求缺失的 `thumbnail_chara_0` 并被 Android 12
-严格 JNI 以 `SIGABRT` 终止；妖精事件也发现 `adv_chara0` 的同类确定性崩溃。此前约 269 秒的
-扭蛋选择页 reward-box 路径崩溃仍待复核。完整证据和晋级条件见
+但 A12 尚不能替代 ARM19。妖精事件的 `adv_chara0` 已由精确 `master_card` 冷启动补种修复，真人验收
+能够完成战斗和结算；该补种现已固化到安装、启动与 MuMu flow gate。扭蛋结算的
+`thumbnail_chara_0` 需要在新启动基线下重新验收，此前约 269 秒的扭蛋选择页 reward-box 路径崩溃也仍待
+复核。完整证据和晋级条件见
 `work/mumu-a12-flow-qualification-card-20260818.md`。
 
 ## ARM19 运行时

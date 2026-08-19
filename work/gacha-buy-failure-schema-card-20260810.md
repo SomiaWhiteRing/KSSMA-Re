@@ -219,3 +219,14 @@ caller that invokes `LayoutScene::showDialog` or `_SceneControl::push(90100)` af
 `_DialogModel::initDialog`; only a closed producer edge can promote the XML above from parser candidate to
 an evidence-backed failure fixture.
 
+## 2026-08-19 Superseding Static Closure
+
+The hard gap above is retained as history but is no longer the current static conclusion. The stock network-error
+branch inside the same `_Main::connect` function proves the missing producer pattern:
+`_Main::getSceneControl -> _SceneControl::push(90100)`. The generic code-1 block has a stable insertion point
+immediately after `DialogModel::initDialog` at `0x001c3ba8`. The bounded candidate restores only that code-1 edge,
+then returns to stock special-code checks. See
+`work/gacha-buy-original-balance-dialog-path-card-20260819.md` and
+`work/build-gacha-business-error-dialog.py`. Visible client acceptance remains pending; this is not yet a promoted
+baseline.
+

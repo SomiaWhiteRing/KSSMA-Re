@@ -42,8 +42,8 @@ $script:ClientBaselineDir = Join-Path $PSScriptRoot "client-baseline"
 $script:ClientBaselineApkPath = Join-Path $script:ClientBaselineDir "KSSMA-Re-client-baseline.apk"
 $script:ClientBaselineManifestPath = Join-Path $script:ClientBaselineDir "client-baseline.json"
 $script:ClientBaselineBuilderPath = Join-Path $PSScriptRoot "build-client-baseline.py"
-$script:ExplorationAcceptedLibPath = Join-Path $PSScriptRoot "librooneyj-gacha-cardget-inner-touch-nullguard.so"
-$script:ExplorationAcceptedLibSha256 = "DEC36585CA0129AA19E68CC53898D95DE41067AA5D380B23218F3E88273CD40F"
+$script:ExplorationAcceptedLibPath = Join-Path $PSScriptRoot "librooneyj-gacha-business-error-dialog.so"
+$script:ExplorationAcceptedLibSha256 = "36A4826BD42BCF203B51D0344AF5A1B479B961BD26DDB4685DD01A8B325B69A2"
 
 function New-RuntimeContext {
   param([string]$Command)

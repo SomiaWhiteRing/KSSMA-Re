@@ -117,11 +117,6 @@
     "likes": []
   },
   "gacha": {
-    "friendshipCost": 200,
-    "paidCostMc": 300,
-    "firstPaidCostMc": 100,
-    "elevenPullCostMc": 3000,
-    "paidBonusNeeded": 5,
     "history": []
   },
   "exploration": {

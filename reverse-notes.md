@@ -10,11 +10,11 @@ notes are archived at
 - Unique installable client baseline: `work/client-baseline/KSSMA-Re-client-baseline.apk`.
 - Client baseline manifest: `work/client-baseline/client-baseline.json`.
 - Current accepted native lib inside the client baseline:
-  `work/librooneyj-gacha-cardget-inner-touch-nullguard.so`
-  (`DEC36585CA0129AA19E68CC53898D95DE41067AA5D380B23218F3E88273CD40F`). It contains the accepted
-  exploration hierarchy fixes plus the accepted gacha result-page card-get touch guard.
+  `work/librooneyj-gacha-business-error-dialog.so`
+  (`36A4826BD42BCF203B51D0344AF5A1B479B961BD26DDB4685DD01A8B325B69A2`). It contains the accepted
+  exploration hierarchy fixes, gacha result-page card-get touch guard, and generic code-1 business-dialog producer.
 - Current baseline APK SHA-256:
-  `503EF202CAEDABE8D34C44765D4E8FA448964CDDA4D95900F740B8C64C9138C7`.
+  `E8723F5438AFC6D39F4E0913159D2EE7B3BC4F097BD2F5A1E48DE31687C2DCC3`.
 - Resource dump: `base/com.square_enix.million_cn-140330.zip`.
 - Decompiled output and working assets: `work/million_cn/`.
 - Runtime target: Android `4.4.2` / API 19 / `armeabi-v7a` classic ARM emulator.
@@ -35,6 +35,11 @@ notes are archived at
   `play.cmd` is only a compatibility instruction page.
 - Server self-check:
   `node .\server\test-bootstrap-server.js`.
+- Current configurable reward/product data:
+  `server/data/server/runtime-config.json` owns the fairy per-slot drop percentage and weighted reward pool;
+  `server/data/game/gacha.json` owns four fixed product modes (friendship single, MC single, ticket single, MC 11-draw)
+  with editable costs and weighted pools. The admin at `/admin/` edits these values atomically and reloads them for
+  new encounters/purchases without a Node restart.
 
 ## Flow Discipline
 
@@ -73,6 +78,48 @@ notes are archived at
   The adopted closed-mouth defaults are user-selected from that sheet:
   `111_2_4`, `117_1_4`, and `120_1_8`.
 - Do not reopen main menu black background, face black, BGM, voice, or tapped dialogue-box work without a new resource-miss log, native texture crash, or regression screenshot.
+- Main-menu fairy/reward notification server path was restored on 2026-08-19. Static recovery closes
+  `_YourDataTagParser::fairy_appearance -> _YourDataTagData+0x38 -> _CPlayer+0x84 ->
+  _AnmStatusFairyAppearance`, while `_MainMenuTagParser::rewards` remains the separate reward-box count.
+  Login, `/mainmenu/update`, and `/mainmenu` now compute a per-account snapshot from the shared raid registry:
+  any enabled account's visible live raid emits `<your_data><fairy_appearance>1`; pending contributor rewards emit
+  `<mainmenu><rewards>N`. The HTTP/decrypt self-check seeds a live friend raid, observes
+  `fairyAppearance=1/activeRaidCount=1`, then clears it and observes zero. After a controlled server restart,
+  the current LAN database produced an actual encrypted/decrypted `/mainmenu/update` HTTP response with
+  `fairy_appearance=1`, `activeRaidCount=1`, `rewards=0`; `/menu/fairyselect` then returned scene 29200 and live
+  serial 100018. Command: `node .\server\test-bootstrap-server.js` (pass). Full client acceptance is still the visible top-left status plus
+  a tap emitting `/connect/app/menu/fairyselect`; do not describe the UI edge as accepted before that observable.
+  Path card: `work/mainmenu-fairy-notification-path-card-20260819.md`.
+- The user accepted the main-menu fairy notification and list/detail/battle edges on 2026-08-19: the main menu visibly
+  showed `妖精出现中`, tapping it opened the live fairy list, and serial 100018 rendered as
+  `LonelyZero / 小龙女 Lv.1`. The initial row was history-only because `<put_down>` was zero; native recovery proved
+  `_FairySelect::update` calls `fairyFloor` only for `put_down=1`. After that server fix, the user confirmed that the
+  fairy detail page and battle both open correctly. The first accepted-detail run nevertheless exposed a distinct
+  stack/settlement defect: `/menu/fairyselect -> /exploration/fairy_floor` responded with `next_scene=6200`, and a
+  losing `/exploration/fairybattle` incorrectly returned `event_type=18`; the client therefore entered through
+  exploration and emitted `/exploration/get_floor(area_id=3,floor_id=4)` after settlement. Static scene recovery
+  closes the correct direct path as scene 29200 -> 6202, with loss event 10 retaining the updated live-fairy detail
+  and victory event 18 returning to the suspended fairy list. A fresh serial 100019 replay then isolated a second
+  direct-entry defect: `/menu/fairyselect -> /exploration/fairy_floor` reached scene 6202 but displayed only
+  `adv_avalon_attack` plus battle BGM. Server logs showed a successful response and no later route for 99 seconds;
+  A12 kept `RooneyJActivity` resumed and logcat had no native fatal, missing texture, or Java exception. Static native
+  recovery proved event 1 is the exploration-only discovery behavior which locally transitions to scene 6202 again,
+  whereas event 11 dispatches `fairy_stay`; `layout_exploration_fairy.xml` uses `fairy_stay` to reveal the fairy,
+  status, BC/AP, battle, compound, and back controls in the already-active scene. The menu `fairy_floor` response now
+  emits `next_scene=6202 + event_type=11`; post-battle loss 10 and victory 18 are unchanged. The HTTP/decrypt self-check
+  covers this direct-entry mapping plus loss/remaining-fairy and victory/list settlement. After restart, a real encrypted
+  request to the live server for serial 100019 decrypted to HTTP 200, `next_scene=6202`, the requested serial, and
+  `event_type=11`; PID 476 was healthy on both 50005 and 10001. Client visual acceptance of event 11 and the two
+  settlement return targets remains pending. Path card:
+  `work/fairy-shared-raid-account-path-card-20260819.md`.
+- Main-menu displayed level now uses the authoritative player progression level. The live save was
+  `profile.level=6/profile.townLevel=1`; `renderYourDataXml` previously serialized the stale `townLevel`, causing
+  visible `LV1`, although level gain and admin writes consistently update `profile.level`. The original bundled
+  battle fixture independently has `town_level=6` and `rank=2`, so `town_level` and `rank` are not aliases. Only
+  `town_level` was changed to `profile.level`; rank semantics remain a separate recovery domain. After restart,
+  decrypted live `/connect/app/mainmenu` returned `name=LonelyZero,town_level=6,rank=6,next_scene=2100`, and the full
+  server self-check passed. Client UI acceptance requires refreshing the main-menu model. Path card:
+  `work/mainmenu-player-level-path-card-20260819.md`.
 
 Archive: `docs/reverse-archive/startup-mainmenu-20260624-20260625.md`.
 
@@ -130,9 +177,11 @@ Archive: `docs/reverse-archive/startup-mainmenu-20260624-20260625.md`.
   and `work/kssma-mumu-a12-last-launch.png` showed the main menu. The first replay's final evidence step failed
   only because local `$pid` collided with PowerShell's read-only `$PID`; installation and full resource hashing
   had already passed, and the variable was corrected to `$gamePid`. Do not use `database/master_card` as a
-  persistent sentinel because the client removes it after loading, and do not use MuMu's unsupported `nc -z`;
-  the accepted probes are `database/master_boss` and device-side `curl /healthz`. This accepts installation,
-  not the unresolved delayed gacha-select crash or full gameplay on A12. Evidence:
+  persistent sentinel because the client can consume it after loading; it is now a separately verified
+  stopped-process launch seed for `install-client`, `launch`, and the isolated A12 flow gate. Do not use MuMu's
+  unsupported `nc -z`; the accepted persistent probes are `database/master_boss` and device-side `curl /healthz`.
+  This accepts installation and repeatable controller-owned card initialization, not the unresolved delayed
+  gacha-select crash or full gameplay on A12. Evidence:
   `work/mumu-a12-deployment-card-20260817.md`.
 - MuMu A12 now has an isolated automated-flow entry:
   `powershell -NoProfile -ExecutionPolicy Bypass -File .\work\kssma-mumu-a12.ps1 flow -Scenario <name> -Tag <tag>`.
@@ -156,9 +205,9 @@ Archive: `docs/reverse-archive/startup-mainmenu-20260624-20260625.md`.
   Evidence: `work/mumu-a12-flow-qualification-card-20260818.md`,
   `work/kssma-flow-exploration-walk-smoke-mumu-a12-qualification-exploration-walk`, and
   `work/kssma-flow-gacha-settlement-deck-smoke-mumu-a12-qualification-gacha-settlement-2`.
-- Native-display diagnosis on 2026-08-18 falsified both display scaling and consumed `master_card` restoration as
-  causes of the zero-ID failures. `gacha-settlement-deck-smoke` at untouched 1440x2560/360 restored the original
-  260249-byte `database/master_card`, received and persisted master card 9, then still requested
+- Native-display diagnosis on 2026-08-18 falsified display scaling and that run's card-file copy timing as fixes for
+  gacha. `gacha-settlement-deck-smoke` at untouched 1440x2560/360 copied the original 260249-byte
+  `database/master_card`, received and persisted master card 9, then still requested
   `thumbnail_chara_0` and strict-JNI aborted. `fairy-battle-smoke` reached the exact fairybattle request; the server
   settled `playerWon=true`, `winner=0`, fairy HP 6000 -> 0, player HP 5620 -> 4620, Gold 18 -> 795 and EXP 3 -> 7,
   but the A12 client requested `adv_chara0` and aborted before rendering any battle/result screen. Later timed
@@ -166,7 +215,9 @@ Archive: `docs/reverse-archive/startup-mainmenu-20260624-20260625.md`.
   `work/kssma-flow-gacha-settlement-deck-smoke-mumu-a12-native-resolution-master-card` and
   `work/kssma-flow-fairy-battle-smoke-mumu-a12-native-resolution-settlement-diagnosis`. The original bundled
   `local_battle_result.xml` has local `player_enemy=0` losing and `winner=1`; this once suggested that `winner` was
-  a player index, but the inference remained conditional on a visible client result and is superseded below.
+  a player index, but the inference remained conditional on a visible client result and is superseded below. A
+  later exact stopped-process/pre-start restore removed the fairy `adv_chara0` blocker, so this earlier result must
+  not be generalized into rejection of the serialized cache as a launch input.
 - A user-driven native-display A12 battle on 2026-08-18 reached
   `/exploration/fairybattle(user_id=1,serial_id=100007)` and the server atomically settled a local victory
   (`winner=0`, fairy HP `9660 -> 0`, player HP `5620 -> 3220`, Gold `2575 -> 2875`, EXP `42 -> 47`). The client
@@ -308,11 +359,20 @@ Accepted native patches/builders:
 - Gacha card-get result-page touch guard accepted:
   - builder: `work/build-gacha-cardget-inner-touch-nullguard.py`
   - source baseline: `work/librooneyj-exploration-area-return-rerequest.so`
-  - output/current client-baseline lib: `work/librooneyj-gacha-cardget-inner-touch-nullguard.so`
+  - output/source of the current client-baseline lib: `work/librooneyj-gacha-cardget-inner-touch-nullguard.so`
   - SHA-256: `DEC36585CA0129AA19E68CC53898D95DE41067AA5D380B23218F3E88273CD40F`
   - branch map: `_AnmCmnCardGetWindow::getSelected` entry `0x00258b68 -> 0x003e7f60`
   - scope: only the card-get/bonus-card window touch child is null-guarded; the broader
     `_AnmTouchScreen::getSelected` global guard is not accepted into the baseline.
+- Gacha generic business-error dialog producer accepted:
+  - builder: `work/build-gacha-business-error-dialog.py`
+  - source baseline: `work/librooneyj-gacha-cardget-inner-touch-nullguard.so`
+  - output/current client-baseline lib: `work/librooneyj-gacha-business-error-dialog.so`
+  - SHA-256: `36A4826BD42BCF203B51D0344AF5A1B479B961BD26DDB4685DD01A8B325B69A2`
+  - branch map: `_Main::connect` `0x001c3ba8 -> 0x003e7fa0 -> 0x001c3bae`; only error code `1`
+    acquires `_Main`'s scene control and pushes stock `dialog_scene=90100`.
+  - accepted A12 screenshots: `work/gacha-business-error-dialog-visible-a12-20260819.png` and
+    `work/gacha-business-error-dialog-dismissed-a12-20260819.png`.
 
 Accepted server handlers:
 
@@ -320,6 +380,7 @@ Accepted server handlers:
 - `/connect/app/exploration/floor`
 - `/connect/app/exploration/get_floor`
 - `/connect/app/exploration/explore`
+- `/connect/app/exploration/fairybattle` (funded success path; insufficient-BC client presentation remains open)
 - `/connect/app/mainmenu`
 
 Schema/value cards:
@@ -352,11 +413,19 @@ Archives:
 
 - Flow-first runtime acceptance is now the default project path. Use:
   `powershell -NoProfile -ExecutionPolicy Bypass -File .\work\kssma-runtime.ps1 flow -Scenario exploration-smoke`.
-  ARM19 remains the only complete acceptance runtime. MuMu A12's isolated flow can pass ordinary exploration, but
-  its fairy/card-result zero-ID resource fatals currently reject promotion; see
+  ARM19 remains the only complete acceptance runtime. MuMu A12's isolated flow can pass ordinary exploration, and
+  controller-owned cold starts now fix the fairy `adv_chara0` edge; gacha result under the new seed boundary and
+  the older delayed reward-box crash remain promotion blockers. See
   `work/mumu-a12-flow-qualification-card-20260818.md`.
-- Gacha and deck builder remain accepted/in-progress product lines, but the user's current priority temporarily moves
-  the active product frontier to fairy post-result refresh, BC, drops, reward box, rare fairies, and LAN co-operation.
+- Gacha, weighted fairy rewards, and deck builder are active/in-progress product lines. The server-side single-live-raid,
+  loss mounting, attacker contribution, probabilistic weighted card rewards, idempotent claim, manual multi-account baseline, and main-menu
+  `fairy_appearance/rewards` publication now pass deterministic two-account and HTTP/decrypt self-checks. The visible
+  `mainmenu live-fairy status -> menu/fairyselect -> fairy list` edge is user-accepted. A fresh direct-entry replay
+  exposed and statically closed the blank 6202 scene as `event_type 1 -> 11`; the immediate client edge is visual
+  acceptance of that `fairy_stay` detail, then proving `loss -> fairy detail` and `victory -> fairy list`, followed by
+  friend attack and visible reward-box claim. Per-client account identity is now closed at the server/transport layer:
+  login issues a signed `kssma_session` Cookie and the stock Java `DefaultHttpClient/CookieStore` automatically
+  replays it. Two-account concurrent HTTP/read-write isolation passes; two-real-client visible co-op remains pending.
   Do not reopen accepted main-menu black-screen, face,
   background, BGM, voice, tapped subtitle, main-button, Menu-page, bottom deck, or bottom friends work without
   new resource-miss, crash, route regression, or screenshot regression evidence.
@@ -380,9 +449,14 @@ Archives:
   - `work/build-gacha-cardget-touch-nullguard.py` guarded only the outer smart pointer and did not fix the crash.
   - `work/build-gacha-touchscreen-nullthis-guard.py` passed once, but it is a broad global guard and is not
     accepted into the baseline.
-- Gacha result-page back, paid retry, card persistence, and friendship-point/MC spending are accepted. Remaining
-  gacha work is original select-list/page evidence and explicit rejection of invalid product, insufficient balance,
-  and unsupported bulk requests; keep random pools, 11-pull, comp rewards, and album completion out of scope.
+- Gacha result-page back, paid retry, card persistence, and friendship-point/MC spending are accepted. The 2026-08-19
+  server/admin baseline adds independently weighted pools for friendship single, MC single, ticket single, and MC
+  11-draw products. Settlement preflights currency and capacity, then writes all result cards atomically; invalid
+  products and insufficient balances fail closed without a partial save. Ticket/11-draw visible entry and repeated
+  result rendering still require client flow acceptance. The client-visible G1 balance-error dialog is now accepted;
+  comp-sheet rewards, holographic rate, and album completion remain open. Path cards:
+  `work/fairy-gacha-pool-path-card-20260819.md` and
+  `work/gacha-buy-original-balance-dialog-path-card-20260819.md`.
 - Gacha-triggered server exit is fixed at the transport boundary. A truncated
   `POST /connect/app/gacha/select/getcontents` reproduced Node 24's uncaught `Error: aborted / ECONNRESET` because
   the async HTTP handler Promise was not observed. `createServer` now catches every request Promise, logs
@@ -451,6 +525,35 @@ Archives:
   sibling `rare_fairy` parser shape, and the shared-fairy selection/floor/history/lose plus attacker-history routes.
   It also proves reward-box type 1 is card and type 2 is item; types 3..6 are not yet semantically closed. No product
   response or runtime data was changed by this static round.
+- Shared-fairy/account server baseline is implemented; path and evidence are indexed by
+  `work/fairy-shared-raid-account-path-card-20260819.md`. One active raid is authoritative per discoverer; a losing
+  attack records contribution and keeps the raid mounted, which suppresses later exploration encounters. Any enabled
+  local account can sequentially select and attack the raid; defeat creates pending type-1 card rewards only for
+  recorded attackers, baseline `master_card_id=600 x1`, with finisher `+1`. Claims are idempotent through the player
+  save's claimed-id ledger. The admin is the only account-creation path, creates independent saves and scrypt password
+  records, exposes account selection plus reward card/count controls, and does not return credentials/hashes.
+  `node .\server\test-bootstrap-server.js` passes the two-account loss/assist/claim/replay sequence. MuMu A12 artifact
+  `work/kssma-flow-fairy-battle-smoke-mumu-a12-shared-raid-single-account-regression-r2` passes the accepted real-client
+  edge `explore -> fairybattle -> get_floor`; its isolated shared ledger records raid 100001 defeated, contributor 1 as
+  finisher, and pending card 600 x2. This only accepts regression of the existing single-account edge: the client-visible
+  earlier `menu/fairyselect -> exploration/fairy_floor -> fairy detail -> battle` edge was user-accepted through the
+  exploration-style stack. The corrected direct 6202 stack initially blanked because menu `fairy_floor` incorrectly
+  reused discovery event 1; static recovery changed it to `fairy_stay` event 11. Visual acceptance of that direct detail,
+  corrected loss/detail and victory/list return targets, and reward-box claim remain pending. Captures prove gameplay
+  request bodies after login have no session/account field and MuMu NAT presents every connection as 127.0.0.1;
+  identity must not be inferred from either. Static DEX recovery then found the missing accepted carrier outside the
+  encrypted body: `AsyncTaskRunner.connectPost -> com/test/b.run -> HttpUtil.connectPost` reuses one static
+  `DefaultHttpClient` per process, sends through `DefaultHttpClient.execute`, and explicitly enumerates its
+  `CookieStore` after requests. The server now signs an account/time/nonce token from the account password hash and
+  local protocol key, returns it as HttpOnly `kssma_session` on login, and resolves every later request to a local
+  account/save path; malformed, expired, disabled-account, and bad-signature cookies fail closed. No-cookie direct
+  protocol fixtures retain a documented last-login compatibility fallback. `node .\server\test-bootstrap-server.js`
+  passes two distinct login cookies, concurrent mainmenu identity (`局域网亚瑟` vs `协力亚瑟`), concurrent explore
+  writes (AP `9->8` and `14->13`, one independent move each), and bad-signature 401 with byte-identical saves. After
+  final live restart was fingerprint-clean and healthy on both ports; a real encrypted account-1 login returned the Cookie and the
+  Cookie-authenticated `/mainmenu` returned HTTP 200/name `Yukie`, with a redacted session log identifying user 1.
+  This retires the planned per-route native body patch; two physical client processes and visible friend attack remain
+  the final acceptance edge. Path card: `work/multi-client-session-path-card-20260819.md`.
 - 2026-08-17 regression: `work/kssma-runtime-flow.ps1 -SelfTest` and `git diff --check` passed. The first bare
   `node server/test-bootstrap-server.js` invocation stopped at its child `python` with Windows status `9009` because
   this PowerShell session had no Python on `PATH`; rerunning the identical test with
@@ -998,7 +1101,7 @@ Archives:
   observable, but the bounded hypothesis required zero follow-up routes, so it is rejected rather than
   reinterpreted. The response-only server/strict-flow experiment is removed again, D5 capture-only remains the
   product baseline, and D6 persistence is frozen. Do not relax the gate or try another XML in this round.
-- Gacha G1 stopped at its required native evidence gate; details are in
+- Historical Gacha G1 stop (superseded by the accepted 2026-08-19 producer-edge restoration); details are in
   `work/gacha-buy-failure-schema-card-20260810.md`. Parser-minimum header error data and `code=1` reaching the generic
   `_Main::connect` type-2 DialogModel branch are closed, as are the dialog scene's eventual tap/pop semantics once
   such a scene exists. The missing production edge is the call from that generic error branch to
@@ -1046,6 +1149,28 @@ Archives:
   `<winner>0</winner>` visibly rendered `YOU LOSE`. Therefore the result scene treats `winner` as a local-result
   flag: `1=local victory`, `0=local defeat`. The server mapping, API assertions, flow fixture/gate, and settlement
   schema are updated together; gameplay rewards and persisted win/loss calculation remain driven by `playerWon`.
+  The user then confirmed the corrected replay as “战斗正常、结算正常”.
+- Fairy battle BC debit is accepted on the funded success path. Contemporary deck guides and the recovered
+  480-card master table close the local rule as the sum of the active deck's card COST values. The server now checks
+  before mutation and commits BC, battle, reward, fairy state, counters, and history through the same atomic save;
+  the default card `22` costs `10`. MuMu A12 `fairy-battle-smoke / mumu-a12-bc-deduction-acceptance` passed in
+  `139006 ms`: response, header, saved BC, and history all agree on `25 -> 15`, active fairy became null, the client
+  showed `YOU WIN`, returned to exploration with a visible `15/25` BC gauge, continued to
+  `/exploration/get_floor`, and server stderr/fatal scan were clean. Server self-check also proves
+  `9/10` returns fail-closed HTTP 409 without changing BC, active fairy HP, wins, or history. This 409 is only a
+  trust-boundary guard: the client resource contains the correct `*_no_bc` behaviors, but accepted native
+  `BcCheck/BcCheck2` always select `*_max_bc` and `isBcFull()` returns true. The visible shortage path remains the
+  next native frontier; do not invent error XML. Evidence: `work/fairy-battle-bc-card-20260819.md`.
+- The exact pre-start cache that let serial 100013 cross `adv_chara0` is now a repeatable MuMu A12 controller
+  contract. Resource manifest schema 2 pins 260,249 bytes and SHA-256
+  `7B121DE5626DD3B9820022C698A1FF754F87CAC4B64E563B70138F68B3A56BDF`; `install-client`, `launch`, and the A12
+  flow gate stop the process, restore only a missing/different target, verify it, and only then permit startup.
+  A real missing-file fault injection made normal `launch -StartServer` report `restored=true`, then PID 3012
+  remained in `RooneyJActivity`, the normal main menu screenshot rendered, and logcat had no zero-card texture or
+  fatal signal. The test backup was removed after equal-hash verification. `status` still ignores the consumable
+  file and uses persistent sentinels. Direct MuMu icon launches remain outside controller protection; use
+  `repair-master-card` first when manual icon startup is required. Evidence:
+  `work/mumu-a12-master-card-launch-seed-card-20260819.md`.
 
 ## Fresh-clone startup asset closure
 
@@ -1093,6 +1218,92 @@ Archives:
 - Deployment result: with no package initially installed, `ensure-client-baseline` completed the package-missing install and matched installed/source native SHA-256 `DEC36585...CD40F`; `preload-full` pushed 6895 files / 517055607 bytes; hosts, mounts, 1280x720/240 dpi, audio, and package baseline passed. A screenshot from this clean AVD shows the expected Mode Select page, proving no saved account/AVD state was inherited.
 - Separate non-runtime frontier: `exploration-smoke` reached Mode Select, World Select, and LoginActivity but its ADB text driver timed out with only `1` in the phone field and no password. Two bounded runs produced no login route, so the attempted batching change was removed. Do not reinterpret this login-automation failure as an ARM19 cold-start failure.
 - Conclusion: the off-book AVD/cache runtime blocker is resolved. The README deployment reaches a healthy, fully provisioned, visible fresh client from isolated downloaded inputs; automatic first-login driving remains a separate flow-helper issue.
+
+## 2026-08-19 Fairy Drop And Gacha Pool Round
+
+- Hypothesis: the accepted fairy reward-box and gacha result parsers can retain their XML/client paths while server
+  settlement changes from one fixed card to snapshotted weighted pools.
+- Changed one product variable: reward selection/settlement data. Fairy reward slots now roll an admin-controlled
+  `0..100` drop percentage and then a snapshotted weighted card pool; gacha products 1/2/3/4 use fixed
+  friendship-single/MC-single/ticket-single/MC-11-draw metadata with admin-controlled price and per-product pool.
+- Observable/checks: `node .\server\test-bootstrap-server.js` passed deterministic weight-boundary, no-drop,
+  contributor/finisher, four-currency/product, 11-serial, capacity/insufficient rollback, admin atomic-write, formal
+  data, generated inline-script, encrypted HTTP, and gacha layout checks. `flow -Scenario self-check -Tag
+  gacha-pool-selfcheck` passed and now asserts random results against the configured pool instead of master card 9.
+  A live `/admin/` browser load rendered four product panels, the 70% fairy drop control, normalized pool text, and
+  no console errors. The restarted manual server listens on both 50005 and 10001.
+- Conclusion: server/admin behavior is accepted for this round; historical rates are not claimed. Existing live
+  raids retain their old snapshot. New ticket and 11-draw client entry/result edges, and the visible insufficient
+  balance dialog, remain client/native frontiers. Evidence: `work/fairy-gacha-pool-path-card-20260819.md`; flow
+  artifact: `work/kssma-flow-self-check-gacha-pool-selfcheck/summary.json`.
+- Final self-check exposed one account-session text-malleability edge: changing the final Base64URL character can
+  sometimes decode to the same HMAC bytes because unused trailing bits are ignored. Session verification now rejects
+  non-canonical Base64URL before timing-safe HMAC comparison; the full self-check then passed with the tampered Cookie
+  returning 401 and neither account save changing.
+
+## 2026-08-19 Gacha Insufficient-Balance Network-Dialog Round
+
+- Hypothesis: the reported network dialog is not a transport outage; the live friendship draw reached
+  `/connect/app/gacha/buy(product_id=1)` with `friendshipPoint=0`, settlement raised
+  `GACHA_INSUFFICIENT_BALANCE` for the configured 200-point cost, and the common exception handler returned
+  undecryptable plain-text HTTP 500.
+- Observed result: live logs closed that exact chain while exploration and fairy routes continued normally. The
+  settlement guard ran before any write, so no currency/card/save mutation occurred.
+- Changed one response variable: only `GACHA_INSUFFICIENT_BALANCE` reuses the complete accepted encrypted
+  `gacha_select / next_scene=9100` response and logs `gacha_buy_rejected`, required/available balance, and
+  `saved=false`. It does not grant currency/card or claim the original insufficient-balance dialog contract.
+- Check: `node .\server\test-bootstrap-server.js` passed HTTP 200/decryption, complete select model, absence of a
+  buy result, byte-identical save, success-settlement regression, and full server regression. Client-visible return
+  is still pending one user retry; stop after that observable rather than trying a second XML candidate. The
+  replacement live server PID 38104 is fingerprint-clean and healthy on 50005/10001; a real encrypted product-1
+  request against the live save returned HTTP 200, 11888 ciphertext bytes, `next_scene=9100 + gacha_select`, no
+  `gacha_buy`, and an unchanged save SHA-256. Its log records `requiredCost=200`, `availableBalance=0`,
+  `saved=false`.
+- Evidence: `work/gacha-buy-insufficient-fallback-path-card-20260819.md`.
+- Client acceptance: the user retried the deployed live client and confirmed the flow was normal. The compatibility
+  fallback is accepted for eliminating the false network error; an original-style insufficient-balance dialog remains
+  a distinct G1 frontier.
+
+## 2026-08-19 Gacha Original Balance-Dialog Candidate Round
+
+- Hypothesis: the parser and dialog consumer are already complete; the only missing edge is the generic code-1
+  branch in `_Main::connect` failing to push stock `dialog_scene=90100` after
+  `_DialogModel::initDialog(type=2)`.
+- Static differential: the stock network-error path in the same function executes
+  `_Main::getSceneControl -> _SceneControl::push(90100)`; gacha select and draw-result confirmation paths use the
+  equivalent `initDialog -> LayoutScene::showDialog`. A server `next_scene=90100` is rejected because generic
+  nonzero errors never execute the next-scene branch, and all three gacha scenes inherit an empty `preUpdate`.
+- Changed one complete path: `build-gacha-business-error-dialog.py` gates error code `1`, restores the stock scene
+  push, releases its temporary scene-control smart pointer, and returns to `0x001c3bae`. Source hash, original
+  bytes, zero cave `0x003e7fa0..0x003e8050`, entry/return disassembly, and path map passed. Candidate SHA-256 is
+  `36A4826BD42BCF203B51D0344AF5A1B479B961BD26DDB4685DD01A8B325B69A2`.
+- Server candidate: with `KSSMA_GACHA_BUSINESS_ERROR_DIALOG=1`, insufficient friendship/MC/ticket purchases returned
+  encrypted HTTP 200 with code `1`, respectively `友情点不足 / MC不足 / 扭蛋券不足`, empty body, and no save write.
+  During candidate testing, the user-accepted `gacha_select/9100` compatibility response remained the default until
+  native promotion. `node server/test-bootstrap-server.js` passed, including the encrypted candidate response and
+  byte-identical rejected save; log: `work/gacha-business-error-dialog-server-test-20260819.log`.
+- Runtime stop: ARM19 was absent with no classic-emulator process; the prescribed `repair-adb` made no destructive
+  change. MuMu A12 `127.0.0.1:7555` also refused connection. No candidate was installed, so visible dialog,
+  dismissal route quietness, and baseline promotion remain the single next observable. Do not try a second XML or
+  UI patch.
+- Resumed deployment: after the user started MuMu A12, its full gate passed without display mutation. Installed
+  native changed from accepted `DEC36585...CD40F` to candidate `36A4826B...25B69A2` with source/device hash equality,
+  identical `755 / 1000:1000 / apk_data_file` metadata, and the process stopped during replacement. Server PID 8404
+  is fingerprint-clean on both ports with the experiment flag. A real encrypted live-save probe returned
+  `code=1/message=友情点不足`, empty body, no next scene/select/buy model, `saved=false`, and unchanged save SHA-256.
+  A12 PID 2902 then survived the controller launch gate in resumed `RooneyJActivity` without fatal.
+- Visible acceptance: the user triggered product 1 from the original gacha page. The stock framed modal displayed
+  `友情点不足` over the dimmed page; after dismissal the same gacha page was restored. PID 2902 remained resumed,
+  logcat contained no fatal, request counts were unchanged during dismissal, and live save SHA-256/mtime remained
+  byte-identical. Screenshots: `work/gacha-business-error-dialog-visible-a12-20260819.png` and
+  `work/gacha-business-error-dialog-dismissed-a12-20260819.png`.
+- Promotion: the experiment gate and `gacha_select/9100` compatibility fallback were removed. Code `1` is now the
+  default insufficient-balance response. Native SHA-256
+  `36A4826BD42BCF203B51D0344AF5A1B479B961BD26DDB4685DD01A8B325B69A2` and rebuilt unique client baseline APK
+  SHA-256 `E8723F5438AFC6D39F4E0913159D2EE7B3BC4F097BD2F5A1E48DE31687C2DCC3` are accepted. Server PID 29168 was
+  restarted without the experiment flag; both ports were healthy, an encrypted product-1 probe returned the expected
+  business error without a save write, and the installed native hash matched the promoted source.
+- Evidence: `work/gacha-buy-original-balance-dialog-path-card-20260819.md`.
 
 ## Archive Index
 

@@ -49,11 +49,42 @@ def display_size(size: tuple[int, int] | None, scale: float) -> tuple[int, int]:
     return (max(1, round(size[0] * scale)), max(1, round(size[1] * scale)))
 
 
+def resolve_product_tokens(value: object, product: dict[str, object]) -> object:
+    if not isinstance(value, str):
+        return value
+    return value.replace("{cost}", str(parse_int(product.get("cost"), 0))).replace(
+        "{currencyLabel}", str(product.get("currencyLabel") or "")
+    )
+
+
 def read_json_contents(json_path: Path, page_name: str) -> tuple[int, list[dict[str, object]]]:
     data = json.loads(json_path.read_text(encoding="utf-8"))
     default_page = data.get("defaultPage", "main")
     page = (data.get("pages") or {}).get(page_name or default_page) or {}
-    return parse_int(page.get("scrollHeight"), 0), list(page.get("contents") or [])
+    products = {
+        parse_int(product.get("productId")): product
+        for product in data.get("products") or []
+        if isinstance(product, dict)
+    }
+    contents: list[dict[str, object]] = []
+    for source_content in page.get("contents") or []:
+        if not isinstance(source_content, dict):
+            continue
+        content = dict(source_content)
+        product = products.get(parse_int(content.get("productId")))
+        if product:
+            content["behavior"] = content.get("behavior") or product.get("behavior")
+            content["message"] = resolve_product_tokens(content.get("message"), product)
+            content["textMessages"] = [
+                {
+                    **message,
+                    "text": resolve_product_tokens(message.get("text"), product),
+                }
+                for message in content.get("textMessages") or []
+                if isinstance(message, dict)
+            ]
+        contents.append(content)
+    return parse_int(page.get("scrollHeight"), 0), contents
 
 
 def text_messages_from_json(content: dict[str, object]) -> str:

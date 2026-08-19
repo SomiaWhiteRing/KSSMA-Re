@@ -1,5 +1,10 @@
 # Gacha Buy Schema Card, 2026-07-01
 
+> 2026-08-19 supersession: the deterministic single-card implementation below is retained as historical schema
+> evidence. Current settlement supports weighted product pools and repeated `ex_user_card` rows for MC 11-draw;
+> see `work/fairy-gacha-pool-path-card-20260819.md`. The existing friendship/MC single visible flow remains accepted,
+> while ticket/11-draw rendering and the client-visible rejection dialog remain open.
+
 Frontier:
 - Accepted success path: `main menu -> gacha_select -> /gacha/buy -> draw -> result -> back/retry`.
 - Open trust-boundary path: recover one native-supported rejection response before rejecting invalid product,
@@ -53,22 +58,23 @@ Required header coupling:
 - Without this, the draw animation can look up the result card by serial and crash.
 
 Current implementation:
-- `server/data/game/gacha.json` holds the accepted same-page friendship and paid entries plus one deterministic
-  draw-card baseline.
+- `server/data/game/gacha.json` holds one same-page list with friendship, MC, ticket, and MC 11-draw products, each
+  with a fixed currency/draw-count contract and an independently editable weighted pool.
 - Friendship uses the captured tuple `product_id=1, bulk=1, auto_build=1`; paid uses
   `product_id=2, bulk=0, auto_build=0`.
-- `/connect/app/gacha/buy` persists one owned card, spends friendship points or MC, appends history, increments
-  `stats.cardsDrawn`, and returns scene `9200` with the same serial in `final_result` and `owner_card_list`.
+- `/connect/app/gacha/buy` preflights product, currency, card capacity, and pool IDs; it then persists exactly the
+  configured result count, spends friendship points/MC/tickets, appends one history row per card, increments
+  `stats.cardsDrawn`, and returns scene `9200` with every serial repeated in `final_result` and `owner_card_list`.
 - ARM19 flow artifacts accept friendship settlement/readback, paid settlement/readback, result-page back, and
-  paid retry. The success path is deterministic and single-card only.
+  paid retry. Flow assertions now accept any recovered card in the configured product pool.
 
-Non-goals:
-- No random pool.
-- No 11-pull.
+Current remaining boundaries:
+- Ticket single and MC 11-draw require visible client flow acceptance.
+- Historical original pool weights are unknown; current weights are an explicit local editable baseline.
 - No comp-sheet reward.
 - No album completion.
 
 Next frontier:
 - Statically recover the `/gacha/buy` failure parser, wire response, visible dialog, and dismiss/return path.
-- Only after that card exists, reject unknown products, tuples other than friendship `(1,1,1)` and paid
-  `(2,0,0)`, and insufficient balances before any mutation or write.
+- Server settlement already rejects unknown products, insufficient balances, invalid pools, and insufficient card
+  capacity before mutation. Only the correct client-visible error/dialog presentation remains blocked on G1.

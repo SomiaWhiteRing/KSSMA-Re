@@ -1,5 +1,11 @@
 # Gacha System Frontier Card, 2026-07-01
 
+> 2026-08-19 supersession: the first-round exclusions for random pools and 11-draw are historical constraints, not
+> the current product baseline. The user explicitly reopened them after the single-draw path was accepted. Four
+> fixed product modes and weighted pools are now implemented as described in
+> `work/fairy-gacha-pool-path-card-20260819.md`; ticket/11-draw visible client acceptance and the G1 error dialog
+> remain open.
+
 Frontier:
 - Main menu already opens the current safe gacha select page through `/connect/app/gacha/select/getcontents`
   and scene `9100`.
@@ -80,14 +86,10 @@ Shared data prerequisites:
   - `items.gachaTicket`
   - `currencies.mc`
   - `currencies.friendshipPoint`
-  - `gacha.friendshipCost`
-  - `gacha.paidCostMc`
   - `gacha.history`
   - `cards.instances`
-- Gacha cannot become real until draw results can add an owned card instance with a unique `serialId`
-  and valid `masterCardId`.
-- Card master data currently comes from masterdata samples; a clean game card database should be introduced before
-  making draw pools large or random.
+- Product costs and pools now live only in `server/data/game/gacha.json`; they are not per-player save fields.
+- Draw results allocate unique `serialId` values and validate every pool ID against the recovered 480-card master table.
 
 Accepted first implementation round:
 - Restored one safe visible draw option in `gacha_select` without missing-image resources.

@@ -10,6 +10,23 @@
     "attackPower": 1200,
     "rewardGold": 300,
     "rewardExp": 5,
+    "rewardDropRatePercent": 70,
+    "rewardCardPool": [
+      {
+        "masterCardId": 600,
+        "weight": 40
+      },
+      {
+        "masterCardId": 9,
+        "weight": 35
+      },
+      {
+        "masterCardId": 22,
+        "weight": 25
+      }
+    ],
+    "rewardCardsPerContributor": 1,
+    "finisherBonusCards": 1,
     "timeLimitSeconds": 7200
   }
 }

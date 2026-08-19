@@ -9,6 +9,7 @@ param(
     "restore-hosts",
     "install-resources",
     "repair-appdata",
+    "repair-master-card",
     "launch",
     "flow"
   )]
@@ -39,6 +40,7 @@ $script:MumuConfig = [ordered]@{
   DeviceSaveDir = "/storage/emulated/0/Android/data/com.square_enix.million_cn/files/save"
   SaveAppDataPath = "/storage/emulated/0/Android/data/com.square_enix.million_cn/files/save/appdata/save_appdata"
   SaveAppDataBackupPath = "/storage/emulated/0/Android/data/com.square_enix.million_cn/files/save/appdata/save_appdata.before-kssma-re-seed"
+  MasterCardPath = "/storage/emulated/0/Android/data/com.square_enix.million_cn/files/save/database/master_card"
   RemoteResourcePack = "/data/local/tmp/kssma-mumu-a12-resources.tar"
   RemoteChecksums = "/data/local/tmp/kssma-mumu-a12-resources.sha256"
   RemoteVerifyScript = "/data/local/tmp/kssma-mumu-a12-verify.sh"
@@ -173,20 +175,25 @@ function Get-MumuArtifacts {
   Require-File $script:ResourceManifestPath
   $client = Get-Content -Raw -Encoding UTF8 -LiteralPath $script:ClientManifestPath | ConvertFrom-Json
   $resources = Get-Content -Raw -Encoding UTF8 -LiteralPath $script:ResourceManifestPath | ConvertFrom-Json
+  if ([int]$resources.schema -lt 2 -or $null -eq $resources.masterCardSeed) {
+    throw "MuMu resource manifest predates the launch-time master_card seed contract. Rebuild the resource pack."
+  }
 
   $apkPath = Resolve-MumuRepoPath ($client.baselineApk.path -as [string])
   $nativePath = Resolve-MumuRepoPath ($client.nativeLib.path -as [string])
   $packPath = Resolve-MumuRepoPath ($resources.resourcePack.path -as [string])
   $checksumsPath = Resolve-MumuRepoPath ($resources.checksums.path -as [string])
   $saveAppDataSeedPath = Resolve-MumuRepoPath ($resources.saveAppDataSeed.path -as [string])
-  foreach ($path in @($apkPath, $nativePath, $packPath, $checksumsPath, $saveAppDataSeedPath)) { Require-File $path }
+  $masterCardSeedPath = Resolve-MumuRepoPath ($resources.masterCardSeed.path -as [string])
+  foreach ($path in @($apkPath, $nativePath, $packPath, $checksumsPath, $saveAppDataSeedPath, $masterCardSeedPath)) { Require-File $path }
 
   $checks = @(
     @{ name = "client APK"; path = $apkPath; expected = ($client.baselineApk.sha256 -as [string]) },
     @{ name = "accepted native library"; path = $nativePath; expected = ($client.nativeLib.sha256 -as [string]) },
     @{ name = "resource pack"; path = $packPath; expected = ($resources.resourcePack.sha256 -as [string]) },
     @{ name = "resource checksum list"; path = $checksumsPath; expected = ($resources.checksums.sha256 -as [string]) },
-    @{ name = "save_appdata seed"; path = $saveAppDataSeedPath; expected = ($resources.saveAppDataSeed.sha256 -as [string]) }
+    @{ name = "save_appdata seed"; path = $saveAppDataSeedPath; expected = ($resources.saveAppDataSeed.sha256 -as [string]) },
+    @{ name = "master_card seed"; path = $masterCardSeedPath; expected = ($resources.masterCardSeed.sha256 -as [string]) }
   )
   foreach ($check in $checks) {
     $actual = (Get-FileHash -Algorithm SHA256 -LiteralPath $check.path).Hash
@@ -206,6 +213,14 @@ function Get-MumuArtifacts {
       [int]$resources.saveAppDataSeed.bytes -ne 2849) {
     throw "Resource manifest has an invalid save_appdata seed contract."
   }
+  if ([int]$resources.schema -lt 2 -or
+      ($resources.masterCardSeed.devicePath -as [string]) -ne "database/master_card" -or
+      ($resources.masterCardSeed.applyWhen -as [string]) -ne "before-client-process-start" -or
+      -not [bool]$resources.masterCardSeed.consumedByClient -or
+      [int]$resources.masterCardSeed.bytes -ne 260249 -or
+      ($resources.masterCardSeed.sha256 -as [string]).ToUpperInvariant() -ne "7B121DE5626DD3B9820022C698A1FF754F87CAC4B64E563B70138F68B3A56BDF") {
+    throw "Resource manifest has an invalid launch-time master_card seed contract. Rebuild the MuMu artifacts."
+  }
   [ordered]@{
     clientManifest = $client
     resourceManifest = $resources
@@ -214,14 +229,27 @@ function Get-MumuArtifacts {
     packPath = $packPath
     checksumsPath = $checksumsPath
     saveAppDataSeedPath = $saveAppDataSeedPath
+    masterCardSeedPath = $masterCardSeedPath
   }
 }
 
 function Ensure-MumuArtifacts {
   param($Context, [switch]$ForceRebuild)
   $missing = (-not (Test-Path -LiteralPath $script:ClientManifestPath)) -or (-not (Test-Path -LiteralPath $script:ResourceManifestPath))
+  $contractUpgrade = $false
+  if (-not $missing) {
+    try {
+      $resourceManifest = Get-Content -Raw -Encoding UTF8 -LiteralPath $script:ResourceManifestPath | ConvertFrom-Json
+      $contractUpgrade = [int]$resourceManifest.schema -lt 2 -or $null -eq $resourceManifest.masterCardSeed
+    } catch {
+      $contractUpgrade = $true
+    }
+  }
   if ($ForceRebuild -or $missing) {
     return Invoke-MumuPrepare -Context $Context
+  }
+  if ($contractUpgrade) {
+    Invoke-MumuPython -Context $Context -Name "upgrade-mumu-resource-pack" -ScriptPath $script:BuildResourcePackPath -TimeoutSeconds 1800 | Out-Null
   }
   Get-MumuArtifacts -Context $Context
 }
@@ -469,7 +497,14 @@ function Invoke-MumuInstallClient {
     throw "Android 12 client install failed: $($install.stderr) $($install.stdout)"
   }
   Invoke-MumuGrantLegacyPermissions -Context $Context
-  Invoke-MumuVerifyInstalledClient -Context $Context -Artifacts $Artifacts
+  $client = Invoke-MumuVerifyInstalledClient -Context $Context -Artifacts $Artifacts
+  $masterCardSeed = Invoke-MumuEnsureMasterCardSeed -Context $Context -Artifacts $Artifacts
+  [ordered]@{
+    primaryCpuAbi = $client.primaryCpuAbi
+    remoteLib = $client.remoteLib
+    installedLibSha256 = $client.installedLibSha256
+    masterCardSeed = $masterCardSeed
+  }
 }
 
 function New-MumuVerifyScript {
@@ -548,6 +583,52 @@ function Invoke-MumuRepairSaveAppData {
     beforeSha256 = $beforeHash
     afterSha256 = $afterHash
     backupPath = $backupPath
+  }
+}
+
+function Invoke-MumuEnsureMasterCardSeed {
+  param($Context, $Artifacts)
+  $seed = $Artifacts.resourceManifest.masterCardSeed
+  $expected = ($seed.sha256 -as [string]).ToUpperInvariant()
+  $target = $script:MumuConfig.MasterCardPath
+
+  if (($seed.devicePath -as [string]) -ne "database/master_card" -or
+      [int]$seed.bytes -ne 260249 -or
+      ($seed.applyWhen -as [string]) -ne "before-client-process-start" -or
+      -not [bool]$seed.consumedByClient) {
+    throw "Refusing an invalid launch-time master_card seed contract."
+  }
+
+  # The original startup/update paths can consume and remove this file. Stop
+  # first so a freshly pushed seed cannot race the loader before the next start.
+  Invoke-MumuAdbStage -Context $Context -Name "force-stop-before-master-card-seed" -Arguments @("shell", "am", "force-stop", $script:MumuConfig.Package) -TimeoutSeconds 10 -AllowFailure | Out-Null
+  Invoke-MumuAdbStage -Context $Context -Name "mkdir-master-card-parent" -Arguments @("shell", "mkdir", "-p", "$($script:MumuConfig.DeviceSaveDir)/database") -TimeoutSeconds 10 | Out-Null
+
+  $before = Invoke-MumuAdbStage -Context $Context -Name "hash-master-card-before-seed" -Arguments @("shell", "sha256sum", $target) -TimeoutSeconds 20 -AllowFailure
+  $beforeMatch = [regex]::Match(($before.stdout -as [string]), "(?im)^([0-9a-f]{64})\s+")
+  $beforeHash = if ($beforeMatch.Success) { $beforeMatch.Groups[1].Value.ToUpperInvariant() } else { "" }
+  $restored = $beforeHash -ne $expected
+  if ($restored) {
+    Invoke-MumuAdbStage -Context $Context -Name "push-master-card-seed" -Arguments @("push", $Artifacts.masterCardSeedPath, $target) -TimeoutSeconds 60 | Out-Null
+  }
+
+  $after = Invoke-MumuAdbStage -Context $Context -Name "hash-master-card-after-seed" -Arguments @("shell", "sha256sum", $target) -TimeoutSeconds 20
+  $afterMatch = [regex]::Match(($after.stdout -as [string]), "(?im)^([0-9a-f]{64})\s+")
+  $afterHash = if ($afterMatch.Success) { $afterMatch.Groups[1].Value.ToUpperInvariant() } else { "" }
+  if ($afterHash -ne $expected) {
+    throw "master_card seed hash mismatch: got $afterHash, expected $expected"
+  }
+
+  [ordered]@{
+    restored = $restored
+    reason = if ($restored) { if ($beforeHash) { "replaced-mismatched-seed" } else { "seeded-consumed-or-missing-file" } } else { "exact-seed-already-present" }
+    sourcePath = $Artifacts.masterCardSeedPath
+    devicePath = $target
+    beforeSha256 = $beforeHash
+    afterSha256 = $afterHash
+    expectedSha256 = $expected
+    bytes = [int]$seed.bytes
+    consumedByClient = $true
   }
 }
 
@@ -653,6 +734,7 @@ function Invoke-MumuFlowRuntimeGate {
         $size.stdout -match "Override size:" -or $density.stdout -match "Override density:") {
       throw "MuMu flow requires the untouched 1440x2560/360dpi physical display with no wm override: size=$($size.stdout.Trim()); density=$($density.stdout.Trim())"
     }
+    $masterCardSeed = Invoke-MumuEnsureMasterCardSeed -Context $gate -Artifacts $artifacts
 
     $Context.serial = $Serial
     $Context.coordinateScale = [double]$script:MumuConfig.FlowCoordinateScale
@@ -676,6 +758,7 @@ function Invoke-MumuFlowRuntimeGate {
         density = $script:MumuConfig.FlowPhysicalDisplayDensity
         coordinateScale = $script:MumuConfig.FlowCoordinateScale
         displayMutation = $false
+        masterCardSeed = $masterCardSeed
       })
   } catch {
     Stop-FlowWithFailure -Context $Context -FailureClass "runtime-not-ready" -Step "mumu-a12-runtime-gate" -Message $_.Exception.Message
@@ -698,9 +781,9 @@ function Invoke-MumuStartServer {
 }
 
 function Invoke-MumuLaunch {
-  param($Context)
+  param($Context, $Artifacts)
+  $masterCardSeed = Invoke-MumuEnsureMasterCardSeed -Context $Context -Artifacts $Artifacts
   Invoke-MumuAdbStage -Context $Context -Name "clear-logcat-before-launch" -Arguments @("logcat", "-c") -TimeoutSeconds 10 -AllowFailure | Out-Null
-  Invoke-MumuAdbStage -Context $Context -Name "force-stop-before-launch" -Arguments @("shell", "am", "force-stop", $script:MumuConfig.Package) -TimeoutSeconds 10 -AllowFailure | Out-Null
   $start = Invoke-MumuAdbStage -Context $Context -Name "start-logo-activity" -Arguments @("shell", "am", "start", "-n", "$($script:MumuConfig.Package)/$($script:MumuConfig.Activity)") -TimeoutSeconds 20
   Start-Sleep -Seconds 10
   $gamePid = Invoke-MumuAdbStage -Context $Context -Name "launch-pid" -Arguments @("shell", "pidof", $script:MumuConfig.Package) -TimeoutSeconds 10 -AllowFailure
@@ -713,7 +796,7 @@ function Invoke-MumuLaunch {
   if ((-not $gamePid.ok) -or [string]::IsNullOrWhiteSpace($gamePid.stdout) -or $fatal) {
     throw "Client did not survive the ten-second post-launch gate. pid=$($gamePid.stdout); fatal=$fatal"
   }
-  [ordered]@{ pid = $gamePid.stdout.Trim(); topActivity = ($top -join ""); screenshot = $script:LastLaunchScreenshot; fatal = $fatal; start = $start.stdout }
+  [ordered]@{ pid = $gamePid.stdout.Trim(); topActivity = ($top -join ""); screenshot = $script:LastLaunchScreenshot; fatal = $fatal; start = $start.stdout; masterCardSeed = $masterCardSeed }
 }
 
 function Invoke-MumuSelfCheck {
@@ -734,6 +817,7 @@ function Invoke-MumuSelfCheck {
       $script:MumuConfig.DeviceSaveDir,
       $script:MumuConfig.SaveAppDataPath,
       $script:MumuConfig.SaveAppDataBackupPath,
+      $script:MumuConfig.MasterCardPath,
       $script:MumuConfig.RemoteResourcePack,
       $script:MumuConfig.HostsBackupPath
     )) {
@@ -746,8 +830,20 @@ function Invoke-MumuSelfCheck {
       $script:MumuConfig.FlowCoordinateScale -ne 2.0) {
     throw "MuMu flow must preserve the native 1440x2560/360dpi display and scale only automation coordinates."
   }
-  Add-MumuStage $Context "self-check" ([ordered]@{ ok = $true; elapsedMs = 0; details = "IPv4, hosts idempotence, alias preservation, exact mutation paths, and native-display-only flow passed." })
-  [ordered]@{ checks = 8; hosts = $merged; flowPhysicalDisplaySize = $script:MumuConfig.FlowPhysicalDisplaySize; flowPhysicalDisplayDensity = $script:MumuConfig.FlowPhysicalDisplayDensity; flowCoordinateScale = $script:MumuConfig.FlowCoordinateScale }
+  $resourceManifest = Get-Content -Raw -Encoding UTF8 -LiteralPath $script:ResourceManifestPath | ConvertFrom-Json
+  $masterCardSeedPath = Resolve-MumuRepoPath ($resourceManifest.masterCardSeed.path -as [string])
+  Require-File $masterCardSeedPath
+  $masterCardSeedHash = (Get-FileHash -Algorithm SHA256 -LiteralPath $masterCardSeedPath).Hash
+  if ([int]$resourceManifest.schema -lt 2 -or
+      ($resourceManifest.masterCardSeed.devicePath -as [string]) -ne "database/master_card" -or
+      ($resourceManifest.masterCardSeed.applyWhen -as [string]) -ne "before-client-process-start" -or
+      -not [bool]$resourceManifest.masterCardSeed.consumedByClient -or
+      [int]$resourceManifest.masterCardSeed.bytes -ne 260249 -or
+      $masterCardSeedHash -ne "7B121DE5626DD3B9820022C698A1FF754F87CAC4B64E563B70138F68B3A56BDF") {
+    throw "MuMu resource manifest does not contain the accepted launch-time master_card seed. Run prepare or use -Rebuild."
+  }
+  Add-MumuStage $Context "self-check" ([ordered]@{ ok = $true; elapsedMs = 0; details = "IPv4, hosts idempotence, alias preservation, exact mutation paths, native-display-only flow, and master_card seed contract passed." })
+  [ordered]@{ checks = 9; hosts = $merged; flowPhysicalDisplaySize = $script:MumuConfig.FlowPhysicalDisplaySize; flowPhysicalDisplayDensity = $script:MumuConfig.FlowPhysicalDisplayDensity; flowCoordinateScale = $script:MumuConfig.FlowCoordinateScale; masterCardSeedSha256 = $masterCardSeedHash }
 }
 
 function Invoke-MumuFlow {
@@ -782,7 +878,7 @@ try {
       $resources = Invoke-MumuInstallResources -Context $ctx -Artifacts $artifacts
       if ($StartServer) { Invoke-MumuStartServer -Context $ctx }
       $launchData = $null
-      if ($Launch) { $launchData = Invoke-MumuLaunch -Context $ctx }
+      if ($Launch) { $launchData = Invoke-MumuLaunch -Context $ctx -Artifacts $artifacts }
       $status = Get-MumuStatus -Context $ctx -Artifacts $artifacts -Device $device
       if (-not $status.packageInstalled -or -not $status.hostsOk -or -not $status.resourcesOk) {
         throw "Final deployment status failed: package=$($status.packageInstalled); hosts=$($status.hostsOk); resources=$($status.resourcesOk)"
@@ -822,10 +918,16 @@ try {
       $device = Invoke-MumuDeviceGate -Context $ctx
       [ordered]@{ device = $device; saveAppData = (Invoke-MumuRepairSaveAppData -Context $ctx -Artifacts $artifacts) }
     }
+    "repair-master-card" {
+      $artifacts = Ensure-MumuArtifacts -Context $ctx -ForceRebuild:$Rebuild
+      $device = Invoke-MumuDeviceGate -Context $ctx
+      [ordered]@{ device = $device; masterCardSeed = (Invoke-MumuEnsureMasterCardSeed -Context $ctx -Artifacts $artifacts) }
+    }
     "launch" {
+      $artifacts = Ensure-MumuArtifacts -Context $ctx -ForceRebuild:$Rebuild
       $device = Invoke-MumuDeviceGate -Context $ctx
       if ($StartServer) { Invoke-MumuStartServer -Context $ctx }
-      [ordered]@{ device = $device; launch = (Invoke-MumuLaunch -Context $ctx) }
+      [ordered]@{ device = $device; launch = (Invoke-MumuLaunch -Context $ctx -Artifacts $artifacts) }
     }
     "flow" {
       $directResult = Invoke-MumuFlow

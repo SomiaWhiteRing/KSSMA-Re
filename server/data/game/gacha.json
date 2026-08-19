@@ -2,9 +2,10 @@
   "defaultPage": "main",
   "pages": {
     "main": {
-      "scrollHeight": 240,
+      "scrollHeight": 280,
       "contents": [
         {
+          "productId": 1,
           "actionId": 1,
           "imagefile": "gacha_free_0",
           "x": 8,
@@ -13,21 +14,66 @@
           "behavior": "1,1,1,0"
         },
         {
+          "productId": 2,
           "actionId": 2,
           "imagefile": "gacha_cp_button",
           "x": 8,
           "y": 112,
           "se": "se_def_cancel_04_01",
-          "message": "消耗300MC进行扭蛋，确定吗？",
-          "behavior": "2,0,0,0"
+          "message": "消耗{cost}MC进行扭蛋，确定吗？"
         },
         {
+          "productId": 2,
           "actionId": 0,
           "x": 140,
           "y": 116,
           "textMessages": [
             {
-              "text": "使用300MC进行扭蛋",
+              "text": "{cost}MC：单次扭蛋",
+              "color": "0xFFFFFF",
+              "size": 20
+            }
+          ]
+        },
+        {
+          "productId": 4,
+          "actionId": 2,
+          "imagefile": "gacha_cp_button",
+          "x": 8,
+          "y": 164,
+          "se": "se_def_cancel_04_01",
+          "message": "消耗{cost}MC进行11连扭蛋，确定吗？"
+        },
+        {
+          "productId": 4,
+          "actionId": 0,
+          "x": 140,
+          "y": 168,
+          "textMessages": [
+            {
+              "text": "{cost}MC：11连扭蛋",
+              "color": "0xFFFFFF",
+              "size": 20
+            }
+          ]
+        },
+        {
+          "productId": 3,
+          "actionId": 2,
+          "imagefile": "gacha_cp_button",
+          "x": 8,
+          "y": 216,
+          "se": "se_def_cancel_04_01",
+          "message": "消耗{cost}张扭蛋券进行扭蛋，确定吗？"
+        },
+        {
+          "productId": 3,
+          "actionId": 0,
+          "x": 140,
+          "y": 220,
+          "textMessages": [
+            {
+              "text": "扭蛋券×{cost}",
               "color": "0xFFFFFF",
               "size": 20
             }
@@ -36,11 +82,77 @@
       ]
     }
   },
+  "products": [
+    {
+      "productId": 1,
+      "key": "friendship_single",
+      "name": "友情点扭蛋",
+      "currency": "friendshipPoint",
+      "currencyLabel": "友情点",
+      "cost": 200,
+      "drawCount": 1,
+      "behavior": "1,1,1,0",
+      "gachaType": 1,
+      "telopMessage": "友情点扭蛋",
+      "pool": [
+        { "masterCardId": 9, "weight": 70 },
+        { "masterCardId": 22, "weight": 25 },
+        { "masterCardId": 600, "weight": 5 }
+      ]
+    },
+    {
+      "productId": 2,
+      "key": "mc_single",
+      "name": "MC扭蛋",
+      "currency": "mc",
+      "currencyLabel": "MC",
+      "cost": 300,
+      "drawCount": 1,
+      "behavior": "2,0,0,0",
+      "gachaType": 2,
+      "telopMessage": "付费扭蛋",
+      "pool": [
+        { "masterCardId": 9, "weight": 60 },
+        { "masterCardId": 22, "weight": 30 },
+        { "masterCardId": 600, "weight": 10 }
+      ]
+    },
+    {
+      "productId": 3,
+      "key": "ticket_single",
+      "name": "扭蛋券扭蛋",
+      "currency": "gachaTicket",
+      "currencyLabel": "扭蛋券",
+      "cost": 1,
+      "drawCount": 1,
+      "behavior": "3,0,0,0",
+      "gachaType": 1,
+      "telopMessage": "扭蛋券扭蛋",
+      "pool": [
+        { "masterCardId": 9, "weight": 60 },
+        { "masterCardId": 22, "weight": 30 },
+        { "masterCardId": 600, "weight": 10 }
+      ]
+    },
+    {
+      "productId": 4,
+      "key": "mc_eleven",
+      "name": "MC 11连扭蛋",
+      "currency": "mc",
+      "currencyLabel": "MC",
+      "cost": 3000,
+      "drawCount": 11,
+      "behavior": "4,0,0,0",
+      "gachaType": 2,
+      "telopMessage": "付费11连扭蛋",
+      "pool": [
+        { "masterCardId": 9, "weight": 60 },
+        { "masterCardId": 22, "weight": 30 },
+        { "masterCardId": 600, "weight": 10 }
+      ]
+    }
+  ],
   "buy": {
-    "gachaType": 1,
-    "telopMessage": "友情点扭蛋",
-    "paidGachaType": 2,
-    "paidTelopMessage": "付费扭蛋",
     "drawCard": {
       "serialId": 2,
       "masterCardId": 9,

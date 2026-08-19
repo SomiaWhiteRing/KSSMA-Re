@@ -24,6 +24,9 @@ function New-FlowContext {
     logcat = Join-Path $artifactDir "logcat.txt"
     activity = Join-Path $artifactDir "activity.txt"
     loginDriver = Join-Path $artifactDir "login-driver.txt"
+    accountRegistry = Join-Path $artifactDir "accounts.json"
+    accountSaveDir = Join-Path $artifactDir "accounts"
+    fairyRaid = Join-Path $artifactDir "fairy-raids.json"
     startedAt = Get-Date
     serverProcess = $null
     serial = $script:KssmaRuntimeConfig.PrimarySerial
@@ -413,6 +416,52 @@ function Assert-FlowLevelUpPointsettingPlayerSave {
     })
 }
 
+function Get-FlowGachaProductPoolMasterCardIds {
+  param(
+    $Context,
+    [int]$ProductId,
+    [string]$Step = "gacha-pool-config"
+  )
+
+  $gachaDataPath = Join-Path $script:RepoRoot "server\data\game\gacha.json"
+  try {
+    $gachaData = [System.IO.File]::ReadAllText($gachaDataPath, [System.Text.Encoding]::UTF8) | ConvertFrom-Json
+  } catch {
+    Stop-FlowWithFailure -Context $Context -FailureClass "gacha-pool-invalid" -Step $Step -Message "Cannot read gacha pool config: $($_.Exception.Message)"
+  }
+  $product = @($gachaData.products | Where-Object { [int]$_.productId -eq $ProductId } | Select-Object -First 1)
+  $masterCardIds = if ($product.Count -eq 1) { @($product[0].pool | ForEach-Object { [int]$_.masterCardId }) } else { @() }
+  if ($product.Count -ne 1 -or $masterCardIds.Count -eq 0) {
+    Stop-FlowWithFailure -Context $Context -FailureClass "gacha-pool-invalid" -Step $Step -Message "Gacha product $ProductId has no configured card pool."
+  }
+  return $masterCardIds
+}
+
+function Assert-FlowGachaResponseUsesConfiguredPool {
+  param(
+    $Context,
+    $Payload,
+    [int]$ProductId,
+    [int]$ExpectedDrawCount = 1,
+    [string]$Step = "gacha-response-pool"
+  )
+
+  $poolMasterCardIds = @(Get-FlowGachaProductPoolMasterCardIds -Context $Context -ProductId $ProductId -Step $Step)
+  $drawnMasterCardIds = @(Get-FlowProperty -Object $Payload -Name "drawnMasterCardIds")
+  if ($drawnMasterCardIds.Count -eq 0) {
+    $drawnMasterCardIds = @([int](Get-FlowProperty -Object $Payload -Name "drawnMasterCardId"))
+  }
+  $outsidePool = @($drawnMasterCardIds | Where-Object { $poolMasterCardIds -notcontains [int]$_ })
+  if (
+    [int](Get-FlowProperty -Object $Payload -Name "productId") -ne $ProductId -or
+    $drawnMasterCardIds.Count -ne $ExpectedDrawCount -or
+    $outsidePool.Count -gt 0
+  ) {
+    Stop-FlowWithFailure -Context $Context -FailureClass "gacha-pool-result-mismatch" -Step $Step -Message "Gacha product $ProductId result does not match its configured pool. draws=$($drawnMasterCardIds -join ',') pool=$($poolMasterCardIds -join ',') expectedCount=$ExpectedDrawCount."
+  }
+  return @($drawnMasterCardIds | ForEach-Object { [int]$_ })
+}
+
 function Assert-FlowGachaSettlementPlayerSave {
   param($Context)
 
@@ -421,12 +470,14 @@ function Assert-FlowGachaSettlementPlayerSave {
   $instances = if ($actual.cards.instances) { @($actual.cards.instances) } else { @() }
   $gachaHistoryValue = Get-FlowProperty -Object $actual.gacha -Name "history"
   $gachaHistoryEntries = if ($gachaHistoryValue) { @($gachaHistoryValue) } else { @() }
-  $drawnCards = @($instances | Where-Object { [int]$_.serialId -eq 2 -and [int]$_.masterCardId -eq 9 })
+  $poolMasterCardIds = @(Get-FlowGachaProductPoolMasterCardIds -Context $Context -ProductId 1 -Step "gacha-settlement-save-after")
+  $drawnCards = @($instances | Where-Object { [int]$_.serialId -eq 2 })
   $instanceCount = @($instances).Count
   $drawnCardCount = @($drawnCards).Count
   $historyCount = @($gachaHistoryEntries).Count
   $cardsDrawn = [int]$actual.stats.cardsDrawn
   $historyLast = if ($historyCount -gt 0) { @($gachaHistoryEntries)[-1] } else { $null }
+  $drawnMasterCardId = if ($drawnCardCount -eq 1) { [int]$drawnCards[0].masterCardId } else { 0 }
 
   if (
     $friendshipPoint -ne 200 -or
@@ -438,7 +489,8 @@ function Assert-FlowGachaSettlementPlayerSave {
     [int]$historyLast.productId -ne 1 -or
     [int]$historyLast.bulk -ne 1 -or
     [int]$historyLast.serialId -ne 2 -or
-    [int]$historyLast.masterCardId -ne 9
+    [int]$historyLast.masterCardId -ne $drawnMasterCardId -or
+    $poolMasterCardIds -notcontains $drawnMasterCardId
   ) {
     Stop-FlowWithFailure -Context $Context -FailureClass "gacha-settlement-save-mismatch" -Step "gacha-settlement-save-after" -Message "Gacha settlement save mismatch: friendship=$friendshipPoint cards=$instanceCount drawnCardMatches=$drawnCardCount cardsDrawn=$cardsDrawn history=$historyCount."
   }
@@ -447,7 +499,8 @@ function Assert-FlowGachaSettlementPlayerSave {
       friendshipPoint = $friendshipPoint
       cardCount = $instanceCount
       serialId = 2
-      masterCardId = 9
+      masterCardId = $drawnMasterCardId
+      poolMasterCardIds = $poolMasterCardIds
       cardsDrawn = $cardsDrawn
       historyCount = $historyCount
     })
@@ -462,12 +515,14 @@ function Assert-FlowGachaPaidSettlementPlayerSave {
   $instances = if ($actual.cards.instances) { @($actual.cards.instances) } else { @() }
   $gachaHistoryValue = Get-FlowProperty -Object $actual.gacha -Name "history"
   $gachaHistoryEntries = if ($gachaHistoryValue) { @($gachaHistoryValue) } else { @() }
-  $drawnCards = @($instances | Where-Object { [int]$_.serialId -eq 2 -and [int]$_.masterCardId -eq 9 })
+  $poolMasterCardIds = @(Get-FlowGachaProductPoolMasterCardIds -Context $Context -ProductId 2 -Step "gacha-paid-settlement-save-after")
+  $drawnCards = @($instances | Where-Object { [int]$_.serialId -eq 2 })
   $instanceCount = @($instances).Count
   $drawnCardCount = @($drawnCards).Count
   $historyCount = @($gachaHistoryEntries).Count
   $cardsDrawn = [int]$actual.stats.cardsDrawn
   $historyLast = if ($historyCount -gt 0) { @($gachaHistoryEntries)[-1] } else { $null }
+  $drawnMasterCardId = if ($drawnCardCount -eq 1) { [int]$drawnCards[0].masterCardId } else { 0 }
 
   if (
     $mc -ne 0 -or
@@ -480,7 +535,8 @@ function Assert-FlowGachaPaidSettlementPlayerSave {
     [int]$historyLast.productId -ne 2 -or
     [int]$historyLast.bulk -ne 1 -or
     [int]$historyLast.serialId -ne 2 -or
-    [int]$historyLast.masterCardId -ne 9
+    [int]$historyLast.masterCardId -ne $drawnMasterCardId -or
+    $poolMasterCardIds -notcontains $drawnMasterCardId
   ) {
     Stop-FlowWithFailure -Context $Context -FailureClass "gacha-paid-settlement-save-mismatch" -Step "gacha-paid-settlement-save-after" -Message "Paid gacha settlement save mismatch: mc=$mc friendship=$friendshipPoint cards=$instanceCount drawnCardMatches=$drawnCardCount cardsDrawn=$cardsDrawn history=$historyCount."
   }
@@ -490,7 +546,8 @@ function Assert-FlowGachaPaidSettlementPlayerSave {
       friendshipPoint = $friendshipPoint
       cardCount = $instanceCount
       serialId = 2
-      masterCardId = 9
+      masterCardId = $drawnMasterCardId
+      poolMasterCardIds = $poolMasterCardIds
       cardsDrawn = $cardsDrawn
       historyCount = $historyCount
     })
@@ -505,10 +562,13 @@ function Assert-FlowGachaPaidRetryPlayerSave {
   $instances = if ($actual.cards.instances) { @($actual.cards.instances) } else { @() }
   $historyValue = Get-FlowProperty -Object $actual.gacha -Name "history"
   $history = if ($historyValue) { @($historyValue) } else { @() }
-  $serial2Cards = @($instances | Where-Object { [int]$_.serialId -eq 2 -and [int]$_.masterCardId -eq 9 })
-  $serial3Cards = @($instances | Where-Object { [int]$_.serialId -eq 3 -and [int]$_.masterCardId -eq 9 })
+  $poolMasterCardIds = @(Get-FlowGachaProductPoolMasterCardIds -Context $Context -ProductId 2 -Step "gacha-paid-retry-save-after")
+  $serial2Cards = @($instances | Where-Object { [int]$_.serialId -eq 2 })
+  $serial3Cards = @($instances | Where-Object { [int]$_.serialId -eq 3 })
   $historyFirst = if ($history.Count -gt 0) { $history[0] } else { $null }
   $historyLast = if ($history.Count -gt 1) { $history[1] } else { $null }
+  $serial2MasterCardId = if ($serial2Cards.Count -eq 1) { [int]$serial2Cards[0].masterCardId } else { 0 }
+  $serial3MasterCardId = if ($serial3Cards.Count -eq 1) { [int]$serial3Cards[0].masterCardId } else { 0 }
   if (
     $mc -ne 0 -or
     $friendshipPoint -ne 0 -or
@@ -523,11 +583,13 @@ function Assert-FlowGachaPaidRetryPlayerSave {
     [int]$historyFirst.productId -ne 2 -or
     [int]$historyFirst.bulk -ne 1 -or
     [int]$historyFirst.serialId -ne 2 -or
-    [int]$historyFirst.masterCardId -ne 9 -or
+    [int]$historyFirst.masterCardId -ne $serial2MasterCardId -or
+    $poolMasterCardIds -notcontains $serial2MasterCardId -or
     [int]$historyLast.productId -ne 2 -or
     [int]$historyLast.bulk -ne 1 -or
     [int]$historyLast.serialId -ne 3 -or
-    [int]$historyLast.masterCardId -ne 9
+    [int]$historyLast.masterCardId -ne $serial3MasterCardId -or
+    $poolMasterCardIds -notcontains $serial3MasterCardId
   ) {
     Stop-FlowWithFailure -Context $Context -FailureClass "gacha-paid-retry-save-mismatch" -Step "gacha-paid-retry-save-after" -Message "Paid retry save mismatch: mc=$mc friendship=$friendshipPoint cards=$($instances.Count) serial2Matches=$($serial2Cards.Count) serial3Matches=$($serial3Cards.Count) cardsDrawn=$($actual.stats.cardsDrawn) history=$($history.Count)."
   }
@@ -537,7 +599,8 @@ function Assert-FlowGachaPaidRetryPlayerSave {
       friendshipPoint = $friendshipPoint
       cardCount = $instances.Count
       serialIds = @(2, 3)
-      masterCardId = 9
+      masterCardIds = @($serial2MasterCardId, $serial3MasterCardId)
+      poolMasterCardIds = $poolMasterCardIds
       cardsDrawn = [int]$actual.stats.cardsDrawn
       historyCount = $history.Count
     })
@@ -1716,13 +1779,21 @@ function Start-FlowServer {
   $env:LOGIN_RESPONSE = "sample"
   $env:PORTS = "50005,10001"
   $oldEnvironment = @{}
-  $environmentKeys = @("KSSMA_PLAYER_SAVE_PATH") + @($ExtraEnvironment.Keys)
+  $flowEnvironment = [ordered]@{
+    KSSMA_PLAYER_SAVE_PATH = $Context.playerSave
+    KSSMA_ACCOUNT_REGISTRY_PATH = $Context.accountRegistry
+    KSSMA_ACCOUNT_SAVE_DIR = $Context.accountSaveDir
+    KSSMA_FAIRY_RAID_PATH = $Context.fairyRaid
+  }
+  foreach ($key in $ExtraEnvironment.Keys) {
+    $flowEnvironment[$key] = [string]$ExtraEnvironment[$key]
+  }
+  $environmentKeys = @($flowEnvironment.Keys)
   foreach ($key in $environmentKeys) {
     $oldEnvironment[$key] = [Environment]::GetEnvironmentVariable($key, "Process")
   }
-  [Environment]::SetEnvironmentVariable("KSSMA_PLAYER_SAVE_PATH", $Context.playerSave, "Process")
-  foreach ($key in $ExtraEnvironment.Keys) {
-    [Environment]::SetEnvironmentVariable($key, [string]$ExtraEnvironment[$key], "Process")
+  foreach ($key in $flowEnvironment.Keys) {
+    [Environment]::SetEnvironmentVariable($key, [string]$flowEnvironment[$key], "Process")
   }
   try {
     $process = Start-Process -FilePath "node" -ArgumentList @(".\server\bootstrap-server.js") -WorkingDirectory $script:RepoRoot -PassThru -WindowStyle Hidden -RedirectStandardOutput $Context.serverOut -RedirectStandardError $Context.serverErr
@@ -2866,6 +2937,9 @@ function Invoke-FlowGachaDrawSmoke {
     Capture-FlowScreenshot -Context $Context -Name "gacha-draw-route-no-response" | Out-Null
     Stop-FlowWithFailure -Context $Context -FailureClass "route-timeout" -Step "tap-gacha-$DrawKind-draw-one-response" -Message "Gacha draw route $($probe.path) emitted but no response log was captured."
   }
+  if ($probe.path -eq "/connect/app/gacha/buy") {
+    Assert-FlowGachaResponseUsesConfiguredPool -Context $Context -Payload $response.payload -ProductId ([int]$expectedProductId) -ExpectedDrawCount 1 -Step "tap-gacha-$DrawKind-draw-one-pool" | Out-Null
+  }
   Start-Sleep -Seconds 4
   Assert-FlowClientAlive -Context $Context -Step "tap-gacha-$DrawKind-draw-one-after-response"
   Capture-FlowScreenshot -Context $Context -Name "gacha-draw-after-route" | Out-Null
@@ -2984,11 +3058,11 @@ function Invoke-FlowGachaPaidRetrySmoke {
     mcCost = 300
     mcAfter = 0
     drawnSerialId = 3
-    drawnMasterCardId = 9
     ownerCardCount = 3
     cardsDrawn = 2
     saved = $true
   } -TimeoutSeconds 10
+  Assert-FlowGachaResponseUsesConfiguredPool -Context $Context -Payload $retryResponse.payload -ProductId 2 -ExpectedDrawCount 1 -Step "gacha-paid-retry-response-pool" | Out-Null
 
   Start-Sleep -Seconds 4
   Assert-FlowClientAlive -Context $Context -Step "gacha-paid-retry-after-response"
@@ -3037,7 +3111,6 @@ function Invoke-FlowGachaSettlementDeckSmoke {
     friendshipCost = 200
     friendshipAfter = 200
     drawnSerialId = 2
-    drawnMasterCardId = 9
     ownerCardCount = 2
     cardsDrawn = 1
     saved = $true
@@ -3045,6 +3118,8 @@ function Invoke-FlowGachaSettlementDeckSmoke {
   if ($buyResponse.Count -eq 0 -or -not (Test-FlowExpectedMap -Actual $buyResponse[0].payload -Expected $expectedBuyFields)) {
     Stop-FlowWithFailure -Context $Context -FailureClass "gacha-settlement-response-mismatch" -Step "gacha-settlement-buy-response" -Message "Gacha buy settlement response was missing or did not match expected settlement fields."
   }
+  $drawnPoolResult = @(Assert-FlowGachaResponseUsesConfiguredPool -Context $Context -Payload $buyResponse[0].payload -ProductId 1 -ExpectedDrawCount 1 -Step "gacha-settlement-buy-response-pool")
+  $drawnMasterCardId = [int]$drawnPoolResult[0]
   Assert-FlowGachaSettlementPlayerSave -Context $Context
 
   $mainmenuBaseline = Join-Path $Context.screenshotsDir "gacha-draw-mainmenu-baseline.png"
@@ -3068,14 +3143,21 @@ function Invoke-FlowGachaSettlementDeckSmoke {
     })
   $serialIds = @(Get-FlowProperty -Object $deckResponse.payload -Name "ownerCardSerialIds")
   $masterCardIds = @(Get-FlowProperty -Object $deckResponse.payload -Name "ownerCardMasterCardIds")
-  if (-not ($serialIds -contains 2) -or -not ($masterCardIds -contains 9)) {
+  $drawnIndex = -1
+  for ($index = 0; $index -lt $serialIds.Count; $index++) {
+    if ([int]$serialIds[$index] -eq 2) {
+      $drawnIndex = $index
+      break
+    }
+  }
+  if ($drawnIndex -lt 0 -or $drawnIndex -ge $masterCardIds.Count -or [int]$masterCardIds[$drawnIndex] -ne [int]$drawnMasterCardId) {
     Stop-FlowWithFailure -Context $Context -FailureClass "deck-owned-card-mismatch" -Step "deck-after-gacha-settlement-response" -Message "Deck entry did not report the drawn card. serialIds=$($serialIds -join ',') masterCardIds=$($masterCardIds -join ',')."
   }
   $deckScreenshot = Join-Path $Context.screenshotsDir "open-deck-after-gacha-settlement.png"
   Assert-FlowScreenshotDiff -Context $Context -Step "open-deck-after-gacha-settlement-visual-open" -ExpectedPath $returnedMainmenu -ActualPath $deckScreenshot -MinDiff 20
   Add-FlowEvent -Context $Context -Type "gacha-settlement-deck-ok" -Data ([ordered]@{
       serialId = 2
-      masterCardId = 9
+      masterCardId = [int]$drawnMasterCardId
       friendshipPoint = 200
       ownerCardSerialIds = $serialIds
       ownerCardMasterCardIds = $masterCardIds
@@ -3106,7 +3188,6 @@ function Invoke-FlowGachaPaidSettlementDeckSmoke {
     mcCost = 300
     mcAfter = 0
     drawnSerialId = 2
-    drawnMasterCardId = 9
     ownerCardCount = 2
     cardsDrawn = 1
     saved = $true
@@ -3114,6 +3195,8 @@ function Invoke-FlowGachaPaidSettlementDeckSmoke {
   if ($buyResponse.Count -eq 0 -or -not (Test-FlowExpectedMap -Actual $buyResponse[0].payload -Expected $expectedBuyFields)) {
     Stop-FlowWithFailure -Context $Context -FailureClass "gacha-paid-settlement-response-mismatch" -Step "gacha-paid-settlement-buy-response" -Message "Paid gacha buy settlement response was missing or did not match expected settlement fields."
   }
+  $drawnPoolResult = @(Assert-FlowGachaResponseUsesConfiguredPool -Context $Context -Payload $buyResponse[0].payload -ProductId 2 -ExpectedDrawCount 1 -Step "gacha-paid-settlement-buy-response-pool")
+  $drawnMasterCardId = [int]$drawnPoolResult[0]
   Assert-FlowGachaPaidSettlementPlayerSave -Context $Context
 
   $mainmenuBaseline = Join-Path $Context.screenshotsDir "gacha-draw-mainmenu-baseline.png"
@@ -3137,14 +3220,21 @@ function Invoke-FlowGachaPaidSettlementDeckSmoke {
     })
   $serialIds = @(Get-FlowProperty -Object $deckResponse.payload -Name "ownerCardSerialIds")
   $masterCardIds = @(Get-FlowProperty -Object $deckResponse.payload -Name "ownerCardMasterCardIds")
-  if (-not ($serialIds -contains 2) -or -not ($masterCardIds -contains 9)) {
+  $drawnIndex = -1
+  for ($index = 0; $index -lt $serialIds.Count; $index++) {
+    if ([int]$serialIds[$index] -eq 2) {
+      $drawnIndex = $index
+      break
+    }
+  }
+  if ($drawnIndex -lt 0 -or $drawnIndex -ge $masterCardIds.Count -or [int]$masterCardIds[$drawnIndex] -ne [int]$drawnMasterCardId) {
     Stop-FlowWithFailure -Context $Context -FailureClass "deck-owned-card-mismatch" -Step "deck-after-paid-gacha-settlement-response" -Message "Deck entry did not report the paid drawn card. serialIds=$($serialIds -join ',') masterCardIds=$($masterCardIds -join ',')."
   }
   $deckScreenshot = Join-Path $Context.screenshotsDir "open-deck-after-paid-gacha-settlement.png"
   Assert-FlowScreenshotDiff -Context $Context -Step "open-deck-after-paid-gacha-settlement-visual-open" -ExpectedPath $returnedMainmenu -ActualPath $deckScreenshot -MinDiff 20
   Add-FlowEvent -Context $Context -Type "gacha-paid-settlement-deck-ok" -Data ([ordered]@{
       serialId = 2
-      masterCardId = 9
+      masterCardId = [int]$drawnMasterCardId
       mc = 0
       friendshipPoint = 0
       ownerCardSerialIds = $serialIds
@@ -3399,6 +3489,9 @@ function Invoke-FlowFairyBattleSmoke {
     playerWon = $true
     winner = 1
     rounds = 2
+    bcBefore = 25
+    bcCost = 10
+    bcAfter = 15
     playerDamage = 6000
     fairyDamage = 1000
     goldBefore = 18
@@ -3432,13 +3525,47 @@ function Invoke-FlowFairyBattleSmoke {
     battleWins = Get-FlowProperty -Object (Get-FlowProperty -Object $settledSave -Name "battle") -Name "wins"
     activeFairy = $settledFairy
     gold = Get-FlowProperty -Object (Get-FlowProperty -Object $settledSave -Name "currencies") -Name "gold"
+    bc = Get-FlowProperty -Object (Get-FlowProperty -Object (Get-FlowProperty -Object $settledSave -Name "resources") -Name "bc") -Name "current"
     exp = Get-FlowProperty -Object (Get-FlowProperty -Object $settledSave -Name "profile") -Name "exp"
     historyWon = Get-FlowProperty -Object $historyTail -Name "won"
     historyRewardGold = Get-FlowProperty -Object $historyTail -Name "rewardGold"
     historyRewardExp = Get-FlowProperty -Object $historyTail -Name "rewardExp"
+    historyBcBefore = Get-FlowProperty -Object $historyTail -Name "bcBefore"
+    historyBcCost = Get-FlowProperty -Object $historyTail -Name "bcCost"
+    historyBcAfter = Get-FlowProperty -Object $historyTail -Name "bcAfter"
   }
-  if ([int]$saveChecks.battleWins -ne 1 -or $null -ne $saveChecks.activeFairy -or [int]$saveChecks.gold -ne 795 -or [int]$saveChecks.exp -ne 7 -or $saveChecks.historyWon -ne $true -or [int]$saveChecks.historyRewardGold -ne 777 -or [int]$saveChecks.historyRewardExp -ne 4) {
+  if ([int]$saveChecks.battleWins -ne 1 -or $null -ne $saveChecks.activeFairy -or [int]$saveChecks.gold -ne 795 -or [int]$saveChecks.bc -ne 15 -or [int]$saveChecks.exp -ne 7 -or $saveChecks.historyWon -ne $true -or [int]$saveChecks.historyRewardGold -ne 777 -or [int]$saveChecks.historyRewardExp -ne 4 -or [int]$saveChecks.historyBcBefore -ne 25 -or [int]$saveChecks.historyBcCost -ne 10 -or [int]$saveChecks.historyBcAfter -ne 15) {
     Stop-FlowWithFailure -Context $Context -FailureClass "save-state-mismatch" -Step "fairy-battle-settlement-save" -Message "Fairy battle save did not match the logged settlement: $($saveChecks | ConvertTo-Json -Compress -Depth 5)"
+  }
+
+  if (-not (Test-Path -LiteralPath $Context.fairyRaid)) {
+    Stop-FlowWithFailure -Context $Context -FailureClass "fairy-raid-ledger-missing" -Step "fairy-battle-shared-ledger" -Message "The isolated shared fairy ledger was not written: $($Context.fairyRaid)"
+  }
+  try {
+    $raidLedger = Get-Content -LiteralPath $Context.fairyRaid -Raw | ConvertFrom-Json
+  } catch {
+    Stop-FlowWithFailure -Context $Context -FailureClass "fairy-raid-ledger-invalid" -Step "fairy-battle-shared-ledger" -Message "The isolated shared fairy ledger is invalid JSON: $($_.Exception.Message)"
+  }
+  $raids = @((Get-FlowProperty -Object $raidLedger -Name "raids"))
+  $raid = if ($raids.Count -gt 0) { $raids[-1] } else { $null }
+  $attackers = @((Get-FlowProperty -Object $raid -Name "attackers"))
+  $rewards = @((Get-FlowProperty -Object $raid -Name "rewards"))
+  $attacker = if ($attackers.Count -gt 0) { $attackers[0] } else { $null }
+  $reward = if ($rewards.Count -gt 0) { $rewards[0] } else { $null }
+  $raidChecks = [ordered]@{
+    raidId = Get-FlowProperty -Object $raid -Name "raidId"
+    ownerUserId = Get-FlowProperty -Object $raid -Name "ownerUserId"
+    status = Get-FlowProperty -Object $raid -Name "status"
+    currentHp = Get-FlowProperty -Object $raid -Name "currentHp"
+    attackerUserId = Get-FlowProperty -Object $attacker -Name "userId"
+    attackerFinisher = Get-FlowProperty -Object $attacker -Name "finisher"
+    rewardUserId = Get-FlowProperty -Object $reward -Name "accountUserId"
+    rewardMasterCardId = Get-FlowProperty -Object $reward -Name "masterCardId"
+    rewardQuantity = Get-FlowProperty -Object $reward -Name "quantity"
+    rewardStatus = Get-FlowProperty -Object $reward -Name "status"
+  }
+  if ($raidChecks.raidId -ne "100001" -or $raidChecks.ownerUserId -ne "1" -or $raidChecks.status -ne "defeated" -or [int]$raidChecks.currentHp -ne 0 -or $raidChecks.attackerUserId -ne "1" -or $raidChecks.attackerFinisher -ne $true -or $raidChecks.rewardUserId -ne "1" -or [int]$raidChecks.rewardMasterCardId -ne 600 -or [int]$raidChecks.rewardQuantity -ne 2 -or $raidChecks.rewardStatus -ne "pending") {
+    Stop-FlowWithFailure -Context $Context -FailureClass "fairy-raid-ledger-mismatch" -Step "fairy-battle-shared-ledger" -Message "The shared fairy contribution/reward ledger did not match the battle: $($raidChecks | ConvertTo-Json -Compress -Depth 5)"
   }
 
   $earlyDiff = Get-FlowScreenshotDiffScore -ExpectedPath $fairyScreenshot -ActualPath $battleEarly
@@ -3465,7 +3592,8 @@ function Invoke-FlowFairyBattleSmoke {
       screenshots = @($battleEarly, $battleFourSeconds, $battleTenSeconds, $battleEighteenSeconds)
       diffFromFairy = [ordered]@{ early = $earlyDiff; fourSeconds = $fourSecondDiff; tenSeconds = $tenSecondDiff; eighteenSeconds = $eighteenSecondDiff; maximum = $maxDiff }
       settlementSave = $saveChecks
-      settlementClaim = "save-verified"
+      settlementClaim = "save-and-shared-ledger-verified"
+      sharedRaidLedger = $raidChecks
     })
 }
 
@@ -3733,6 +3861,8 @@ function Complete-FlowResult {
     serverOut = $Context.serverOut
     serverErr = $Context.serverErr
     playerSave = $Context.playerSave
+    accountRegistry = $Context.accountRegistry
+    fairyRaid = $Context.fairyRaid
     logcat = $Context.logcat
     activity = $Context.activity
     screenshots = $Context.screenshotsDir

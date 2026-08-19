@@ -119,11 +119,16 @@ guessed `thumbnail_chara_0` placeholder would hide the observable and is not an 
 
 Artifact: `work/kssma-flow-gacha-settlement-deck-smoke-mumu-a12-native-resolution-master-card`.
 
-The device had only physical `1440x2560` / density 360 and no override. The runtime gate successfully restored the
-original 260249-byte `database/master_card` as a one-variable diagnostic before launch. The request and settlement
-again contained `masterCardId=9`, but the client still requested `thumbnail_chara_0` and strict-JNI aborted. The
-master restoration was removed from the runtime gate because it did not change the observable. Resolution and the
-consumed external master file are therefore both rejected as causes of this zero lookup.
+The device had only physical `1440x2560` / density 360 and no override. That diagnostic runtime-gate attempt copied
+the original 260249-byte `database/master_card`; the request and settlement again contained `masterCardId=9`, but
+the client still requested `thumbnail_chara_0` and strict-JNI aborted. At the time the copy was removed because the
+run did not change its observable.
+
+Later stopped-process, pre-start restoration produced the decisive fairy differential: the same exact source/hash
+removed `adv_chara0`, let the original battle render, and reached the result screen. Therefore the earlier gacha run
+rejects only that run's timing/state as a fix for gacha; it does not reject the serialized cache as a process-start
+input. The controller now enforces the exact stop -> hash/restore -> verify -> start boundary. Gacha result remains
+pending a replay under that accepted launch boundary.
 
 ### Native-display fairy battle diagnosis: server victory, client aborts before result
 
@@ -148,16 +153,16 @@ observable supersedes this qualification-time inference; the accepted mapping is
 MuMu Android 12 cannot replace ARM19 as the complete automated gameplay-acceptance runtime yet. It now has a
 reproducible native-display flow entry and can navigate the original UI at 2560x1440 without mutating the emulator.
 Its earlier complete stateful exploration pass used a temporary override and must be replayed under the native
-profile before acceptance. It fails representative gacha and fairy battle edges on the same zero-ID resource/data
-lookup class after valid server traffic.
+profile before acceptance. The fairy zero-ID edge is fixed for controller-owned cold starts and has reached normal
+battle/settlement in user testing; gacha result and the older delayed reward-box crash remain open.
 
 ARM19 remains the default. Promotion requires, in order:
 
-1. Recover why the fairy event constructs `adv_chara0`, using the accepted fairy protocol/native path rather than a
-   zero-name placeholder.
-2. Recover why a drawn `masterCardId=9` constructs `thumbnail_chara_0` even though `thumbnail_chara_9` exists and
-   the save is correct.
-3. Rerun `fairy-battle-smoke` and `gacha-settlement-deck-smoke` to completion on A12, preferably with the user
+1. Rerun `fairy-battle-smoke` under the new controller-owned launch seed to turn the accepted human result into a
+   full flow artifact.
+2. Rerun the drawn `masterCardId=9` result under the same launch boundary; only if it still constructs
+   `thumbnail_chara_0` should card-result binding reopen.
+3. Rerun `gacha-settlement-deck-smoke` to completion on A12, preferably with the user
    performing the original UI clicks while flow/ADB only observes.
 4. Recheck the previously observed approximately 269-second gacha-select/reward-box stability condition.
 5. Run a broader representative matrix covering main-menu navigation, exploration state variants, battle/result,

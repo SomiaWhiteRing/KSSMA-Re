@@ -6,6 +6,7 @@ const { URLSearchParams } = require("node:url");
 const {
   ADMIN_UI_HTML,
   applyAdminFairyUpdate,
+  applyAdminGachaUpdate,
   applyAdminPlayerUpdate,
   createAdminState,
 } = require("./admin-ui");
@@ -64,6 +65,9 @@ const MAINMENU_DATA_PATH = path.join(GAME_DATA_DIR, "mainmenu.json");
 const PLAYER_LEVEL_EXP_TABLE_PATH = path.join(GAME_DATA_DIR, "player-level-exp-table.json");
 const DEFAULT_SAVE_DATA_PATH = path.join(PLAYER_DATA_DIR, "default-save.json");
 const LOCAL_SAVE_DATA_PATH = path.join(PLAYER_DATA_DIR, "local-save.json");
+const ACCOUNT_REGISTRY_DATA_PATH = path.join(PLAYER_DATA_DIR, "accounts.json");
+const ACCOUNT_SAVE_DIR = path.join(PLAYER_DATA_DIR, "accounts");
+const FAIRY_RAID_DATA_PATH = path.join(PLAYER_DATA_DIR, "fairy-raids.json");
 const WORLDS_DATA_PATH = path.join(SERVER_DATA_DIR, "worlds.json");
 const MASTERDATA_ROUTES_DATA_PATH = path.join(SERVER_DATA_DIR, "masterdata-routes.json");
 const RUNTIME_CONFIG_DATA_PATH = path.join(SERVER_DATA_DIR, "runtime-config.json");
@@ -114,10 +118,11 @@ function sendRedirect(res, location) {
   res.end();
 }
 
-function sendBinary(res, statusCode, value) {
+function sendBinary(res, statusCode, value, extraHeaders = {}) {
   res.writeHead(statusCode, {
     "Content-Type": "application/octet-stream",
     "Content-Length": value.length,
+    ...extraHeaders,
   });
   res.end(value);
 }
@@ -652,15 +657,15 @@ function createExplorationFloorXml(areaId = 0, movesByFloor = new Map(), playerS
 
 EXPLORATION_FLOOR_XML = createExplorationFloorXml();
 
-function renderNextFloorXml(floor) {
+function renderNextFloorXml(floor, indent = "      ") {
   if (!floor) {
     return [];
   }
   return [
-    "      <next_floor>",
-    `        <area_id>${floor.routeAreaId}</area_id>`,
-    ...renderFloorInfoXml(floor, 0, "        ", { displayAreaNo: true }),
-    "      </next_floor>",
+    `${indent}<next_floor>`,
+    `${indent}  <area_id>${floor.routeAreaId}</area_id>`,
+    ...renderFloorInfoXml(floor, 0, `${indent}  `, { displayAreaNo: true }),
+    `${indent}</next_floor>`,
   ];
 }
 
@@ -733,7 +738,20 @@ function renderOwnerCardListXml(cards = {}, indent = "    ") {
   ];
 }
 
-function renderYourDataXml(playerSave, indent = "    ") {
+function normalizeMainmenuNotificationState(notificationState = {}) {
+  const pendingRewardCount = Math.max(parseInteger(
+    notificationState?.pendingRewardCount,
+    parseInteger(notificationState?.rewards, 0)
+  ), 0);
+  return {
+    fairyAppearance: parseInteger(notificationState?.fairyAppearance, 0) > 0 ? 1 : 0,
+    activeRaidCount: Math.max(parseInteger(notificationState?.activeRaidCount, 0), 0),
+    pendingRewardCount,
+    rewards: Math.max(parseInteger(notificationState?.rewards, pendingRewardCount), 0),
+  };
+}
+
+function renderYourDataXml(playerSave, indent = "    ", notificationState = null) {
   if (!playerSave) {
     return [];
   }
@@ -746,12 +764,15 @@ function renderYourDataXml(playerSave, indent = "    ") {
   const abilityPoints = progression.abilityPoints || {};
   const items = save.items || {};
   const countryId = getPlayerCountryId(save);
+  const notification = notificationState === null
+    ? null
+    : normalizeMainmenuNotificationState(notificationState);
   return [
     `${indent}<your_data>`,
     `${indent}  <name>${escapeXmlText(profile.name || "Arthur")}</name>`,
     `${indent}  <leader_serial_id>${Math.max(parseInteger(profile.leaderSerialId, 0), 0)}</leader_serial_id>`,
     ...renderOwnerCardListXml(cards, `${indent}  `),
-    `${indent}  <town_level>${Math.max(parseInteger(profile.townLevel, 1), 1)}</town_level>`,
+    `${indent}  <town_level>${Math.max(parseInteger(profile.level, 1), 1)}</town_level>`,
     `${indent}  <percentage>${Math.max(parseInteger(profile.percentage, 0), 0)}</percentage>`,
     `${indent}  <gold>${Math.max(parseInteger(currencies.gold, 0), 0)}</gold>`,
     `${indent}  <cp>${Math.max(parseInteger(currencies.mc, 0), 0)}</cp>`,
@@ -765,6 +786,9 @@ function renderYourDataXml(playerSave, indent = "    ") {
     `${indent}  <ex_gauge>${Math.max(parseInteger(resources.super?.current, 0), 0)}</ex_gauge>`,
     `${indent}  <gacha_ticket>${Math.max(parseInteger(items.gachaTicket, 0), 0)}</gacha_ticket>`,
     `${indent}  <deck_rank>${Math.max(parseInteger(cards.deckRank, 0), 0)}</deck_rank>`,
+    ...(notification === null
+      ? []
+      : [`${indent}  <fairy_appearance>${notification.fairyAppearance}</fairy_appearance>`]),
     `${indent}</your_data>`,
   ];
 }
@@ -776,8 +800,8 @@ function getPlayerCountryId(playerSave) {
   return VALID_COUNTRY_IDS.has(countryId) ? countryId : 1;
 }
 
-function replaceHeaderYourData(xml, playerSave) {
-  const yourDataXml = renderYourDataXml(playerSave, "").join("");
+function replaceHeaderYourData(xml, playerSave, notificationState = null) {
+  const yourDataXml = renderYourDataXml(playerSave, "", notificationState).join("");
   if (!yourDataXml) {
     return xml;
   }
@@ -791,12 +815,26 @@ function getProfileNextExp(playerSave) {
   return Math.max(parseInteger(playerSave?.profile?.nextExp, 0), 0);
 }
 
-function createExplorationGetFloorXml(areaId = 0, floorId = 2, movesDone = 0, playerSave = null) {
+function renderExplorationGetFloorBodyXml(areaId = 0, floorId = 2, movesDone = 0, playerSave = null, indent = "    ") {
   const currentFloor = getExplorationFloorForGetFloorRequest(areaId, floorId);
   const nextFloor = getNextExplorationFloor(currentFloor);
   const progress = getExplorationProgress(currentFloor, movesDone);
-  const yourDataRows = renderYourDataXml(playerSave);
   const nextExp = getProfileNextExp(playerSave);
+  return [
+    `${indent}<get_floor>`,
+    `${indent}  <area_id>${currentFloor.routeAreaId}</area_id>`,
+    `${indent}  <bg>${currentFloor.regionBg}</bg>`,
+    `${indent}  <bgm>${currentFloor.regionBgm}</bgm>`,
+    `${indent}  <area_name>${escapeXmlText(currentFloor.regionName)}</area_name>`,
+    `${indent}  <next_exp>${nextExp}</next_exp>`,
+    ...renderNextFloorXml(nextFloor, `${indent}  `),
+    ...renderFloorInfoXml(currentFloor, progress, `${indent}  `, { displayAreaNo: true }),
+    `${indent}</get_floor>`,
+  ];
+}
+
+function createExplorationGetFloorXml(areaId = 0, floorId = 2, movesDone = 0, playerSave = null) {
+  const yourDataRows = renderYourDataXml(playerSave);
 
   return [
   '<?xml version="1.0" encoding="UTF-8"?>',
@@ -808,20 +846,38 @@ function createExplorationGetFloorXml(areaId = 0, floorId = 2, movesDone = 0, pl
   "    <next_scene>6200</next_scene>",
   "  </header>",
   "  <body>",
-  "    <get_floor>",
-  `      <area_id>${currentFloor.routeAreaId}</area_id>`,
-  `      <bg>${currentFloor.regionBg}</bg>`,
-  `      <bgm>${currentFloor.regionBgm}</bgm>`,
-  `      <area_name>${escapeXmlText(currentFloor.regionName)}</area_name>`,
-  `      <next_exp>${nextExp}</next_exp>`,
-  ...renderNextFloorXml(nextFloor),
-  ...renderFloorInfoXml(currentFloor, progress, "      ", { displayAreaNo: true }),
-  "    </get_floor>",
+  ...renderExplorationGetFloorBodyXml(areaId, floorId, movesDone, playerSave),
   "  </body>",
   "</response>",
 ].join("");
 }
 const EXPLORATION_GET_FLOOR_XML = createExplorationGetFloorXml();
+function renderFairyTagXml(fairy, indent = "      ", nowMs = Date.now()) {
+  const expiresAt = Date.parse(fairy?.expiresAt || "");
+  const remainingSeconds = Number.isFinite(expiresAt)
+    ? Math.max(Math.ceil((expiresAt - nowMs) / 1000), 0)
+    : Math.max(parseInteger(fairy?.timeLimitSeconds, 60), 0);
+  return [
+    `${indent}<fairy>`,
+    `${indent}  <serial_id>${escapeXmlText(fairy?.serialId)}</serial_id>`,
+    `${indent}  <master_boss_id>${Math.max(parseInteger(fairy?.masterBossId, 0), 0)}</master_boss_id>`,
+    `${indent}  <name>${escapeXmlText(fairy?.name)}</name>`,
+    `${indent}  <lv>${Math.max(parseInteger(fairy?.level, 1), 1)}</lv>`,
+    `${indent}  <hp>${Math.max(parseInteger(fairy?.currentHp, 0), 0)}</hp>`,
+    `${indent}  <hp_max>${Math.max(parseInteger(fairy?.maxHp, 1), 1)}</hp_max>`,
+    `${indent}  <time_limit>${remainingSeconds}</time_limit>`,
+    `${indent}  <discoverer_id>${Math.max(parseInteger(fairy?.discovererId, 1), 1)}</discoverer_id>`,
+    `${indent}  <rare_flg>${fairy?.rareFlg ? 1 : 0}</rare_flg>`,
+    `${indent}  <event_chara_flg>${fairy?.eventCharaFlg ? 1 : 0}</event_chara_flg>`,
+    ...(Array.isArray(fairy?.attackers) ? [
+      `${indent}  <attacker_history>`,
+      ...fairy.attackers.flatMap((attacker) => renderAttackerXml(attacker, `${indent}    `)),
+      `${indent}  </attacker_history>`,
+    ] : []),
+    `${indent}</fairy>`,
+  ];
+}
+
 function renderExplorationExploreBodyXml(
   progress = 10,
   rewards = getExplorationStepRewards(EXPLORATION_FLOORS[0]),
@@ -838,20 +894,7 @@ function renderExplorationExploreBodyXml(
   const lvup = levelResult?.levelUp ? 1 : 0;
   const isLimit = levelResult?.isLimit ? 1 : 0;
   const safeEventType = Math.max(parseInteger(eventType, fairyEncounter ? 1 : 0), 0);
-  const fairyRows = fairyEncounter ? [
-    `${indent}  <fairy>`,
-    `${indent}    <serial_id>${escapeXmlText(fairyEncounter.serialId)}</serial_id>`,
-    `${indent}    <master_boss_id>${Math.max(parseInteger(fairyEncounter.masterBossId, 0), 0)}</master_boss_id>`,
-    `${indent}    <name>${escapeXmlText(fairyEncounter.name)}</name>`,
-    `${indent}    <lv>${Math.max(parseInteger(fairyEncounter.level, 1), 1)}</lv>`,
-    `${indent}    <hp>${Math.max(parseInteger(fairyEncounter.currentHp, 1), 0)}</hp>`,
-    `${indent}    <hp_max>${Math.max(parseInteger(fairyEncounter.maxHp, 1), 1)}</hp_max>`,
-    `${indent}    <time_limit>${Math.max(parseInteger(fairyEncounter.timeLimitSeconds, 60), 0)}</time_limit>`,
-    `${indent}    <discoverer_id>${Math.max(parseInteger(fairyEncounter.discovererId, 1), 1)}</discoverer_id>`,
-    `${indent}    <rare_flg>${fairyEncounter.rareFlg ? 1 : 0}</rare_flg>`,
-    `${indent}    <event_chara_flg>${fairyEncounter.eventCharaFlg ? 1 : 0}</event_chara_flg>`,
-    `${indent}  </fairy>`,
-  ] : [];
+  const fairyRows = fairyEncounter ? renderFairyTagXml(fairyEncounter, `${indent}  `) : [];
 
   return [
     `${indent}<explore>`,
@@ -981,12 +1024,14 @@ function getMainmenuInformationForPlayer(playerSave = createDefaultPlayerSave())
   };
 }
 
-function renderMainmenuFields(playerSave = createDefaultPlayerSave(), indent = "    ") {
+function renderMainmenuFields(playerSave = createDefaultPlayerSave(), indent = "    ", notificationState = {}) {
   const information = getMainmenuInformationForPlayer(playerSave);
+  const notification = normalizeMainmenuNotificationState(notificationState);
   return [
     `${indent}<mainmenu>`,
     `${indent}  <current_bgfile>${MAINMENU_BGFILE}</current_bgfile>`,
     `${indent}  <previous_bgfile>${MAINMENU_PREVIOUS_BGFILE}</previous_bgfile>`,
+    `${indent}  <rewards>${notification.rewards}</rewards>`,
     `${indent}  <infomation>`,
     `${indent}    <fairy_pose>${information.fairyPose}</fairy_pose>`,
     `${indent}    <fairy_face>${information.fairyFace}</fairy_face>`,
@@ -1000,18 +1045,18 @@ function renderMainmenuFields(playerSave = createDefaultPlayerSave(), indent = "
   ];
 }
 
-function createMainmenuUpdateXml(playerSave = createDefaultPlayerSave()) {
+function createMainmenuUpdateXml(playerSave = createDefaultPlayerSave(), notificationState = {}) {
   return [
     '<?xml version="1.0" encoding="UTF-8"?>',
     "<response>",
     "  <header>",
     "    <error><code>0</code></error>",
     "    <session_id>local-mainmenu</session_id>",
-    ...renderYourDataXml(playerSave),
+    ...renderYourDataXml(playerSave, "    ", notificationState),
     "    <next_scene>2100</next_scene>",
     "  </header>",
     "  <body>",
-    ...renderMainmenuFields(playerSave),
+    ...renderMainmenuFields(playerSave, "    ", notificationState),
     "  </body>",
     "</response>",
   ].join("");
@@ -1047,6 +1092,35 @@ function getFairyBattleDeckCards(playerSave) {
   return leader ? [leader] : instances.slice(0, 1);
 }
 
+function getFairyBattleBcState(playerSave, deckCards = getFairyBattleDeckCards(playerSave)) {
+  const cardCosts = deckCards.map((card) => {
+    const masterCardId = Math.max(parseInteger(card?.masterCardId, 0), 0);
+    const masterCard = MASTER_CARD_BY_ID.get(masterCardId);
+    if (!masterCard) {
+      throw new Error(`fairy battle card master is missing: ${masterCardId}`);
+    }
+    return {
+      masterCardId,
+      cost: Math.max(parseInteger(masterCard.cost, 0), 0),
+    };
+  });
+  const requiredBc = cardCosts.reduce((sum, card) => sum + card.cost, 0);
+  const currentBc = Math.max(parseInteger(playerSave?.resources?.bc?.current, 0), 0);
+  return {
+    cardCosts,
+    currentBc,
+    requiredBc,
+    sufficient: currentBc >= requiredBc,
+  };
+}
+
+function redactSensitiveParams(params) {
+  return Object.fromEntries(Object.entries(params || {}).map(([key, value]) => [
+    key,
+    /password|token|secret/i.test(key) && value ? "[redacted]" : value,
+  ]));
+}
+
 function applyFairyRewardExperience(playerSave, gainedExp) {
   const profile = playerSave.profile;
   const beforeLevel = Math.max(parseInteger(profile.level, 1), 1);
@@ -1080,15 +1154,22 @@ function applyFairyRewardExperience(playerSave, gainedExp) {
   return { beforeLevel, afterLevel, beforeExp, afterExp, abilityPointsGranted };
 }
 
-function createFairyBattleSettlement(playerSave, activeFairy, nowMs = Date.now()) {
+function createFairyBattleSettlement(playerSave, activeFairy, nowMs = Date.now(), options = {}) {
   ensureExplorationSaveShape(playerSave);
   const deckCards = getFairyBattleDeckCards(playerSave);
   if (!deckCards.length) {
     throw new Error("fairy battle requires one resolved player deck card");
   }
-  // ponytail: the recovered response/path does not yet establish the original BC charge or
-  // insufficient-BC failure contract, so this bounded local battle leaves BC unchanged. Upgrade
-  // this together with a captured retry/insufficient-BC edge instead of guessing a cost here.
+  const bcState = getFairyBattleBcState(playerSave, deckCards);
+  if (!bcState.sufficient) {
+    const error = new Error(`fairy battle requires ${bcState.requiredBc} BC but only ${bcState.currentBc} is available`);
+    error.code = "FAIRY_BATTLE_INSUFFICIENT_BC";
+    error.currentBc = bcState.currentBc;
+    error.requiredBc = bcState.requiredBc;
+    error.cardCosts = bcState.cardCosts;
+    throw error;
+  }
+  playerSave.resources.bc.current = bcState.currentBc - bcState.requiredBc;
   const playerMaxHp = Math.max(deckCards.reduce((sum, card) => sum + Math.max(parseInteger(card.hp, 0), 0), 0), 1);
   const fairyMaxHp = Math.max(parseInteger(activeFairy.maxHp, 1), 1);
   const fairyInitialHp = Math.min(Math.max(parseInteger(activeFairy.currentHp, fairyMaxHp), 1), fairyMaxHp);
@@ -1158,11 +1239,19 @@ function createFairyBattleSettlement(playerSave, activeFairy, nowMs = Date.now()
     lastBattledAt: battledAt,
     defeatedAt: playerWon ? battledAt : null,
   };
-  playerSave.battle.fairy.discovered[String(activeFairy.serialId)] = cloneJson(resolvedFairy);
-  playerSave.battle.fairy.active = playerWon ? null : resolvedFairy;
+  const ownedByPlayer = options.ownedByPlayer !== false;
+  if (ownedByPlayer) {
+    playerSave.battle.fairy.discovered[String(activeFairy.serialId)] = cloneJson(resolvedFairy);
+    playerSave.battle.fairy.active = playerWon ? null : resolvedFairy;
+  }
   playerSave.battle.fairy.history.push({
     serialId: String(activeFairy.serialId),
+    discovererId: normalizeAccountUserId(activeFairy.discovererId),
+    assisted: !ownedByPlayer,
     won: playerWon,
+    bcBefore: bcState.currentBc,
+    bcCost: bcState.requiredBc,
+    bcAfter: Math.max(parseInteger(playerSave.resources.bc.current, 0), 0),
     playerDamage: fairyInitialHp - fairyHp,
     fairyDamage: playerMaxHp - playerHp,
     rewardGold,
@@ -1188,6 +1277,10 @@ function createFairyBattleSettlement(playerSave, activeFairy, nowMs = Date.now()
     fairyRemainingHp: fairyHp,
     fairyAttackPower,
     fairyVisualMasterCardId,
+    beforeBc: bcState.currentBc,
+    battleCost: bcState.requiredBc,
+    afterBc: Math.max(parseInteger(playerSave.resources.bc.current, 0), 0),
+    battleCardCosts: bcState.cardCosts,
     beforeGold,
     afterGold: playerSave.currencies.gold,
     rewardGold,
@@ -1263,6 +1356,7 @@ function createExplorationFairyBattleXml(playerSave, settlement) {
     playerSave.exploration?.floors?.[currentFloorKey]?.progress,
     0
   ), 0), 100);
+  const postBattleEventType = settlement.playerWon ? 18 : 10;
   return [
     '<?xml version="1.0" encoding="UTF-8"?>',
     "<response>",
@@ -1304,9 +1398,16 @@ function createExplorationFairyBattleXml(playerSave, settlement) {
     "      <battle_event_result><battle_point>0</battle_point><bonus_end_time>0</bonus_end_time><bonus_rate>1</bonus_rate><get_point>0</get_point></battle_event_result>",
     "      <result_scene>4420</result_scene>",
     "    </battle_result>",
-    // Scene 4420 reuses ExplorationMain. Event 18 is its original area_fairy_dead ->
-    // reward_check_com path; no rare_fairy means an ordinary victory stops at settlement/return.
-    ...renderExplorationExploreBodyXml(postBattleProgress, { gold: 0, getExp: 0 }, playerSave, null, null, 18),
+    // Scene 4420 reuses ExplorationMain. Event 10 restores the attackable fairy after a loss;
+    // event 18 is the original area_fairy_dead -> reward_check_com -> return victory path.
+    ...renderExplorationExploreBodyXml(
+      postBattleProgress,
+      { gold: 0, getExp: 0 },
+      playerSave,
+      null,
+      settlement.playerWon ? null : settlement.fairy,
+      postBattleEventType
+    ),
     "  </body>",
     "</response>",
   ].join("");
@@ -1360,16 +1461,58 @@ function createRoundtableEditXml(playerSave = createDefaultPlayerSave()) {
   ].join("");
 }
 
-function getGachaSelectPage(pageName = "") {
-  const pages = GAME_GACHA_DATA.pages || {};
-  const defaultPage = GAME_GACHA_DATA.defaultPage || "main";
-  const wanted = (pageName || defaultPage).trim();
-  const pageKey = pages[wanted] ? wanted : defaultPage;
-  return { pageKey, select: pages[pageKey] || {} };
+function getGachaProducts(gachaData = readGachaData()) {
+  return Array.isArray(gachaData.products) ? gachaData.products : [];
 }
 
-function createGachaSelectSkeletonXml(playerSave = createDefaultPlayerSave(), pageName = "") {
-  const { select } = getGachaSelectPage(pageName);
+function getGachaProduct(productId, gachaData = readGachaData()) {
+  const wanted = parseInteger(productId, 0);
+  return getGachaProducts(gachaData).find((product) => parseInteger(product.productId, 0) === wanted) || null;
+}
+
+function formatGachaProductText(value, product) {
+  return String(value ?? "").replace(/\{cost\}/g, String(Math.max(parseInteger(product?.cost, 0), 0)));
+}
+
+function resolveGachaSelectContent(content, gachaData) {
+  const resolved = cloneJson(content);
+  const product = content.productId === undefined ? null : getGachaProduct(content.productId, gachaData);
+  if (content.productId !== undefined && !product) {
+    throw new Error(`gacha select references unknown productId ${content.productId}`);
+  }
+  if (product) {
+    resolved.behavior = product.behavior;
+    if (resolved.message) {
+      resolved.message = formatGachaProductText(resolved.message, product);
+    }
+    if (Array.isArray(resolved.textMessages)) {
+      resolved.textMessages = resolved.textMessages.map((message) => ({
+        ...message,
+        text: formatGachaProductText(message.text, product),
+      }));
+    }
+  }
+  return resolved;
+}
+
+function getGachaSelectPage(pageName = "", gachaData = readGachaData()) {
+  const pages = gachaData.pages || {};
+  const defaultPage = gachaData.defaultPage || "main";
+  const wanted = (pageName || defaultPage).trim();
+  const pageKey = pages[wanted] ? wanted : defaultPage;
+  const select = pages[pageKey] || {};
+  return {
+    pageKey,
+    select: {
+      ...select,
+      contents: (Array.isArray(select.contents) ? select.contents : [])
+        .map((content) => resolveGachaSelectContent(content, gachaData)),
+    },
+  };
+}
+
+function createGachaSelectSkeletonXml(playerSave = createDefaultPlayerSave(), pageName = "", gachaData = readGachaData()) {
+  const { select } = getGachaSelectPage(pageName, gachaData);
   const contents = Array.isArray(select.contents) ? select.contents : [];
   const scrollHeight = Math.max(parseInteger(select.scrollHeight, 0), 0);
   return [
@@ -1389,6 +1532,30 @@ function createGachaSelectSkeletonXml(playerSave = createDefaultPlayerSave(), pa
     "      </xml_contents>",
     "    </gacha_select>",
     "  </body>",
+    "</response>",
+  ].join("");
+}
+
+function getGachaInsufficientBalanceMessage(product) {
+  const currency = String(product?.currency || "");
+  if (currency === "mc") {
+    return "MC不足";
+  }
+  if (currency === "gachaTicket") {
+    return "扭蛋券不足";
+  }
+  return "友情点不足";
+}
+
+function createGachaBuyInsufficientXml(product) {
+  const message = getGachaInsufficientBalanceMessage(product);
+  return [
+    '<?xml version="1.0" encoding="UTF-8"?>',
+    "<response>",
+    "  <header>",
+    `    <error><code>1</code><message>${escapeXmlText(message)}</message></error>`,
+    "  </header>",
+    "  <body></body>",
     "</response>",
   ].join("");
 }
@@ -1440,18 +1607,30 @@ function renderGachaSelectContentXml(content, indent = "        ") {
   return rows;
 }
 
-function createGachaBuyXml(playerSave = createDefaultPlayerSave(), resultCard = null, productId = 1) {
-  const buy = GAME_GACHA_DATA.buy || {};
+function createGachaBuyXml(playerSave = createDefaultPlayerSave(), resultCard = null, productId = 1, gachaData = readGachaData()) {
+  const buy = gachaData.buy || {};
   const drawCard = buy.drawCard || {};
-  const fallbackDrawResult = resultCard ? null : addGachaDrawCardToPlayerSave(playerSave, drawCard);
-  const responseSave = resultCard ? playerSave : fallbackDrawResult.save;
-  const responseCard = resultCard
-    ? { ...drawCard, serialId: resultCard.serialId, masterCardId: resultCard.masterCardId }
-    : drawCard;
+  const product = getGachaProduct(productId, gachaData) || getGachaProduct(1, gachaData);
+  if (!product) {
+    throw new Error(`unknown gacha productId ${productId}`);
+  }
+  let responseSave = playerSave;
+  let cards = Array.isArray(resultCard) ? resultCard : (resultCard ? [resultCard] : []);
+  if (!cards.length) {
+    const fallbackMasterCardId = normalizeWeightedCardPool(product.pool, `gacha product ${product.productId} pool`)[0].masterCardId;
+    const fallback = addMasterCardToPlayerSave(playerSave, fallbackMasterCardId, 0);
+    responseSave = fallback.save;
+    cards = [fallback.card];
+  }
+  const responseCards = cards.map((card) => ({
+    ...drawCard,
+    serialId: card.serialId,
+    masterCardId: card.masterCardId,
+    holoFlag: card.holography ?? card.holoFlag ?? 0,
+  }));
   const completeList = buy.completeList || {};
-  const usePaid = parseInteger(productId, 1) === 2;
-  const gachaType = usePaid ? parseInteger(buy.paidGachaType, 2) : parseInteger(buy.gachaType, 1);
-  const telopMessage = usePaid ? (buy.paidTelopMessage || buy.telopMessage || "") : (buy.telopMessage || "");
+  const gachaType = Math.max(parseInteger(product.gachaType, 1), 0);
+  const telopMessage = product.telopMessage || product.name || "";
   return [
     '<?xml version="1.0" encoding="UTF-8"?>',
     "<response>",
@@ -1464,7 +1643,7 @@ function createGachaBuyXml(playerSave = createDefaultPlayerSave(), resultCard = 
     "  <body>",
     "    <gacha_buy>",
     "      <final_result>",
-    ...renderGachaExUserCardXml(responseCard, "        "),
+    ...responseCards.flatMap((card) => renderGachaExUserCardXml(card, "        ")),
     "      </final_result>",
     `      <gacha_type>${Math.max(gachaType, 0)}</gacha_type>`,
     `      <telop_message>${escapeXmlText(telopMessage)}</telop_message>`,
@@ -1532,50 +1711,170 @@ function addGachaDrawCardToPlayerSave(playerSave, drawCard) {
   return { save, card: newCard, added: true };
 }
 
-function applyGachaBuySettlement(playerSave, params = {}) {
+function normalizeWeightedCardPool(pool, label = "card pool") {
+  if (!Array.isArray(pool) || !pool.length || pool.length > 480) {
+    throw new Error(`${label} must contain 1 to 480 cards`);
+  }
+  const seen = new Set();
+  let totalWeight = 0;
+  const rows = pool.map((entry, index) => {
+    const masterCardId = Math.max(parseInteger(entry?.masterCardId ?? entry?.master_card_id, 0), 0);
+    const weight = Math.max(parseInteger(entry?.weight, 0), 0);
+    if (!masterCardId || !MASTER_CARD_BY_ID.has(masterCardId)) {
+      throw new Error(`${label}[${index}] masterCardId ${masterCardId} is not present in recovered master cards`);
+    }
+    if (!weight || weight > 1000000) {
+      throw new Error(`${label}[${index}] weight must be an integer from 1 to 1000000`);
+    }
+    if (seen.has(masterCardId)) {
+      throw new Error(`${label} contains duplicate masterCardId ${masterCardId}`);
+    }
+    seen.add(masterCardId);
+    totalWeight += weight;
+    return { masterCardId, weight };
+  });
+  if (!Number.isSafeInteger(totalWeight) || totalWeight <= 0) {
+    throw new Error(`${label} total weight is invalid`);
+  }
+  return rows;
+}
+
+function selectWeightedCardMasterId(pool, randomInt = crypto.randomInt) {
+  const totalWeight = pool.reduce((sum, entry) => sum + entry.weight, 0);
+  const roll = randomInt(totalWeight);
+  if (!Number.isSafeInteger(roll) || roll < 0 || roll >= totalWeight) {
+    throw new Error(`weighted card RNG returned ${roll} outside 0..${totalWeight - 1}`);
+  }
+  let cursor = roll;
+  for (const entry of pool) {
+    if (cursor < entry.weight) {
+      return entry.masterCardId;
+    }
+    cursor -= entry.weight;
+  }
+  throw new Error("weighted card selection did not resolve a card");
+}
+
+function addMasterCardToPlayerSave(playerSave, masterCardId, holography = 0) {
+  const save = mergeJsonObject(createDefaultPlayerSave(), playerSave || {});
+  const master = MASTER_CARD_BY_ID.get(Math.max(parseInteger(masterCardId, 0), 0));
+  if (!master) {
+    throw new Error(`reward card master is missing: ${masterCardId}`);
+  }
+  const instances = Array.isArray(save.cards?.instances) ? save.cards.instances : [];
+  if (instances.length >= Math.max(parseInteger(save.cards?.max, 0), 0)) {
+    const error = new Error("card inventory is full");
+    error.code = "CARD_INVENTORY_FULL";
+    throw error;
+  }
+  const serialId = getNextPlayerCardSerialId(instances);
+  const isHolo = holography ? 1 : 0;
+  const card = {
+    serialId,
+    masterCardId: parseInteger(master.master_card_id, masterCardId),
+    holography: isHolo,
+    hp: Math.max(parseInteger(isHolo ? master.base_holo_hp : master.base_hp, 0), 0),
+    power: Math.max(parseInteger(isHolo ? master.base_holo_power : master.base_power, 0), 0),
+    critical: 0,
+    level: 1,
+    maxLevel: Math.max(parseInteger(isHolo ? master.max_lv_holo : master.max_lv, 1), 1),
+    exp: 0,
+    maxExp: 0,
+    nextExp: 0,
+    expDiff: 0,
+    expPercent: 0,
+    salePrice: Math.max(parseInteger(master.sale_price, 0), 0),
+    materialPrice: 0,
+    evolutionPrice: Math.max(parseInteger(master.evolution_base_price, 0), 0),
+    plusLimitCount: 0,
+    limitOver: 0,
+  };
+  save.cards.instances = [...instances, card];
+  save.cards.count = save.cards.instances.length;
+  return { save, card };
+}
+
+function applyGachaBuySettlement(playerSave, params = {}, options = {}) {
   const save = mergeJsonObject(createDefaultPlayerSave(), playerSave || {});
   const productId = parseInteger(params.product_id, 1);
   const bulk = Math.max(parseInteger(params.bulk, 1), 1);
-  const buy = GAME_GACHA_DATA.buy || {};
-  const drawCard = buy.drawCard || {};
-  const currencies = save.currencies || {};
+  const gachaData = options.gachaData || readGachaData();
+  const product = getGachaProduct(productId, gachaData);
+  if (!product) {
+    const error = new Error(`unknown gacha productId ${productId}`);
+    error.code = "GACHA_UNKNOWN_PRODUCT";
+    throw error;
+  }
+  const pool = normalizeWeightedCardPool(product.pool, `gacha product ${productId} pool`);
+  const drawCount = Math.max(parseInteger(product.drawCount, 1), 1);
+  const cost = Math.max(parseInteger(product.cost, 0), 0);
+  const currency = String(product.currency || "");
   const friendshipBefore = Math.max(parseInteger(save.currencies?.friendshipPoint, 0), 0);
-  const friendshipCost = Math.max(parseInteger(save.gacha?.friendshipCost, 0), 0) * bulk;
-  const useFriendship = productId === 1;
-  const mcBefore = Math.max(parseInteger(currencies.mc, 0), 0);
-  const paidCostMc = Math.max(parseInteger(save.gacha?.paidCostMc, 0), 0) * bulk;
-  const usePaid = productId === 2;
-  if (useFriendship && friendshipCost > 0) {
-    save.currencies = save.currencies || {};
-    save.currencies.friendshipPoint = Math.max(friendshipBefore - friendshipCost, 0);
+  const mcBefore = Math.max(parseInteger(save.currencies?.mc, 0), 0);
+  const ticketBefore = Math.max(parseInteger(save.items?.gachaTicket, 0), 0);
+  const balanceBefore = currency === "friendshipPoint"
+    ? friendshipBefore
+    : currency === "mc"
+      ? mcBefore
+      : currency === "gachaTicket"
+        ? ticketBefore
+        : -1;
+  if (balanceBefore < 0) {
+    throw new Error(`gacha product ${productId} has unsupported currency ${currency}`);
   }
-  if (usePaid && paidCostMc > 0) {
-    save.currencies = save.currencies || {};
-    save.currencies.mc = Math.max(mcBefore - paidCostMc, 0);
+  const instances = Array.isArray(save.cards?.instances) ? save.cards.instances : [];
+  const cardMax = Math.max(parseInteger(save.cards?.max, 0), 0);
+  if (instances.length + drawCount > cardMax) {
+    const error = new Error(`gacha draw needs ${drawCount} free card slots`);
+    error.code = "CARD_INVENTORY_FULL";
+    throw error;
   }
-  const drawResult = addGachaDrawCardToPlayerSave(save, drawCard);
-  const settledSave = drawResult.save;
+  if (balanceBefore < cost) {
+    const error = new Error(`gacha product ${productId} requires ${cost} ${currency} but only ${balanceBefore} is available`);
+    error.code = "GACHA_INSUFFICIENT_BALANCE";
+    throw error;
+  }
+  save.currencies = save.currencies || {};
+  save.items = save.items || {};
+  if (currency === "friendshipPoint") save.currencies.friendshipPoint = balanceBefore - cost;
+  if (currency === "mc") save.currencies.mc = balanceBefore - cost;
+  if (currency === "gachaTicket") save.items.gachaTicket = balanceBefore - cost;
+  let settledSave = save;
+  const drawCards = [];
+  for (let index = 0; index < drawCount; index += 1) {
+    const masterCardId = selectWeightedCardMasterId(pool, options.randomInt);
+    const drawResult = addMasterCardToPlayerSave(settledSave, masterCardId, 0);
+    settledSave = drawResult.save;
+    drawCards.push(drawResult.card);
+  }
   settledSave.gacha = settledSave.gacha || {};
   settledSave.gacha.history = Array.isArray(settledSave.gacha.history) ? settledSave.gacha.history : [];
-  if (drawResult.card) {
+  for (const [drawIndex, card] of drawCards.entries()) {
     settledSave.gacha.history.push({
       productId,
       bulk,
-      serialId: drawResult.card.serialId,
-      masterCardId: drawResult.card.masterCardId,
+      drawIndex,
+      drawCount,
+      serialId: card.serialId,
+      masterCardId: card.masterCardId,
     });
   }
   settledSave.stats = settledSave.stats || {};
-  settledSave.stats.cardsDrawn = parseInteger(settledSave.stats.cardsDrawn, 0) + (drawResult.card ? 1 : 0);
+  settledSave.stats.cardsDrawn = parseInteger(settledSave.stats.cardsDrawn, 0) + drawCards.length;
   return {
     playerSave: settledSave,
-    drawCard: drawResult.card,
+    drawCard: drawCards[0] || null,
+    drawCards,
+    product,
     friendshipBefore,
     friendshipAfter: Math.max(parseInteger(settledSave.currencies?.friendshipPoint, 0), 0),
-    friendshipCost: useFriendship ? friendshipCost : 0,
+    friendshipCost: currency === "friendshipPoint" ? cost : 0,
     mcBefore,
     mcAfter: Math.max(parseInteger(settledSave.currencies?.mc, 0), 0),
-    mcCost: usePaid ? paidCostMc : 0,
+    mcCost: currency === "mc" ? cost : 0,
+    ticketBefore,
+    ticketAfter: Math.max(parseInteger(settledSave.items?.gachaTicket, 0), 0),
+    ticketCost: currency === "gachaTicket" ? cost : 0,
     productId,
     bulk,
     ownerCardCount: Array.isArray(settledSave.cards?.instances) ? settledSave.cards.instances.length : 0,
@@ -1627,20 +1926,182 @@ function createMenuRankingSkeletonXml(playerSave = createDefaultPlayerSave()) {
   ].join("");
 }
 
-function createMenuFairySelectSkeletonXml(playerSave = createDefaultPlayerSave()) {
+function createFairyEventFriendRow(raid) {
+  const ownerSave = raid.ownerSave || createDefaultPlayerSave();
+  return {
+    id: parseInteger(raid.ownerUserId, 1),
+    name: raid.ownerName || ownerSave.profile?.name || "Arthur",
+    countryId: getPlayerCountryId(ownerSave),
+    cost: 0,
+    win: parseInteger(ownerSave.battle?.wins, 0),
+    lose: parseInteger(ownerSave.battle?.losses, 0),
+    townLevel: parseInteger(ownerSave.profile?.townLevel, 1),
+    nextExp: parseInteger(ownerSave.profile?.nextExp, 0),
+    leaderCard: getStarterCardForFriendList(ownerSave),
+    rank: parseInteger(ownerSave.profile?.level, 1),
+    friends: 0,
+    friendMax: parseInteger(ownerSave.friends?.max, 30),
+    lastLogin: "今日",
+    exGauge: parseInteger(ownerSave.resources?.super?.current, 0),
+    maxCardNum: parseInteger(ownerSave.cards?.max, 0),
+    statusFriend: 2,
+    statusYell: 0,
+    countHunting: 1,
+    deckRank: parseInteger(ownerSave.cards?.deckRank, 0),
+  };
+}
+
+function createMenuFairySelectSkeletonXml(
+  playerSave = createDefaultPlayerSave(),
+  raids = [],
+  remainingRewards = 0,
+  nowMs = Date.now(),
+  notificationState = null
+) {
+  const events = raids.flatMap((raid) => {
+    const fairy = raidToFairySnapshot(raid);
+    fairy.attackers = raid.attackers || [];
+    return [
+      "      <fairy_event>",
+      ...renderMenuFriendRowXml(createFairyEventFriendRow(raid), raid.ownerSave || playerSave, "        "),
+      ...renderFairyTagXml(fairy, "        ", nowMs),
+      // The client treats put_down as the row action gate: 1 opens fairy_floor; 0 opens attack history.
+      `        <put_down>${raid.status === "active" ? 1 : 0}</put_down>`,
+      `        <start_time>${Math.max(Math.floor(Date.parse(raid.discoveredAt || "") / 1000) || 0, 0)}</start_time>`,
+      `        <reward_status>${(raid.rewards || []).some((reward) => reward.status === "pending") ? 1 : 0}</reward_status>`,
+      "      </fairy_event>",
+    ];
+  });
   return [
     '<?xml version="1.0" encoding="UTF-8"?>',
     "<response>",
     "  <header>",
     "    <error><code>0</code></error>",
     "    <session_id>local-fairy-select</session_id>",
-    ...renderYourDataXml(playerSave),
+    ...renderYourDataXml(playerSave, "    ", notificationState),
     "    <next_scene>29200</next_scene>",
     "  </header>",
     "  <body>",
     "    <fairy_select>",
-    "      <fairy_rewards>0</fairy_rewards>",
+    ...events,
+    `      <remaining_rewards>${Math.max(parseInteger(remainingRewards, 0), 0)}</remaining_rewards>`,
     "    </fairy_select>",
+    "  </body>",
+    "</response>",
+  ].join("");
+}
+
+function createExplorationFairyFloorXml(playerSave, raid, nowMs = Date.now()) {
+  const fairy = raidToFairySnapshot(raid);
+  fairy.attackers = raid.attackers || [];
+  const [routeAreaId, floorId] = String(raid.floorKey || "0:2").split(":").map((value) => parseInteger(value, 0));
+  const movesDone = parseInteger(playerSave.exploration?.movesByFloor?.[raid.floorKey], 0);
+  const progress = getExplorationProgress(getExplorationFloor(routeAreaId, floorId), movesDone);
+  return [
+    '<?xml version="1.0" encoding="UTF-8"?>',
+    "<response>",
+    "  <header>",
+    "    <error><code>0</code></error>",
+    "    <session_id>local-fairy-floor</session_id>",
+    ...renderYourDataXml(playerSave),
+    "    <next_scene>6202</next_scene>",
+    "  </header>",
+    "  <body>",
+    "    <fairy_floor>",
+    ...renderExplorationGetFloorBodyXml(routeAreaId, floorId, movesDone, playerSave, "      "),
+    // The menu path already pushes scene 6202. Event 1 is the exploration-only discovery
+    // transition to 6202; event 11 selects the original fairy_stay detail behavior in that scene.
+    ...renderExplorationExploreBodyXml(progress, { gold: 0, getExp: 0 }, playerSave, null, fairy, 11, "      "),
+    "    </fairy_floor>",
+    "  </body>",
+    "</response>",
+  ].join("");
+}
+
+function renderAttackerXml(attacker, indent = "          ") {
+  const leaderCard = attacker.leaderCard || createDefaultPlayerSave().cards.instances[0];
+  return [
+    `${indent}<attacker>`,
+    `${indent}  <user_id>${Math.max(parseInteger(attacker.userId, 1), 1)}</user_id>`,
+    `${indent}  <discoverer>${attacker.discoverer ? 1 : 0}</discoverer>`,
+    `${indent}  <user_name>${escapeXmlText(attacker.userName || "Arthur")}</user_name>`,
+    `${indent}  <attack_point>${Math.max(parseInteger(attacker.attackPoint, 0), 0)}</attack_point>`,
+    `${indent}  <attack_times>${Math.max(parseInteger(attacker.attackTimes, 0), 0)}</attack_times>`,
+    `${indent}  <country_id>${VALID_COUNTRY_IDS.has(parseInteger(attacker.countryId, 1)) ? parseInteger(attacker.countryId, 1) : 1}</country_id>`,
+    `${indent}  <status_friend>2</status_friend>`,
+    `${indent}  <status_yell>0</status_yell>`,
+    ...renderLeaderCardXml(leaderCard, `${indent}  `),
+    `${indent}</attacker>`,
+  ];
+}
+
+function createExplorationFairyHistoryXml(playerSave, raid) {
+  const fairy = raidToFairySnapshot(raid);
+  fairy.attackers = raid.attackers || [];
+  return [
+    '<?xml version="1.0" encoding="UTF-8"?>',
+    "<response>",
+    "  <header>",
+    "    <error><code>0</code></error>",
+    "    <session_id>local-fairy-history</session_id>",
+    ...renderYourDataXml(playerSave),
+    "  </header>",
+    "  <body>",
+    "    <fairy_history>",
+    ...renderFairyTagXml(fairy, "      "),
+    "    </fairy_history>",
+    "  </body>",
+    "</response>",
+  ].join("");
+}
+
+function createMenuRewardBoxXml(playerSave, rewards = []) {
+  return [
+    '<?xml version="1.0" encoding="UTF-8"?>',
+    "<response>",
+    "  <header>",
+    "    <error><code>0</code></error>",
+    "    <session_id>local-reward-box</session_id>",
+    ...renderYourDataXml(playerSave),
+    "    <next_scene>21100</next_scene>",
+    "  </header>",
+    "  <body>",
+    "    <rewardbox_list>",
+    ...rewards.flatMap((reward) => [
+      "      <rewardbox>",
+      `        <id>${Math.max(parseInteger(reward.id, 0), 0)}</id>`,
+      "        <type>1</type>",
+      `        <title>${escapeXmlText(reward.title || "妖精讨伐报酬")}</title>`,
+      `        <card_id>${Math.max(parseInteger(reward.masterCardId, 0), 0)}</card_id>`,
+      "        <item_id>0</item_id>",
+      "        <point>0</point>",
+      `        <get_num>${Math.max(parseInteger(reward.quantity, 1), 1)}</get_num>`,
+      `        <content>${escapeXmlText(reward.content || "妖精讨伐参与报酬")}</content>`,
+      `        <date>${Math.max(Math.floor(Date.parse(reward.createdAt || "") / 1000) || 0, 0)}</date>`,
+      "      </rewardbox>",
+    ]),
+    "    </rewardbox_list>",
+    "  </body>",
+    "</response>",
+  ].join("");
+}
+
+function createMenuGetRewardsXml(playerSave, claimedIds) {
+  return [
+    '<?xml version="1.0" encoding="UTF-8"?>',
+    "<response>",
+    "  <header>",
+    "    <error><code>0</code></error>",
+    "    <session_id>local-get-rewards</session_id>",
+    ...renderYourDataXml(playerSave),
+    "    <next_scene>21100</next_scene>",
+    "  </header>",
+    "  <body>",
+    "    <get_rewards>",
+    "      <success>1</success>",
+    "      <message>领取成功</message>",
+    `      <id_list>${claimedIds.map((id) => parseInteger(id, 0)).join(",")}</id_list>`,
+    "    </get_rewards>",
     "  </body>",
     "</response>",
   ].join("");
@@ -2107,6 +2568,9 @@ function createMasterCardUpdateXml(buffer, selectedMasterCardIds = []) {
 const MASTER_CARD_UPDATE = MASTERDATA_SAMPLES[MASTER_CARD_UPDATE_ROUTE]?.bytes
   ? createMasterCardUpdateXml(MASTERDATA_SAMPLES[MASTER_CARD_UPDATE_ROUTE].bytes)
   : null;
+const MASTER_CARD_BY_ID = new Map(
+  (MASTER_CARD_UPDATE?.cards || []).map((card) => [parseInteger(card.master_card_id, 0), card])
+);
 
 function getConfiguredMasterCardUpdate() {
   const raw = (process.env.KSSMA_CARD_UPDATE_IDS || "").trim();
@@ -2124,18 +2588,22 @@ function getConfiguredMasterCardUpdate() {
   );
 }
 
-function withMainmenuBg(xml, playerSave = createDefaultPlayerSave()) {
+function withMainmenuBg(xml, playerSave = createDefaultPlayerSave(), notificationState = {}) {
   const body = [
     "<body>",
-    ...renderMainmenuFields(playerSave),
+    ...renderMainmenuFields(playerSave, "    ", notificationState),
     "</body>",
   ].join("");
   // ponytail: login jumps straight to scene 2100, so seed the layout-bound town model fields there too.
   return suppressLoginUpdates(xml.replace(/<body>\s*<\/body>/, body));
 }
 
-function createLoginMainmenuXml(playerSave = createDefaultPlayerSave()) {
-  return replaceHeaderYourData(withMainmenuBg(LOGIN_OK_XML, playerSave), playerSave);
+function createLoginMainmenuXml(playerSave = createDefaultPlayerSave(), notificationState = {}) {
+  return replaceHeaderYourData(
+    withMainmenuBg(LOGIN_OK_XML, playerSave, notificationState),
+    playerSave,
+    notificationState
+  );
 }
 
 function suppressLoginUpdates(xml) {
@@ -2160,14 +2628,14 @@ function getAdvertisedCardRevision() {
   return Number.isSafeInteger(revision) && revision > 0 && revision <= 0x7fffffff ? revision : 0;
 }
 
-function getLoginOkXml(playerSave = createDefaultPlayerSave()) {
+function getLoginOkXml(playerSave = createDefaultPlayerSave(), notificationState = {}) {
   // ponytail: default to the safe stub; opt into native scene payloads only when debugging that path.
   const loginResponse = (process.env.LOGIN_RESPONSE || "").trim().toLowerCase();
   if (loginResponse === "tutorial") {
     return LOGIN_TUTORIAL_XML;
   }
   if (loginResponse === "sample") {
-    return createLoginMainmenuXml(playerSave);
+    return createLoginMainmenuXml(playerSave, notificationState);
   }
   return CHECK_INSPECTION_OK_XML;
 }
@@ -2231,8 +2699,622 @@ function getPlayerSavePath() {
   return (process.env.KSSMA_PLAYER_SAVE_PATH || LOCAL_SAVE_DATA_PATH).trim();
 }
 
+function getAccountRegistryPath() {
+  return (process.env.KSSMA_ACCOUNT_REGISTRY_PATH || ACCOUNT_REGISTRY_DATA_PATH).trim();
+}
+
+function getAccountSaveDir() {
+  return (process.env.KSSMA_ACCOUNT_SAVE_DIR || ACCOUNT_SAVE_DIR).trim();
+}
+
+function getFairyRaidPath() {
+  return (process.env.KSSMA_FAIRY_RAID_PATH || FAIRY_RAID_DATA_PATH).trim();
+}
+
+function normalizeAccountUserId(value, fallback = 1) {
+  return String(Math.max(parseInteger(value, fallback), 1));
+}
+
+function createPasswordRecord(password, salt = crypto.randomBytes(16).toString("hex")) {
+  return {
+    passwordSalt: salt,
+    passwordHash: crypto.scryptSync(String(password), salt, 32).toString("hex"),
+  };
+}
+
+function verifyPasswordRecord(account, password) {
+  if (typeof account?.passwordSalt !== "string" || typeof account?.passwordHash !== "string") {
+    return false;
+  }
+  const actual = Buffer.from(createPasswordRecord(password, account.passwordSalt).passwordHash, "hex");
+  const hashes = [account.passwordHash, ...(Array.isArray(account.passwordAliases) ? account.passwordAliases : [])];
+  return hashes.some((hash) => {
+    const expected = Buffer.from(String(hash || ""), "hex");
+    return actual.length === expected.length
+      && actual.length > 0
+      && crypto.timingSafeEqual(actual, expected);
+  });
+}
+
+const ACCOUNT_SESSION_COOKIE = "kssma_session";
+const ACCOUNT_SESSION_MAX_AGE_SECONDS = 30 * 24 * 60 * 60;
+
+function getCookieValue(req, name) {
+  const cookieHeader = String(req.headers.cookie || "");
+  for (const row of cookieHeader.split(";")) {
+    const separator = row.indexOf("=");
+    if (separator < 0 || row.slice(0, separator).trim() !== name) {
+      continue;
+    }
+    return { present: true, value: row.slice(separator + 1).trim() };
+  }
+  return { present: false, value: "" };
+}
+
+function getAccountSessionSigningKey(account, connectAppKey = getConnectAppKey()) {
+  return crypto.createHash("sha256")
+    .update("KSSMA-Re local account session v1\0", "utf8")
+    .update(String(connectAppKey || ""), "utf8")
+    .update("\0", "utf8")
+    .update(String(account?.passwordHash || ""), "utf8")
+    .digest();
+}
+
+function createAccountSessionToken(account, nowMs = Date.now(), nonce = crypto.randomBytes(12).toString("hex")) {
+  const userId = normalizeAccountUserId(account?.userId);
+  const issuedAt = Math.floor(nowMs / 1000);
+  const payload = `${userId}.${issuedAt}.${nonce}`;
+  const signature = crypto.createHmac("sha256", getAccountSessionSigningKey(account))
+    .update(payload, "utf8")
+    .digest("base64url");
+  return `${payload}.${signature}`;
+}
+
+function verifyAccountSessionToken(token, accountRegistry, nowMs = Date.now()) {
+  const parts = String(token || "").split(".");
+  if (parts.length !== 4 || !/^[1-9]\d*$/.test(parts[0]) || !/^\d+$/.test(parts[1]) || !/^[a-f0-9]{24}$/.test(parts[2])) {
+    return { account: null, reason: "malformed" };
+  }
+  const issuedAt = Number(parts[1]);
+  const nowSeconds = Math.floor(nowMs / 1000);
+  if (!Number.isSafeInteger(issuedAt) || issuedAt > nowSeconds + 300) {
+    return { account: null, reason: "invalid-time" };
+  }
+  if (nowSeconds - issuedAt > ACCOUNT_SESSION_MAX_AGE_SECONDS) {
+    return { account: null, reason: "expired" };
+  }
+  const account = getAccountByUserId(accountRegistry, parts[0]);
+  if (!account || account.enabled === false || !account.passwordHash) {
+    return { account: null, reason: "account-unavailable" };
+  }
+  const payload = parts.slice(0, 3).join(".");
+  const expected = crypto.createHmac("sha256", getAccountSessionSigningKey(account))
+    .update(payload, "utf8")
+    .digest();
+  let actual;
+  try {
+    actual = Buffer.from(parts[3], "base64url");
+  } catch {
+    return { account: null, reason: "malformed-signature" };
+  }
+  if (actual.toString("base64url") !== parts[3]) {
+    return { account: null, reason: "noncanonical-signature" };
+  }
+  if (actual.length !== expected.length || !crypto.timingSafeEqual(actual, expected)) {
+    return { account: null, reason: "bad-signature" };
+  }
+  return { account, reason: "cookie" };
+}
+
+function resolveAccountSession(req, accountRegistry, nowMs = Date.now()) {
+  const cookie = getCookieValue(req, ACCOUNT_SESSION_COOKIE);
+  if (!cookie.present) {
+    return { account: null, reason: "absent" };
+  }
+  return verifyAccountSessionToken(cookie.value, accountRegistry, nowMs);
+}
+
+function createAccountSessionCookie(account, nowMs = Date.now()) {
+  const token = createAccountSessionToken(account, nowMs);
+  return `${ACCOUNT_SESSION_COOKIE}=${token}; Path=/; Max-Age=${ACCOUNT_SESSION_MAX_AGE_SECONDS}; HttpOnly`;
+}
+
+function createDefaultAccountRecord() {
+  const identity = DEFAULT_PLAYER_SAVE.account || {};
+  const configuredPassword = process.env.KSSMA_DEFAULT_ACCOUNT_PASSWORD || "";
+  const passwordRecord = createPasswordRecord(
+    configuredPassword || "testpass1",
+    "kssma-re-default-local-account-v1"
+  );
+  return {
+    userId: "1",
+    loginId: String(identity.loginId || "13800138000"),
+    ...passwordRecord,
+    passwordAliases: configuredPassword
+      ? []
+      : [createPasswordRecord("testtestppass1", passwordRecord.passwordSalt).passwordHash],
+    saveKey: "default",
+    enabled: true,
+    createdAt: identity.createdAt || null,
+    lastLoginAt: identity.lastLoginAt || null,
+  };
+}
+
+function createDefaultAccountRegistry() {
+  return {
+    schemaVersion: 1,
+    nextUserId: 2,
+    accounts: [createDefaultAccountRecord()],
+  };
+}
+
+function readAccountRegistry(registryPath = getAccountRegistryPath()) {
+  const fallback = createDefaultAccountRegistry();
+  const saved = readJsonFile(registryPath);
+  if (!saved || !Array.isArray(saved.accounts)) {
+    return fallback;
+  }
+  const accounts = saved.accounts
+    .filter((account) => isPlainObject(account))
+    .map((account) => ({
+      ...account,
+      userId: normalizeAccountUserId(account.userId),
+      loginId: String(account.loginId || "").trim(),
+      enabled: account.enabled !== false,
+    }))
+    .filter((account) => account.loginId);
+  if (!accounts.some((account) => account.saveKey === "default")) {
+    accounts.unshift(fallback.accounts[0]);
+  }
+  const maxUserId = Math.max(0, ...accounts.map((account) => parseInteger(account.userId, 0)));
+  return {
+    schemaVersion: 1,
+    nextUserId: Math.max(parseInteger(saved.nextUserId, maxUserId + 1), maxUserId + 1, 2),
+    accounts,
+  };
+}
+
+function resolveAccountSavePath(account, defaultSavePath = getPlayerSavePath()) {
+  if (!account || account.saveKey === "default") {
+    return defaultSavePath;
+  }
+  const saveKey = String(account.saveKey || "");
+  if (!/^user-[1-9]\d*\.json$/.test(saveKey)) {
+    throw new Error(`invalid account save key: ${saveKey}`);
+  }
+  const saveRoot = path.resolve(getAccountSaveDir());
+  const savePath = path.resolve(saveRoot, saveKey);
+  if (path.dirname(savePath) !== saveRoot) {
+    throw new Error("account save path escapes the local account directory");
+  }
+  return savePath;
+}
+
+function getAccountByUserId(registry, userId) {
+  const wanted = normalizeAccountUserId(userId);
+  return (registry.accounts || []).find((account) => String(account.userId) === wanted) || null;
+}
+
+function authenticateLocalAccount(registry, loginId, password) {
+  const wantedLoginId = String(loginId || "").trim();
+  const account = (registry.accounts || []).find((candidate) => candidate.loginId === wantedLoginId);
+  return account?.enabled !== false && verifyPasswordRecord(account, password) ? account : null;
+}
+
+function applyAccountIdentity(playerSave, account, nowIso = null) {
+  playerSave.account = playerSave.account || {};
+  playerSave.account.worldId = Math.max(parseInteger(playerSave.account.worldId, 1), 1);
+  playerSave.account.userId = normalizeAccountUserId(account?.userId);
+  playerSave.account.loginId = String(account?.loginId || playerSave.account.loginId || "");
+  if (account?.createdAt) {
+    playerSave.account.createdAt = account.createdAt;
+  }
+  if (nowIso) {
+    playerSave.account.lastLoginAt = nowIso;
+  }
+  return playerSave;
+}
+
+function createLocalAccount(input, options = {}) {
+  if (!isPlainObject(input)) {
+    throw new Error("account create must be a JSON object");
+  }
+  const loginId = String(input.loginId || "").trim();
+  const password = String(input.password || "");
+  const name = String(input.name || "").trim();
+  const faction = String(input.faction || "sword");
+  if (!/^[A-Za-z0-9_.@+\-]{3,64}$/.test(loginId)) {
+    throw new Error("loginId must contain 3 to 64 letters, numbers, or . _ @ + -");
+  }
+  if (password.length < 8 || password.length > 72) {
+    throw new Error("password must contain 8 to 72 characters");
+  }
+  if (!name || [...name].length > 20 || /[\u0000-\u001f\u007f]/.test(name)) {
+    throw new Error("name must contain 1 to 20 visible characters");
+  }
+  if (!Object.hasOwn(FACTION_COUNTRY_ID, faction)) {
+    throw new Error("faction must be sword, technique, or magic");
+  }
+
+  const registryPath = options.registryPath || getAccountRegistryPath();
+  const defaultSavePath = options.defaultSavePath || getPlayerSavePath();
+  const registry = readAccountRegistry(registryPath);
+  if (registry.accounts.some((account) => account.loginId === loginId)) {
+    throw new Error("loginId already exists");
+  }
+  const userId = normalizeAccountUserId(registry.nextUserId);
+  const createdAt = new Date(options.nowMs ?? Date.now()).toISOString();
+  const account = {
+    userId,
+    loginId,
+    ...createPasswordRecord(password),
+    saveKey: `user-${userId}.json`,
+    enabled: true,
+    createdAt,
+    lastLoginAt: null,
+  };
+  const playerSave = createDefaultPlayerSave();
+  applyAccountIdentity(playerSave, account);
+  playerSave.profile.name = name;
+  playerSave.profile.faction = faction;
+  delete playerSave.profile.countryId;
+  const savePath = resolveAccountSavePath(account, defaultSavePath);
+  writeJsonFileAtomic(savePath, playerSave);
+  registry.accounts.push(account);
+  registry.nextUserId = parseInteger(userId, 1) + 1;
+  writeJsonFileAtomic(registryPath, registry);
+  return { registry, account, playerSave, savePath };
+}
+
+function createDefaultFairyRaidRegistry() {
+  return {
+    schemaVersion: 1,
+    nextSerialId: 100001,
+    nextRewardId: 1,
+    raids: [],
+  };
+}
+
+function readFairyRaidRegistry(raidPath = getFairyRaidPath()) {
+  const saved = readJsonFile(raidPath);
+  if (!saved || !Array.isArray(saved.raids)) {
+    return createDefaultFairyRaidRegistry();
+  }
+  return {
+    schemaVersion: 1,
+    nextSerialId: Math.max(parseInteger(saved.nextSerialId, 100001), 1),
+    nextRewardId: Math.max(parseInteger(saved.nextRewardId, 1), 1),
+    raids: saved.raids.filter((raid) => isPlainObject(raid)),
+  };
+}
+
+function getActiveFairyRaid(registry, ownerUserId, nowMs = Date.now()) {
+  const wantedOwner = normalizeAccountUserId(ownerUserId);
+  return (registry.raids || []).find((raid) => {
+    if (String(raid.ownerUserId) !== wantedOwner || raid.status !== "active" || parseInteger(raid.currentHp, 0) <= 0) {
+      return false;
+    }
+    const expiresAt = Date.parse(raid.expiresAt || "");
+    return !Number.isFinite(expiresAt) || expiresAt > nowMs;
+  }) || null;
+}
+
+function getFairyRaid(registry, ownerUserId, serialId) {
+  const wantedOwner = normalizeAccountUserId(ownerUserId);
+  return (registry.raids || []).find((raid) => (
+    String(raid.ownerUserId) === wantedOwner && String(raid.serialId) === String(serialId)
+  )) || null;
+}
+
+function createRaidFromEncounter(encounter, ownerSave) {
+  const rewardCardPool = normalizeWeightedCardPool(
+    encounter.rewardCardPool || [{ masterCardId: encounter.rewardMasterCardId || encounter.visualMasterCardId, weight: 1 }],
+    "fairy encounter reward pool"
+  );
+  return {
+    raidId: String(encounter.raidId || encounter.serialId),
+    serialId: String(encounter.serialId),
+    ownerUserId: normalizeAccountUserId(encounter.discovererId),
+    ownerName: String(ownerSave.profile?.name || "Arthur"),
+    masterBossId: parseInteger(encounter.masterBossId, 0),
+    name: String(encounter.name || ""),
+    level: Math.max(parseInteger(encounter.level, 1), 1),
+    currentHp: Math.max(parseInteger(encounter.currentHp, 0), 0),
+    maxHp: Math.max(parseInteger(encounter.maxHp, 1), 1),
+    visualMasterCardId: Math.max(parseInteger(encounter.visualMasterCardId, 600), 1),
+    attackPower: Math.max(parseInteger(encounter.attackPower, 1), 1),
+    rewardGold: Math.max(parseInteger(encounter.rewardGold, 0), 0),
+    rewardExp: Math.max(parseInteger(encounter.rewardExp, 0), 0),
+    rewardDropRatePercent: Math.min(Math.max(parseInteger(encounter.rewardDropRatePercent, 100), 0), 100),
+    rewardCardPool,
+    rewardCardsPerContributor: Math.max(parseInteger(encounter.rewardCardsPerContributor, 1), 1),
+    finisherBonusCards: Math.max(parseInteger(encounter.finisherBonusCards, 1), 0),
+    timeLimitSeconds: Math.max(parseInteger(encounter.timeLimitSeconds, 60), 60),
+    rareFlg: encounter.rareFlg ? 1 : 0,
+    eventCharaFlg: encounter.eventCharaFlg ? 1 : 0,
+    floorKey: String(encounter.floorKey || ownerSave.exploration?.currentFloorKey || "0:2"),
+    discoveredAt: encounter.discoveredAt,
+    expiresAt: encounter.expiresAt,
+    status: "active",
+    defeatedAt: null,
+    defeatedByUserId: null,
+    attackers: [],
+    rewards: [],
+  };
+}
+
+function raidToFairySnapshot(raid) {
+  return {
+    raidId: String(raid.raidId || raid.serialId),
+    serialId: String(raid.serialId),
+    masterBossId: parseInteger(raid.masterBossId, 0),
+    name: String(raid.name || ""),
+    level: Math.max(parseInteger(raid.level, 1), 1),
+    currentHp: Math.max(parseInteger(raid.currentHp, 0), 0),
+    maxHp: Math.max(parseInteger(raid.maxHp, 1), 1),
+    visualMasterCardId: Math.max(parseInteger(raid.visualMasterCardId, 600), 1),
+    attackPower: Math.max(parseInteger(raid.attackPower, 1), 1),
+    rewardGold: Math.max(parseInteger(raid.rewardGold, 0), 0),
+    rewardExp: Math.max(parseInteger(raid.rewardExp, 0), 0),
+    rewardDropRatePercent: Math.min(Math.max(parseInteger(raid.rewardDropRatePercent, 100), 0), 100),
+    rewardCardPool: normalizeWeightedCardPool(
+      raid.rewardCardPool || [{ masterCardId: raid.rewardMasterCardId || raid.visualMasterCardId, weight: 1 }],
+      "fairy raid reward pool"
+    ),
+    rewardCardsPerContributor: Math.max(parseInteger(raid.rewardCardsPerContributor, 1), 1),
+    finisherBonusCards: Math.max(parseInteger(raid.finisherBonusCards, 1), 0),
+    timeLimitSeconds: Math.max(parseInteger(raid.timeLimitSeconds, 60), 60),
+    discovererId: normalizeAccountUserId(raid.ownerUserId),
+    rareFlg: raid.rareFlg ? 1 : 0,
+    eventCharaFlg: raid.eventCharaFlg ? 1 : 0,
+    floorKey: String(raid.floorKey || "0:2"),
+    discoveredAt: raid.discoveredAt,
+    expiresAt: raid.expiresAt,
+    lastBattledAt: raid.lastBattledAt || null,
+    defeatedAt: raid.defeatedAt || null,
+  };
+}
+
+function syncOwnedFairyFromRaid(playerSave, raidRegistry, account, nowMs = Date.now()) {
+  ensureExplorationSaveShape(playerSave);
+  const userId = normalizeAccountUserId(account?.userId || playerSave.account?.userId);
+  let activeRaid = getActiveFairyRaid(raidRegistry, userId, nowMs);
+  const mounted = playerSave.battle.fairy.active;
+  if (!activeRaid && mounted && parseInteger(mounted.currentHp, 0) > 0) {
+    const knownRaid = getFairyRaid(raidRegistry, userId, mounted.serialId);
+    if (!knownRaid) {
+      const imported = createRaidFromEncounter({ ...mounted, discovererId: userId }, playerSave);
+      raidRegistry.raids.push(imported);
+      raidRegistry.nextSerialId = Math.max(raidRegistry.nextSerialId, parseInteger(imported.serialId, 0) + 1);
+      activeRaid = getActiveFairyRaid(raidRegistry, userId, nowMs);
+    }
+  }
+  if (activeRaid) {
+    const snapshot = raidToFairySnapshot(activeRaid);
+    playerSave.battle.fairy.active = snapshot;
+    playerSave.battle.fairy.discovered[snapshot.serialId] = cloneJson(snapshot);
+  } else {
+    playerSave.battle.fairy.active = null;
+  }
+  return activeRaid;
+}
+
+function expireFairyRaids(registry, nowMs = Date.now()) {
+  let changed = false;
+  for (const raid of registry.raids || []) {
+    const expiresAt = Date.parse(raid.expiresAt || "");
+    if (raid.status === "active" && Number.isFinite(expiresAt) && expiresAt <= nowMs) {
+      raid.status = "expired";
+      raid.expiredAt = new Date(nowMs).toISOString();
+      changed = true;
+    }
+  }
+  return changed;
+}
+
+function getVisibleFairyRaids(registry, viewerUserId, accountRegistry, nowMs = Date.now()) {
+  expireFairyRaids(registry, nowMs);
+  const enabledIds = new Set((accountRegistry.accounts || [])
+    .filter((account) => account.enabled !== false)
+    .map((account) => String(account.userId)));
+  const viewerId = normalizeAccountUserId(viewerUserId);
+  // ponytail: every manually created LAN account is mutually friended. Restore explicit
+  // friend approval/removal only after those original endpoints receive a client flow.
+  return (registry.raids || []).filter((raid) => (
+    raid.status === "active"
+    && parseInteger(raid.currentHp, 0) > 0
+    && enabledIds.has(String(raid.ownerUserId))
+    && (String(raid.ownerUserId) === viewerId || enabledIds.has(String(raid.ownerUserId)))
+  ));
+}
+
+function createFairyContributorRewards(
+  registry,
+  raid,
+  finisherUserId,
+  nowMs = Date.now(),
+  randomInt = crypto.randomInt
+) {
+  if (Array.isArray(raid.rewards) && (raid.rewards.length || raid.rewardsRolledAt)) {
+    return raid.rewards;
+  }
+  raid.rewards = [];
+  const createdAt = new Date(nowMs).toISOString();
+  raid.rewardsRolledAt = createdAt;
+  const rewardDropRatePercent = Math.min(Math.max(parseInteger(raid.rewardDropRatePercent, 100), 0), 100);
+  const rewardCardPool = normalizeWeightedCardPool(
+    raid.rewardCardPool || [{ masterCardId: raid.rewardMasterCardId || raid.visualMasterCardId, weight: 1 }],
+    "fairy raid reward pool"
+  );
+  for (const attacker of raid.attackers || []) {
+    const userId = normalizeAccountUserId(attacker.userId);
+    const slotCount = Math.max(parseInteger(raid.rewardCardsPerContributor, 1), 1)
+      + (userId === normalizeAccountUserId(finisherUserId)
+        ? Math.max(parseInteger(raid.finisherBonusCards, 1), 0)
+        : 0);
+    const quantitiesByMasterCardId = new Map();
+    for (let slot = 0; slot < slotCount; slot += 1) {
+      const dropped = rewardDropRatePercent >= 100
+        || (rewardDropRatePercent > 0 && randomInt(100) < rewardDropRatePercent);
+      if (!dropped) {
+        continue;
+      }
+      const masterCardId = selectWeightedCardMasterId(rewardCardPool, randomInt);
+      quantitiesByMasterCardId.set(masterCardId, (quantitiesByMasterCardId.get(masterCardId) || 0) + 1);
+    }
+    for (const [masterCardId, quantity] of quantitiesByMasterCardId.entries()) {
+      const rewardId = Math.max(parseInteger(registry.nextRewardId, 1), 1);
+      registry.nextRewardId = rewardId + 1;
+      raid.rewards.push({
+        id: rewardId,
+        type: 1,
+        accountUserId: userId,
+        masterCardId,
+        quantity,
+        title: `${raid.name || "妖精"}讨伐报酬`,
+        content: userId === normalizeAccountUserId(finisherUserId)
+          ? "妖精讨伐参与报酬（含最后一击奖励）"
+          : "妖精讨伐参与报酬",
+        raidId: String(raid.raidId || raid.serialId),
+        status: "pending",
+        createdAt,
+        claimedAt: null,
+      });
+    }
+  }
+  return raid.rewards;
+}
+
+function applySharedFairyBattle(raidRegistry, attackerSave, attackerAccount, raid, nowMs = Date.now(), options = {}) {
+  const attackerUserId = normalizeAccountUserId(attackerAccount?.userId || attackerSave.account?.userId);
+  const ownerUserId = normalizeAccountUserId(raid.ownerUserId);
+  if (raid.status !== "active" || parseInteger(raid.currentHp, 0) <= 0) {
+    throw new Error("fairy raid is not active");
+  }
+  const expiresAt = Date.parse(raid.expiresAt || "");
+  if (Number.isFinite(expiresAt) && expiresAt <= nowMs) {
+    raid.status = "expired";
+    raid.expiredAt = new Date(nowMs).toISOString();
+    throw new Error("fairy raid has expired");
+  }
+  applyAccountIdentity(attackerSave, attackerAccount);
+  const activeFairy = raidToFairySnapshot(raid);
+  const settlement = createFairyBattleSettlement(attackerSave, activeFairy, nowMs, {
+    ownedByPlayer: attackerUserId === ownerUserId,
+  });
+  const attackedAt = new Date(nowMs).toISOString();
+  const playerDamage = settlement.fairyInitialHp - settlement.fairyRemainingHp;
+  let contributor = (raid.attackers || []).find((attacker) => String(attacker.userId) === attackerUserId);
+  if (!contributor) {
+    contributor = {
+      userId: attackerUserId,
+      userName: String(attackerSave.profile?.name || "Arthur"),
+      countryId: getPlayerCountryId(attackerSave),
+      discoverer: attackerUserId === ownerUserId ? 1 : 0,
+      attackPoint: 0,
+      attackTimes: 0,
+      firstAttackedAt: attackedAt,
+      lastAttackedAt: attackedAt,
+      finisher: false,
+      leaderCard: cloneJson(settlement.deckCards[0]),
+    };
+    raid.attackers = Array.isArray(raid.attackers) ? raid.attackers : [];
+    raid.attackers.push(contributor);
+  }
+  contributor.attackPoint = Math.max(parseInteger(contributor.attackPoint, 0) + playerDamage, 0);
+  contributor.attackTimes = Math.max(parseInteger(contributor.attackTimes, 0) + 1, 1);
+  contributor.lastAttackedAt = attackedAt;
+  raid.currentHp = settlement.fairyRemainingHp;
+  raid.lastBattledAt = attackedAt;
+  if (settlement.playerWon) {
+    contributor.finisher = true;
+    raid.status = "defeated";
+    raid.defeatedAt = attackedAt;
+    raid.defeatedByUserId = attackerUserId;
+    createFairyContributorRewards(raidRegistry, raid, attackerUserId, nowMs, options.randomInt || crypto.randomInt);
+  }
+  return { settlement, raid, contributor };
+}
+
+function getPendingFairyRewards(raidRegistry, userId) {
+  const wanted = normalizeAccountUserId(userId);
+  return (raidRegistry.raids || []).flatMap((raid) => (
+    Array.isArray(raid.rewards) ? raid.rewards : []
+  )).filter((reward) => String(reward.accountUserId) === wanted && reward.status === "pending");
+}
+
+function getMainmenuNotificationState(
+  raidRegistry,
+  viewerUserId,
+  accountRegistry,
+  nowMs = Date.now()
+) {
+  const activeRaidCount = getVisibleFairyRaids(
+    raidRegistry,
+    viewerUserId,
+    accountRegistry,
+    nowMs
+  ).length;
+  const pendingRewardCount = getPendingFairyRewards(raidRegistry, viewerUserId).length;
+  return normalizeMainmenuNotificationState({
+    fairyAppearance: activeRaidCount > 0 ? 1 : 0,
+    activeRaidCount,
+    pendingRewardCount,
+    rewards: pendingRewardCount,
+  });
+}
+
+function claimFairyRewards(playerSave, raidRegistry, userId, noticeIds, nowMs = Date.now()) {
+  const wanted = normalizeAccountUserId(userId);
+  const ids = [...new Set((noticeIds || []).map((id) => parseInteger(id, 0)).filter((id) => id > 0))];
+  if (!ids.length) {
+    throw new Error("notice_id must contain at least one positive integer");
+  }
+  let save = mergeJsonObject(createDefaultPlayerSave(), playerSave || {});
+  save.rewards = save.rewards || {};
+  const claimedIds = new Set((Array.isArray(save.rewards.claimedIds) ? save.rewards.claimedIds : [])
+    .map((id) => parseInteger(id, 0)).filter((id) => id > 0));
+  const allRewards = (raidRegistry.raids || []).flatMap((raid) => Array.isArray(raid.rewards) ? raid.rewards : []);
+  const selected = ids.map((id) => allRewards.find((reward) => (
+    parseInteger(reward.id, 0) === id && String(reward.accountUserId) === wanted
+  )));
+  if (selected.some((reward) => !reward)) {
+    throw new Error("one or more reward notice ids do not belong to this account");
+  }
+  const claimedCards = [];
+  for (const reward of selected) {
+    const rewardId = parseInteger(reward.id, 0);
+    if (!claimedIds.has(rewardId)) {
+      const quantity = Math.max(parseInteger(reward.quantity, 1), 1);
+      for (let index = 0; index < quantity; index += 1) {
+        const result = addMasterCardToPlayerSave(save, reward.masterCardId, 0);
+        save = result.save;
+        claimedCards.push(result.card);
+      }
+      claimedIds.add(rewardId);
+    }
+  }
+  save.rewards = save.rewards || {};
+  save.rewards.claimedIds = [...claimedIds].slice(-1000);
+  const claimedAt = new Date(nowMs).toISOString();
+  for (const reward of selected) {
+    reward.status = "claimed";
+    reward.claimedAt = reward.claimedAt || claimedAt;
+  }
+  return { playerSave: save, raidRegistry, claimedIds: ids, claimedCards };
+}
+
 function getRuntimeConfigPath() {
   return (process.env.KSSMA_RUNTIME_CONFIG_PATH || RUNTIME_CONFIG_DATA_PATH).trim();
+}
+
+function getGachaDataPath() {
+  return (process.env.KSSMA_GACHA_DATA_PATH || GACHA_DATA_PATH).trim();
+}
+
+function readGachaData(dataPath = getGachaDataPath()) {
+  const saved = readJsonFile(dataPath);
+  return mergeJsonObject(GAME_GACHA_DATA, saved || {});
 }
 
 function readRuntimeConfig(configPath = getRuntimeConfigPath()) {
@@ -2275,6 +3357,22 @@ function getFairyEncounterSettings(runtimeConfig = readRuntimeConfig()) {
       process.env.KSSMA_FAIRY_REWARD_EXP ?? saved.rewardExp,
       defaults.rewardExp
     ), 0), 2147483647),
+    rewardDropRatePercent: Math.min(Math.max(parseInteger(
+      saved.rewardDropRatePercent,
+      defaults.rewardDropRatePercent ?? 100
+    ), 0), 100),
+    rewardCardPool: normalizeWeightedCardPool(
+      saved.rewardCardPool || defaults.rewardCardPool || [{ masterCardId: saved.rewardMasterCardId || saved.visualMasterCardId, weight: 1 }],
+      "fairy reward pool"
+    ),
+    rewardCardsPerContributor: Math.min(Math.max(parseInteger(
+      saved.rewardCardsPerContributor,
+      defaults.rewardCardsPerContributor || 1
+    ), 1), 10),
+    finisherBonusCards: Math.min(Math.max(parseInteger(
+      saved.finisherBonusCards,
+      defaults.finisherBonusCards ?? 1
+    ), 0), 10),
     timeLimitSeconds: Math.min(Math.max(parseInteger(
       process.env.KSSMA_FAIRY_TIME_LIMIT_SECONDS ?? saved.timeLimitSeconds,
       defaults.timeLimitSeconds
@@ -2343,10 +3441,10 @@ function shouldCreateFairyEncounter(playerSave, settings) {
   return crypto.randomInt(100) < settings.ratePercent;
 }
 
-function createFairyEncounter(playerSave, settings, floor, nowMs = Date.now()) {
+function createFairyEncounter(playerSave, settings, floor, nowMs = Date.now(), options = {}) {
   ensureExplorationSaveShape(playerSave);
   const fairySave = playerSave.battle.fairy;
-  const serialNumber = Math.max(parseInteger(fairySave.nextSerialId, 100001), 1);
+  const serialNumber = Math.max(parseInteger(options.serialId, fairySave.nextSerialId || 100001), 1);
   const discoveredAt = new Date(nowMs).toISOString();
   const encounter = {
     serialId: String(serialNumber),
@@ -2359,13 +3457,19 @@ function createFairyEncounter(playerSave, settings, floor, nowMs = Date.now()) {
     attackPower: settings.attackPower,
     rewardGold: settings.rewardGold,
     rewardExp: settings.rewardExp,
+    rewardDropRatePercent: settings.rewardDropRatePercent,
+    rewardCardPool: cloneJson(settings.rewardCardPool),
+    rewardCardsPerContributor: settings.rewardCardsPerContributor,
+    finisherBonusCards: settings.finisherBonusCards,
     timeLimitSeconds: settings.timeLimitSeconds,
     discovererId: Math.max(parseInteger(playerSave.account?.userId, 1), 1),
     rareFlg: 0,
     eventCharaFlg: 0,
+    floorKey: getExplorationFloorStateKey(floor),
     discoveredAt,
     expiresAt: new Date(nowMs + settings.timeLimitSeconds * 1000).toISOString(),
   };
+  encounter.raidId = String(options.raidId || encounter.serialId);
 
   fairySave.nextSerialId = serialNumber + 1;
   fairySave.active = encounter;
@@ -2637,10 +3741,42 @@ function loadExplorationMovesForRequest(savePath) {
   return { playerSave, moves };
 }
 
-function getAdminState(playerSavePath, runtimeConfigPath = getRuntimeConfigPath()) {
+function getAdminState(
+  playerSavePath,
+  runtimeConfigPath = getRuntimeConfigPath(),
+  accountRegistry = readAccountRegistry(),
+  activeAccount = accountRegistry.accounts[0],
+  gachaDataPath = getGachaDataPath()
+) {
   const runtimeConfig = readRuntimeConfig(runtimeConfigPath);
   runtimeConfig.fairyEncounter = getFairyEncounterSettings(runtimeConfig);
-  return createAdminState(readPlayerSave(playerSavePath), {
+  const gachaData = readGachaData(gachaDataPath);
+  const playerSave = readPlayerSave(playerSavePath);
+  let activeDeckCost = null;
+  try {
+    activeDeckCost = getFairyBattleBcState(playerSave).requiredBc;
+  } catch {
+    // The admin page remains available even when an incomplete card/deck record needs repair.
+  }
+  const accountSummaries = (accountRegistry.accounts || []).map((account) => {
+    const savePath = resolveAccountSavePath(account, getPlayerSavePath());
+    const save = readPlayerSave(savePath);
+    return {
+      userId: String(account.userId),
+      loginId: account.loginId,
+      name: save.profile?.name || "Arthur",
+      faction: save.profile?.faction || "sword",
+      enabled: account.enabled !== false,
+      isLastLogin: String(account.userId) === String(activeAccount?.userId),
+      savePath: getLogSafePath(savePath),
+      lastLoginAt: account.lastLoginAt || save.account?.lastLoginAt || null,
+    };
+  });
+  const raidRegistry = readFairyRaidRegistry();
+  const selectedUserId = normalizeAccountUserId(playerSave.account?.userId || activeAccount?.userId);
+  const visibleRaids = getVisibleFairyRaids(raidRegistry, selectedUserId, accountRegistry);
+  const pendingRewards = getPendingFairyRewards(raidRegistry, selectedUserId);
+  return createAdminState(playerSave, {
     savePath: getLogSafePath(playerSavePath),
     runtimeConfigPath: getLogSafePath(runtimeConfigPath),
     listenPorts: LISTEN_PORTS,
@@ -2648,7 +3784,12 @@ function getAdminState(playerSavePath, runtimeConfigPath = getRuntimeConfigPath(
     routeCount: Object.keys(MAINMENU_ROUTE_STUBS).length,
     explorationRegionCount: EXPLORATION_REGIONS.length,
     adminWritePolicy: getAdminToken() ? "token" : "loopback-only",
-  }, runtimeConfig);
+    activeDeckCost,
+    accounts: accountSummaries,
+    selectedAccountUserId: selectedUserId,
+    activeRaidCount: visibleRaids.length,
+    pendingFairyRewardCount: pendingRewards.length,
+  }, runtimeConfig, gachaData);
 }
 
 function handleRequestFailure(req, res, error) {
@@ -2673,23 +3814,33 @@ function handleRequestFailure(req, res, error) {
 }
 
 function createServer() {
-  const playerSavePath = getPlayerSavePath();
+  const defaultPlayerSavePath = getPlayerSavePath();
+  const accountRegistryPath = getAccountRegistryPath();
+  const fairyRaidPath = getFairyRaidPath();
+  let accountRegistry = readAccountRegistry(accountRegistryPath);
+  let lastAuthenticatedAccount = accountRegistry.accounts[0];
   const runtimeConfigPath = getRuntimeConfigPath();
+  const gachaDataPath = getGachaDataPath();
   const masterCardUpdate = getConfiguredMasterCardUpdate();
   if ((process.env.KSSMA_EXPLORATION_MOVES_SEED || "").trim()) {
-    const seededMoves = applyExplorationSeed(createExplorationMovesFromSave(readPlayerSave(playerSavePath)));
+    const seededMoves = applyExplorationSeed(createExplorationMovesFromSave(readPlayerSave(defaultPlayerSavePath)));
     logRequest("exploration_seed", {
       source: "KSSMA_EXPLORATION_MOVES_SEED",
       movesByFloor: Object.fromEntries(seededMoves),
     });
   }
   logRequest("player_save", {
-    path: getLogSafePath(playerSavePath),
-    source: fs.existsSync(playerSavePath) ? "file" : "default",
+    path: getLogSafePath(defaultPlayerSavePath),
+    source: fs.existsSync(defaultPlayerSavePath) ? "file" : "default",
   });
   logRequest("runtime_config", {
     path: getLogSafePath(runtimeConfigPath),
     source: fs.existsSync(runtimeConfigPath) ? "file" : "default",
+  });
+  logRequest("gacha_config", {
+    path: getLogSafePath(gachaDataPath),
+    source: fs.existsSync(gachaDataPath) ? "file" : "default",
+    products: getGachaProducts(readGachaData(gachaDataPath)).map((product) => parseInteger(product.productId, 0)),
   });
   logRequest("login_revision_config", {
     advertisedCardRevision: getAdvertisedCardRevision(),
@@ -2699,6 +3850,8 @@ function createServer() {
   const server = http.createServer((req, res) => {
     void (async () => {
     const url = new URL(req.url, `http://${req.headers.host || "127.0.0.1"}`);
+    let activeAccount = lastAuthenticatedAccount || accountRegistry.accounts[0];
+    let playerSavePath = resolveAccountSavePath(activeAccount, defaultPlayerSavePath);
 
     if (req.method === "GET" && url.pathname === "/admin") {
       return sendRedirect(res, "/admin/");
@@ -2709,10 +3862,21 @@ function createServer() {
     }
 
     if (req.method === "GET" && url.pathname === "/admin/api/state") {
-      return sendJson(res, 200, getAdminState(playerSavePath, runtimeConfigPath));
+      accountRegistry = readAccountRegistry(accountRegistryPath);
+      const selectedAccount = getAccountByUserId(
+        accountRegistry,
+        url.searchParams.get("account_user_id") || activeAccount?.userId || 1
+      ) || activeAccount || accountRegistry.accounts[0];
+      const selectedSavePath = resolveAccountSavePath(selectedAccount, defaultPlayerSavePath);
+      return sendJson(res, 200, getAdminState(
+        selectedSavePath,
+        runtimeConfigPath,
+        accountRegistry,
+        activeAccount
+      ));
     }
 
-    if (req.method === "POST" && ["/admin/api/player", "/admin/api/fairy"].includes(url.pathname)) {
+    if (req.method === "POST" && ["/admin/api/player", "/admin/api/fairy", "/admin/api/gacha", "/admin/api/accounts"].includes(url.pathname)) {
       if (!isAdminWriteAuthorized(req)) {
         logRequest("admin_write_denied", {
           remoteAddress: req.socket?.remoteAddress || "",
@@ -2737,19 +3901,62 @@ function createServer() {
         return sendJson(res, 400, { ok: false, error: "admin update must be valid JSON" });
       }
       try {
+        if (url.pathname === "/admin/api/accounts") {
+          const created = createLocalAccount(update, {
+            registryPath: accountRegistryPath,
+            defaultSavePath: defaultPlayerSavePath,
+          });
+          accountRegistry = created.registry;
+          logRequest("admin_account_create", {
+            userId: created.account.userId,
+            loginId: created.account.loginId,
+            remoteAddress: req.socket?.remoteAddress || "",
+            savePath: getLogSafePath(created.savePath),
+            saved: true,
+          });
+          return sendJson(res, 201, getAdminState(
+            created.savePath,
+            runtimeConfigPath,
+            accountRegistry,
+            activeAccount
+          ));
+        }
         const isFairyUpdate = url.pathname === "/admin/api/fairy";
-        const targetPath = isFairyUpdate ? runtimeConfigPath : playerSavePath;
+        const isGachaUpdate = url.pathname === "/admin/api/gacha";
+        const selectedUserId = update.accountUserId || activeAccount?.userId || 1;
+        const selectedAccount = getAccountByUserId(accountRegistry, selectedUserId)
+          || activeAccount
+          || accountRegistry.accounts[0];
+        const playerUpdate = { ...update };
+        delete playerUpdate.accountUserId;
+        const selectedSavePath = resolveAccountSavePath(selectedAccount, defaultPlayerSavePath);
+        const targetPath = isFairyUpdate ? runtimeConfigPath : (isGachaUpdate ? gachaDataPath : selectedSavePath);
         const updated = isFairyUpdate
           ? applyAdminFairyUpdate(readRuntimeConfig(runtimeConfigPath), update)
-          : applyAdminPlayerUpdate(readPlayerSave(playerSavePath), update);
+          : isGachaUpdate
+            ? applyAdminGachaUpdate(readGachaData(gachaDataPath), update)
+            : applyAdminPlayerUpdate(readPlayerSave(selectedSavePath), playerUpdate);
+        if (isFairyUpdate) {
+          getFairyEncounterSettings(updated);
+        }
+        if (isGachaUpdate) {
+          for (const product of getGachaProducts(updated)) {
+            normalizeWeightedCardPool(product.pool, `gacha product ${product.productId} pool`);
+          }
+        }
         writeJsonFileAtomic(targetPath, updated);
-        logRequest(isFairyUpdate ? "admin_fairy_update" : "admin_player_update", {
+        logRequest(isFairyUpdate ? "admin_fairy_update" : (isGachaUpdate ? "admin_gacha_update" : "admin_player_update"), {
           fields: Object.keys(update),
           remoteAddress: req.socket?.remoteAddress || "",
           savePath: getLogSafePath(targetPath),
           saved: true,
         });
-        return sendJson(res, 200, getAdminState(playerSavePath, runtimeConfigPath));
+        return sendJson(res, 200, getAdminState(
+          selectedSavePath,
+          runtimeConfigPath,
+          accountRegistry,
+          activeAccount
+        ));
       } catch (error) {
         return sendJson(res, 400, { ok: false, error: error.message });
       }
@@ -2800,8 +4007,10 @@ function createServer() {
 
       logRequest("add_user", {
         raw: body,
-        payload,
-        decryptedPassword,
+        worldId: payload.world_id || 1,
+        userId: payload.user_id || "",
+        passwordPresent: !!decryptedPassword,
+        accountCreated: false,
       });
 
       return sendJson(res, 200, {
@@ -2837,7 +4046,7 @@ function createServer() {
       logRequest("connect_app_probe", {
         ...getRequestDetails(req, url, body),
         rawParams: params.raw,
-        decryptedParams: params.decrypted,
+        decryptedParams: redactSensitiveParams(params.decrypted),
       });
 
       if (!connectAppKey) {
@@ -2857,9 +4066,46 @@ function createServer() {
       }
 
       if (req.method === "POST" && url.pathname === "/connect/app/login") {
-        // ponytail: keep the login sample that gets furthest into native bootstrap; add the real payload only when the next blocker proves we need it.
+        accountRegistry = readAccountRegistry(accountRegistryPath);
+        const authenticated = authenticateLocalAccount(
+          accountRegistry,
+          params.decrypted.login_id,
+          params.decrypted.password
+        );
+        if (!authenticated) {
+          logRequest("connect_app_response", {
+            path: url.pathname,
+            status: 403,
+            source: "local account authentication failed",
+            loginId: String(params.decrypted.login_id || ""),
+          });
+          return sendText(res, 403, "local account authentication failed\n");
+        }
+        activeAccount = authenticated;
+        lastAuthenticatedAccount = authenticated;
+        playerSavePath = resolveAccountSavePath(activeAccount, defaultPlayerSavePath);
         const playerSave = readPlayerSave(playerSavePath);
-        const loginXml = getLoginOkXml(playerSave);
+        const loginAt = new Date().toISOString();
+        applyAccountIdentity(playerSave, activeAccount, loginAt);
+        activeAccount.lastLoginAt = loginAt;
+        const raidRegistry = readFairyRaidRegistry(fairyRaidPath);
+        const expiredRaidChanged = expireFairyRaids(raidRegistry);
+        const mountedRaid = syncOwnedFairyFromRaid(
+          playerSave,
+          raidRegistry,
+          activeAccount
+        );
+        writeJsonFileAtomic(playerSavePath, playerSave);
+        writeJsonFileAtomic(accountRegistryPath, accountRegistry);
+        if (expiredRaidChanged || mountedRaid || !fs.existsSync(fairyRaidPath)) {
+          writeJsonFileAtomic(fairyRaidPath, raidRegistry);
+        }
+        const notificationState = getMainmenuNotificationState(
+          raidRegistry,
+          activeAccount.userId,
+          accountRegistry
+        );
+        const loginXml = getLoginOkXml(playerSave, notificationState);
         const encrypted = encryptAes128Ecb(loginXml, connectAppKey);
         logRequest("connect_app_response", {
           path: url.pathname,
@@ -2868,16 +4114,56 @@ function createServer() {
           bytes: encrypted.length,
           source: getLoginXmlSource(loginXml),
           advertisedCardRevision: getAdvertisedCardRevision(),
+          accountUserId: activeAccount.userId,
+          accountLoginId: activeAccount.loginId,
+          savePath: getLogSafePath(playerSavePath),
           mainmenu: getMainmenuInformationForPlayer(playerSave),
+          mainmenuNotification: notificationState,
         });
-        sendBinary(res, 200, encrypted);
+        sendBinary(res, 200, encrypted, {
+          "Set-Cookie": createAccountSessionCookie(activeAccount),
+          "Cache-Control": "no-store",
+        });
         return;
+      }
+
+      accountRegistry = readAccountRegistry(accountRegistryPath);
+      const accountSession = resolveAccountSession(req, accountRegistry);
+      if (accountSession.reason !== "absent" && !accountSession.account) {
+        logRequest("connect_app_session_rejected", {
+          path: url.pathname,
+          reason: accountSession.reason,
+        });
+        return sendText(res, 401, "invalid or expired local account session\n");
+      }
+      if (accountSession.account) {
+        activeAccount = accountSession.account;
+        playerSavePath = resolveAccountSavePath(activeAccount, defaultPlayerSavePath);
+        logRequest("connect_app_session", {
+          path: url.pathname,
+          source: "cookie",
+          accountUserId: activeAccount.userId,
+          savePath: getLogSafePath(playerSavePath),
+        });
       }
 
       if (req.method === "POST" && url.pathname === "/connect/app/mainmenu/update") {
         // ponytail: one known-good mainbg is enough to un-black the town background; real rotation can wait for event data.
         const playerSave = readPlayerSave(playerSavePath);
-        const xml = createMainmenuUpdateXml(playerSave);
+        applyAccountIdentity(playerSave, activeAccount);
+        const raidRegistry = readFairyRaidRegistry(fairyRaidPath);
+        const expiredRaidChanged = expireFairyRaids(raidRegistry);
+        syncOwnedFairyFromRaid(playerSave, raidRegistry, activeAccount);
+        const notificationState = getMainmenuNotificationState(
+          raidRegistry,
+          activeAccount?.userId,
+          accountRegistry
+        );
+        writeJsonFileAtomic(playerSavePath, playerSave);
+        if (expiredRaidChanged || !fs.existsSync(fairyRaidPath)) {
+          writeJsonFileAtomic(fairyRaidPath, raidRegistry);
+        }
+        const xml = createMainmenuUpdateXml(playerSave, notificationState);
         const encrypted = encryptAes128Ecb(xml, connectAppKey);
         logRequest("connect_app_response", {
           path: url.pathname,
@@ -2886,6 +4172,7 @@ function createServer() {
           bytes: encrypted.length,
           source: "minimal mainmenu update",
           mainmenu: getMainmenuInformationForPlayer(playerSave),
+          mainmenuNotification: notificationState,
         });
         sendBinary(res, 200, encrypted);
         return;
@@ -2894,7 +4181,20 @@ function createServer() {
       if (req.method === "POST" && url.pathname === "/connect/app/mainmenu") {
         // ponytail: the exploration return path only needs the same mainmenu payload as update; split behavior later if evidence demands it.
         const playerSave = readPlayerSave(playerSavePath);
-        const xml = createMainmenuUpdateXml(playerSave);
+        applyAccountIdentity(playerSave, activeAccount);
+        const raidRegistry = readFairyRaidRegistry(fairyRaidPath);
+        const expiredRaidChanged = expireFairyRaids(raidRegistry);
+        syncOwnedFairyFromRaid(playerSave, raidRegistry, activeAccount);
+        const notificationState = getMainmenuNotificationState(
+          raidRegistry,
+          activeAccount?.userId,
+          accountRegistry
+        );
+        writeJsonFileAtomic(playerSavePath, playerSave);
+        if (expiredRaidChanged || !fs.existsSync(fairyRaidPath)) {
+          writeJsonFileAtomic(fairyRaidPath, raidRegistry);
+        }
+        const xml = createMainmenuUpdateXml(playerSave, notificationState);
         const encrypted = encryptAes128Ecb(xml, connectAppKey);
         logRequest("connect_app_response", {
           path: url.pathname,
@@ -2903,6 +4203,156 @@ function createServer() {
           bytes: encrypted.length,
           source: "minimal mainmenu",
           mainmenu: getMainmenuInformationForPlayer(playerSave),
+          mainmenuNotification: notificationState,
+        });
+        sendBinary(res, 200, encrypted);
+        return;
+      }
+
+      if (req.method === "POST" && url.pathname === "/connect/app/menu/fairyselect") {
+        const playerSave = readPlayerSave(playerSavePath);
+        applyAccountIdentity(playerSave, activeAccount);
+        const raidRegistry = readFairyRaidRegistry(fairyRaidPath);
+        expireFairyRaids(raidRegistry);
+        syncOwnedFairyFromRaid(playerSave, raidRegistry, activeAccount);
+        writeJsonFileAtomic(playerSavePath, playerSave);
+        writeJsonFileAtomic(fairyRaidPath, raidRegistry);
+        const visibleRaids = getVisibleFairyRaids(
+          raidRegistry,
+          activeAccount?.userId,
+          accountRegistry
+        ).map((raid) => {
+          const ownerAccount = getAccountByUserId(accountRegistry, raid.ownerUserId);
+          return {
+            ...raid,
+            ownerSave: ownerAccount
+              ? readPlayerSave(resolveAccountSavePath(ownerAccount, defaultPlayerSavePath))
+              : createDefaultPlayerSave(),
+          };
+        });
+        const pendingRewards = getPendingFairyRewards(raidRegistry, activeAccount?.userId);
+        const notificationState = normalizeMainmenuNotificationState({
+          fairyAppearance: visibleRaids.length > 0 ? 1 : 0,
+          activeRaidCount: visibleRaids.length,
+          pendingRewardCount: pendingRewards.length,
+          rewards: pendingRewards.length,
+        });
+        const xml = createMenuFairySelectSkeletonXml(
+          playerSave,
+          visibleRaids,
+          pendingRewards.length,
+          Date.now(),
+          notificationState
+        );
+        const encrypted = encryptAes128Ecb(xml, connectAppKey);
+        logRequest("connect_app_response", {
+          path: url.pathname,
+          mode: "aes-128-ecb",
+          bytes: encrypted.length,
+          source: "shared fairy selection",
+          accountUserId: activeAccount?.userId || "",
+          activeRaidCount: visibleRaids.length,
+          raidIds: visibleRaids.map((raid) => raid.raidId),
+          remainingRewards: pendingRewards.length,
+          mainmenuNotification: notificationState,
+        });
+        sendBinary(res, 200, encrypted);
+        return;
+      }
+
+      if (req.method === "POST" && [
+        "/connect/app/exploration/fairy_floor",
+        "/connect/app/exploration/fairy_lose",
+        "/connect/app/exploration/fairyhistory",
+      ].includes(url.pathname)) {
+        const requestedSerialId = String(params.decrypted.serial_id || "");
+        const requestedUserId = parseInteger(params.decrypted.user_id, 0);
+        const playerSave = readPlayerSave(playerSavePath);
+        applyAccountIdentity(playerSave, activeAccount);
+        const raidRegistry = readFairyRaidRegistry(fairyRaidPath);
+        expireFairyRaids(raidRegistry);
+        syncOwnedFairyFromRaid(playerSave, raidRegistry, activeAccount);
+        const raid = getFairyRaid(raidRegistry, requestedUserId, requestedSerialId);
+        const visible = raid && getVisibleFairyRaids(
+          raidRegistry,
+          activeAccount?.userId,
+          accountRegistry
+        ).some((candidate) => String(candidate.raidId) === String(raid.raidId));
+        if (!visible && url.pathname !== "/connect/app/exploration/fairyhistory") {
+          return sendText(res, 409, "fairy raid is not visible\n");
+        }
+        if (!raid) {
+          return sendText(res, 404, "fairy raid not found\n");
+        }
+        const xml = url.pathname === "/connect/app/exploration/fairyhistory"
+          ? createExplorationFairyHistoryXml(playerSave, raid)
+          : createExplorationFairyFloorXml(playerSave, raid);
+        const encrypted = encryptAes128Ecb(xml, connectAppKey);
+        logRequest("connect_app_response", {
+          path: url.pathname,
+          mode: "aes-128-ecb",
+          bytes: encrypted.length,
+          source: url.pathname.endsWith("fairyhistory")
+            ? "shared fairy attacker history"
+            : "accepted get_floor + explore fairy path",
+          accountUserId: activeAccount?.userId || "",
+          raidId: raid.raidId,
+          ownerUserId: raid.ownerUserId,
+          attackerCount: (raid.attackers || []).length,
+        });
+        sendBinary(res, 200, encrypted);
+        return;
+      }
+
+      if (req.method === "POST" && url.pathname === "/connect/app/menu/rewardbox") {
+        const playerSave = readPlayerSave(playerSavePath);
+        applyAccountIdentity(playerSave, activeAccount);
+        const raidRegistry = readFairyRaidRegistry(fairyRaidPath);
+        const rewards = getPendingFairyRewards(raidRegistry, activeAccount?.userId);
+        const xml = createMenuRewardBoxXml(playerSave, rewards);
+        const encrypted = encryptAes128Ecb(xml, connectAppKey);
+        logRequest("connect_app_response", {
+          path: url.pathname,
+          mode: "aes-128-ecb",
+          bytes: encrypted.length,
+          source: "fairy contributor reward box",
+          accountUserId: activeAccount?.userId || "",
+          rewardIds: rewards.map((reward) => reward.id),
+          rewardCount: rewards.length,
+        });
+        sendBinary(res, 200, encrypted);
+        return;
+      }
+
+      if (req.method === "POST" && url.pathname === "/connect/app/menu/get_rewards") {
+        const noticeIds = String(params.decrypted.notice_id || "")
+          .split(",")
+          .map((value) => parseInteger(value.trim(), 0))
+          .filter((value) => value > 0);
+        const raidRegistry = readFairyRaidRegistry(fairyRaidPath);
+        const claimed = claimFairyRewards(
+          readPlayerSave(playerSavePath),
+          raidRegistry,
+          activeAccount?.userId,
+          noticeIds
+        );
+        applyAccountIdentity(claimed.playerSave, activeAccount);
+        // Player save first: if the process stops before the registry write, claimedIds makes
+        // the retry idempotent and prevents duplicate owned-card instances.
+        writeJsonFileAtomic(playerSavePath, claimed.playerSave);
+        writeJsonFileAtomic(fairyRaidPath, claimed.raidRegistry);
+        const xml = createMenuGetRewardsXml(claimed.playerSave, claimed.claimedIds);
+        const encrypted = encryptAes128Ecb(xml, connectAppKey);
+        logRequest("connect_app_response", {
+          path: url.pathname,
+          mode: "aes-128-ecb",
+          bytes: encrypted.length,
+          source: "idempotent fairy reward claim",
+          accountUserId: activeAccount?.userId || "",
+          claimedIds: claimed.claimedIds,
+          cardSerialIds: claimed.claimedCards.map((card) => card.serialId),
+          cardMasterIds: claimed.claimedCards.map((card) => card.masterCardId),
+          saved: true,
         });
         sendBinary(res, 200, encrypted);
         return;
@@ -3002,6 +4452,10 @@ function createServer() {
       if (req.method === "POST" && url.pathname === "/connect/app/exploration/explore") {
         // ponytail: ordinary and ordinary-fairy are the only accepted event branches here; rare fairy and battle results stay separate frontiers.
         const { playerSave, moves } = loadExplorationMovesForRequest(playerSavePath);
+        applyAccountIdentity(playerSave, activeAccount);
+        const raidRegistry = readFairyRaidRegistry(fairyRaidPath);
+        expireFairyRaids(raidRegistry);
+        syncOwnedFairyFromRaid(playerSave, raidRegistry, activeAccount);
         const floor = getExplorationFloorForStageAction(params.decrypted.area_id, params.decrypted.floor_id);
         const floorKey = getExplorationFloorStateKey(floor);
         const currentAp = parseInteger(playerSave.resources?.ap?.current, 0);
@@ -3055,9 +4509,20 @@ function createServer() {
         const fairyEncounter = !levelResult?.levelUp
           && progress < 100
           && shouldCreateFairyEncounter(playerSave, fairySettings)
-          ? createFairyEncounter(playerSave, fairySettings, floor)
+          ? createFairyEncounter(playerSave, fairySettings, floor, Date.now(), {
+            serialId: raidRegistry.nextSerialId,
+            raidId: String(raidRegistry.nextSerialId),
+          })
           : null;
+        if (fairyEncounter) {
+          raidRegistry.nextSerialId = Math.max(
+            parseInteger(fairyEncounter.serialId, 0) + 1,
+            parseInteger(raidRegistry.nextSerialId, 100001) + 1
+          );
+          raidRegistry.raids.push(createRaidFromEncounter(fairyEncounter, playerSave));
+        }
         saveExplorationMoves(playerSave, playerSavePath, moves);
+        writeJsonFileAtomic(fairyRaidPath, raidRegistry);
         const encrypted = encryptAes128Ecb(
           createExplorationExploreXml(progress, rewards, playerSave, levelResult, fairyEncounter),
           connectAppKey
@@ -3103,12 +4568,22 @@ function createServer() {
 
       if (req.method === "POST" && url.pathname === "/connect/app/exploration/fairybattle") {
         const playerSave = readPlayerSave(playerSavePath);
-        const activeFairy = playerSave.battle?.fairy?.active || null;
+        applyAccountIdentity(playerSave, activeAccount);
+        const raidRegistry = readFairyRaidRegistry(fairyRaidPath);
+        expireFairyRaids(raidRegistry);
+        syncOwnedFairyFromRaid(playerSave, raidRegistry, activeAccount);
         const requestedSerialId = String(params.decrypted.serial_id || "");
         const requestedUserId = parseInteger(params.decrypted.user_id, 0);
-        const encounterMatches = hasLiveFairyEncounter(playerSave)
-          && requestedSerialId === String(activeFairy.serialId || "")
-          && requestedUserId === parseInteger(activeFairy.discovererId, 0);
+        const raid = getFairyRaid(raidRegistry, requestedUserId, requestedSerialId);
+        const visibleRaidIds = new Set(getVisibleFairyRaids(
+          raidRegistry,
+          activeAccount?.userId,
+          accountRegistry
+        ).map((candidate) => String(candidate.raidId || candidate.serialId)));
+        const encounterMatches = raid
+          && raid.status === "active"
+          && parseInteger(raid.currentHp, 0) > 0
+          && visibleRaidIds.has(String(raid.raidId || raid.serialId));
         if (!encounterMatches) {
           logRequest("connect_app_response", {
             path: url.pathname,
@@ -3116,14 +4591,45 @@ function createServer() {
             source: "fairy battle encounter mismatch",
             requestedSerialId,
             requestedUserId,
-            activeSerialId: activeFairy?.serialId || "",
-            activeDiscovererId: parseInteger(activeFairy?.discovererId, 0),
+            activeRaidCount: visibleRaidIds.size,
+            attackerUserId: activeAccount?.userId || "",
           });
           return sendText(res, 409, "fairy battle encounter mismatch\n");
         }
-        const settlement = createFairyBattleSettlement(playerSave, activeFairy);
+        const activeFairy = raidToFairySnapshot(raid);
+        let settlement;
+        let sharedBattle;
+        try {
+          sharedBattle = applySharedFairyBattle(
+            raidRegistry,
+            playerSave,
+            activeAccount,
+            raid
+          );
+          settlement = sharedBattle.settlement;
+        } catch (error) {
+          if (error?.code !== "FAIRY_BATTLE_INSUFFICIENT_BC") {
+            throw error;
+          }
+          // ponytail: the accepted client has the original no-BC layout behaviors, but its BcCheck
+          // commands are compiled to always choose the max-BC branch. Fail closed at the HTTP trust
+          // boundary until that native presentation edge is restored; do not invent an error XML.
+          logRequest("connect_app_response", {
+            path: url.pathname,
+            status: 409,
+            source: "fairy battle insufficient BC",
+            requestedSerialId,
+            currentBc: error.currentBc,
+            requiredBc: error.requiredBc,
+            cardCosts: error.cardCosts,
+            saved: false,
+            savePath: getLogSafePath(playerSavePath),
+          });
+          return sendText(res, 409, `insufficient BC: ${error.currentBc}/${error.requiredBc}\n`);
+        }
         const xml = createExplorationFairyBattleXml(settlement.playerSave, settlement);
         writeJsonFileAtomic(playerSavePath, settlement.playerSave);
+        writeJsonFileAtomic(fairyRaidPath, raidRegistry);
         const encrypted = encryptAes128Ecb(xml, connectAppKey);
         logRequest("connect_app_response", {
           path: url.pathname,
@@ -3134,8 +4640,13 @@ function createServer() {
           nextScene: 4100,
           battleScene: 4301,
           resultScene: 4420,
-          explorationEventType: 18,
+          explorationEventType: settlement.playerWon ? 18 : 10,
           requestedSerialId,
+          raidId: raid.raidId,
+          raidOwnerUserId: raid.ownerUserId,
+          attackerUserId: activeAccount?.userId || "",
+          contributorCount: raid.attackers.length,
+          pendingRewardCount: (raid.rewards || []).filter((reward) => reward.status === "pending").length,
           fairyMasterBossId: parseInteger(activeFairy.masterBossId, 0),
           enemyBattleType: parseInteger(activeFairy.masterBossId, 0),
           enemyBossImageId: settlement.fairyVisualMasterCardId,
@@ -3149,6 +4660,10 @@ function createServer() {
           playerWon: settlement.playerWon,
           winner: settlement.winner,
           rounds: settlement.rounds,
+          bcBefore: settlement.beforeBc,
+          bcCost: settlement.battleCost,
+          bcAfter: settlement.afterBc,
+          battleCardCosts: settlement.battleCardCosts,
           playerDamage: settlement.fairyInitialHp - settlement.fairyRemainingHp,
           fairyDamage: settlement.playerMaxHp - settlement.playerRemainingHp,
           goldBefore: settlement.beforeGold,
@@ -3218,9 +4733,50 @@ function createServer() {
       }
 
       if (req.method === "POST" && url.pathname === "/connect/app/gacha/buy") {
-        const settlement = applyGachaBuySettlement(readPlayerSave(playerSavePath), params.decrypted);
+        const gachaData = readGachaData(gachaDataPath);
+        const playerSave = readPlayerSave(playerSavePath);
+        let settlement;
+        try {
+          settlement = applyGachaBuySettlement(playerSave, params.decrypted, { gachaData });
+        } catch (error) {
+          if (error?.code !== "GACHA_INSUFFICIENT_BALANCE") {
+            throw error;
+          }
+          const productId = parseInteger(params.decrypted.product_id, 1);
+          const product = getGachaProduct(productId, gachaData);
+          const currency = String(product?.currency || "");
+          const availableBalance = currency === "friendshipPoint"
+            ? Math.max(parseInteger(playerSave.currencies?.friendshipPoint, 0), 0)
+            : currency === "mc"
+              ? Math.max(parseInteger(playerSave.currencies?.mc, 0), 0)
+              : currency === "gachaTicket"
+                ? Math.max(parseInteger(playerSave.items?.gachaTicket, 0), 0)
+                : 0;
+          const message = getGachaInsufficientBalanceMessage(product);
+          const xml = createGachaBuyInsufficientXml(product);
+          const encrypted = encryptAes128Ecb(xml, connectAppKey);
+          logRequest("connect_app_response", {
+            path: url.pathname,
+            mode: "aes-128-ecb",
+            key: connectAppKey,
+            bytes: encrypted.length,
+            source: "gacha buy business error dialog",
+            command: "gacha_buy_rejected",
+            errorCode: 1,
+            message,
+            rejectionCode: error.code,
+            productId,
+            currency,
+            requiredCost: Math.max(parseInteger(product?.cost, 0), 0),
+            availableBalance,
+            saved: false,
+            savePath: getLogSafePath(playerSavePath),
+          });
+          sendBinary(res, 200, encrypted);
+          return;
+        }
         writeJsonFileAtomic(playerSavePath, settlement.playerSave);
-        const xml = createGachaBuyXml(settlement.playerSave, settlement.drawCard, settlement.productId);
+        const xml = createGachaBuyXml(settlement.playerSave, settlement.drawCards, settlement.productId, gachaData);
         const encrypted = encryptAes128Ecb(xml, connectAppKey);
         logRequest("connect_app_response", {
           path: url.pathname,
@@ -3238,8 +4794,13 @@ function createServer() {
           mcBefore: settlement.mcBefore,
           mcCost: settlement.mcCost,
           mcAfter: settlement.mcAfter,
+          ticketBefore: settlement.ticketBefore,
+          ticketCost: settlement.ticketCost,
+          ticketAfter: settlement.ticketAfter,
           drawnSerialId: settlement.drawCard ? settlement.drawCard.serialId : 0,
           drawnMasterCardId: settlement.drawCard ? settlement.drawCard.masterCardId : 0,
+          drawnSerialIds: settlement.drawCards.map((card) => card.serialId),
+          drawnMasterCardIds: settlement.drawCards.map((card) => card.masterCardId),
           ownerCardCount: settlement.ownerCardCount,
           cardsDrawn: settlement.cardsDrawn,
           saved: true,
@@ -3361,9 +4922,20 @@ module.exports = {
   ADD_USER_KEY,
   ADMIN_UI_HTML,
   applyAdminFairyUpdate,
+  applyAdminGachaUpdate,
   applyAdminPlayerUpdate,
+  addMasterCardToPlayerSave,
+  applySharedFairyBattle,
+  applyGachaBuySettlement,
+  authenticateLocalAccount,
+  claimFairyRewards,
+  createDefaultAccountRegistry,
+  createDefaultFairyRaidRegistry,
   createFairyBattleSettlement,
   createFairyEncounter,
+  createFairyContributorRewards,
+  createLocalAccount,
+  createRaidFromEncounter,
   createAdminState,
   createServer,
   decryptAddUserPassword,
@@ -3377,11 +4949,14 @@ module.exports = {
   createExplorationFloorXml,
   createExplorationGetFloorXml,
   createExplorationLockedXml,
+  createGachaBuyInsufficientXml,
   createGachaBuyXml,
   createGachaSelectSkeletonXml,
   createMasterCardUpdateXml,
   createMenuCardCollectionSkeletonXml,
+  createMenuGetRewardsXml,
   createMenuFairySelectSkeletonXml,
+  createMenuRewardBoxXml,
   createMenuFriendListSkeletonXml,
   createMenuHavePartsSkeletonXml,
   createMenuRankingSkeletonXml,
@@ -3392,10 +4967,16 @@ module.exports = {
   createTownLvupStatusXml,
   createTownPointsettingXml,
   getMainmenuInformationForPlayer,
+  getMainmenuNotificationState,
   getAdvertisedCardRevision,
   getLoginOkXml,
   getLoginXmlSource,
   getFairyEncounterSettings,
+  getGachaProduct,
+  getGachaProducts,
+  getFairyBattleBcState,
+  getPendingFairyRewards,
+  getVisibleFairyRaids,
   getConfiguredMasterCardUpdate,
   hasLiveFairyEncounter,
   parseConnectAppBody,
@@ -3425,6 +5006,8 @@ module.exports = {
   MASTER_CARD_UPDATE,
   MASTER_CARD_UPDATE_ROUTE,
   MASTER_CARD_SOURCE_SHA256,
+  normalizeWeightedCardPool,
+  selectWeightedCardMasterId,
   parseSerializedMasterCards,
   WEB_SCENETO_LOCATION,
   WEB_STUB_HTML,

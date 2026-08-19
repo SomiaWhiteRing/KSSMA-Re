@@ -14,7 +14,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent
 REPO = ROOT.parent
 BASE_APK = REPO / "base" / "com.square_enix.million_cn-1.0.0.100.0712.M330.apk"
-ACCEPTED_LIB = ROOT / "librooneyj-gacha-cardget-inner-touch-nullguard.so"
+ACCEPTED_LIB = ROOT / "librooneyj-gacha-business-error-dialog.so"
 OUT_DIR = ROOT / "client-baseline"
 OUT_APK = OUT_DIR / "KSSMA-Re-client-baseline.apk"
 MANIFEST = OUT_DIR / "client-baseline.json"
@@ -28,7 +28,7 @@ DEBUG_ALIAS = "androiddebugkey"
 DEBUG_PASSWORD = "android"
 
 EXPECTED_BASE_SHA256 = "4F6A854C49D1AF59BB5500828D2BDDA0767F4D6A9FCFA8D4D6E46EA9257C58A7"
-EXPECTED_LIB_SHA256 = "DEC36585CA0129AA19E68CC53898D95DE41067AA5D380B23218F3E88273CD40F"
+EXPECTED_LIB_SHA256 = "36A4826BD42BCF203B51D0344AF5A1B479B961BD26DDB4685DD01A8B325B69A2"
 EXPECTED_CLASSES_SHA256 = "985D4105968A95EC9DFE9BCC3711597A324A90F472700DF7435CA7D25A2087C6"
 
 # Diagnostic-only DEX method-reference substitutions. Both call sites already have

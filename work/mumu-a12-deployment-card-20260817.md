@@ -70,9 +70,25 @@ Two status probes were also rejected before acceptance. `database/master_card` i
 after loading, so it was replaced with persistent `database/master_boss`. MuMu's bundled `nc` lacks `-z`, so both
 port checks now use device-side `curl` against `/healthz`. Do not revive either rejected probe.
 
+This does not mean `master_card` is irrelevant. The later fairy-battle differential proved it is a one-shot
+process-start input rather than a persistent health sentinel. The schema-2 resource manifest now pins the exact
+260,249-byte source and SHA-256 `7B121D...B3A56BDF`. `install-client`, `launch`, and the isolated A12 flow gate stop
+the client, restore the file only when missing/different, verify the device hash, and only then allow the original
+Activity to start. `repair-master-card` exposes the same stopped-process preparation for a subsequent manual icon
+launch; an icon launch without first using a controller entry remains outside the guarantee.
+
+The 2026-08-19 missing-file fault injection moved the verified device file to an exact temporary backup and ran the
+normal `launch -StartServer` command. Its JSON reported `restored=true`,
+`reason=seeded-consumed-or-missing-file`, and the exact post-push hash before starting the Activity. PID 3012 stayed
+in `RooneyJActivity`, the launch screenshot showed the normal main menu, and logcat contained no `adv_chara0`,
+`thumbnail_chara_0`, `SIGABRT`, or `SIGSEGV`. The backup was removed only after both copies matched; the normal
+device target remains present with the accepted hash. The resource TAR and checksum-list hashes remained
+`FF6055...19CF` and `71E8...AF5`, respectively.
+
 ## Boundary
 
-This accepts installation, resource completeness, old-domain recovery, server reachability, and immediate launch to
-the main menu on the current MuMu Android 12 instance. It does not accept long-running gameplay: the separately
-recorded gacha-select page can still hit the reward-box-path null `SIGSEGV` after roughly 269 seconds. ARM19 remains
-the default automated gameplay acceptance runtime.
+This accepts installation, resource completeness, old-domain recovery, server reachability, repeatable card-master
+initialization for controller-owned cold starts, and immediate launch to the main menu on the current MuMu Android
+12 instance. It does not yet accept long-running gameplay: the separately recorded gacha-select page can still hit
+the reward-box-path null `SIGSEGV` after roughly 269 seconds, and gacha result must be replayed on the new launch
+baseline. ARM19 remains the default automated gameplay acceptance runtime.

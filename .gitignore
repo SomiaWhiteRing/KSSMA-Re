@@ -6,6 +6,7 @@ work/*
 !work/*.md
 !work/*.js
 !work/librooneyj-gacha-cardget-inner-touch-nullguard.so
+!work/librooneyj-gacha-business-error-dialog.so
 !work/gacha-image-preview/
 work/gacha-image-preview/*
 !work/gacha-image-preview/decoded/
@@ -19,3 +20,6 @@ work/accepted-assets/*
 work/runtime-state.json
 HUMAN-ROADMAP.local.md
 server/data/player/local-save.json
+server/data/player/accounts.json
+server/data/player/accounts/
+server/data/player/fairy-raids.json

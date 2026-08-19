@@ -34,6 +34,11 @@ INCLUDED_ROOTS = (
 )
 EXCLUDED_MUTABLE = ("appdata/save_appdata",)
 SAVE_APPDATA_SOURCE = SAVE_ROOT / "appdata" / "save_appdata"
+MASTER_CARD_SOURCE = SAVE_ROOT / "database" / "master_card"
+MASTER_CARD_EXPECTED_SHA256 = (
+    "7B121DE5626DD3B9820022C698A1FF754F87CAC4B64E563B70138F68B3A56BDF"
+)
+MASTER_CARD_EXPECTED_BYTES = 260249
 SAVE_APPDATA_MAINBG_NEEDLE = b"mainbg_70_sp"
 SAVE_APPDATA_MAINBG_REPLACEMENT = b"mainbg_an"
 SENTINELS = (
@@ -90,6 +95,27 @@ def build_save_appdata_seed() -> dict[str, object]:
     }
 
 
+def describe_master_card_seed() -> dict[str, object]:
+    if not MASTER_CARD_SOURCE.is_file():
+        raise SystemExit(f"missing prepared master_card seed: {MASTER_CARD_SOURCE}")
+    digest = sha256_file(MASTER_CARD_SOURCE)
+    size = MASTER_CARD_SOURCE.stat().st_size
+    if digest != MASTER_CARD_EXPECTED_SHA256 or size != MASTER_CARD_EXPECTED_BYTES:
+        raise SystemExit(
+            "master_card seed mismatch: "
+            f"bytes={size}, sha256={digest}, expectedBytes={MASTER_CARD_EXPECTED_BYTES}, "
+            f"expectedSha256={MASTER_CARD_EXPECTED_SHA256}"
+        )
+    return {
+        "path": MASTER_CARD_SOURCE.relative_to(ROOT).as_posix(),
+        "devicePath": "database/master_card",
+        "sha256": digest,
+        "bytes": size,
+        "applyWhen": "before-client-process-start",
+        "consumedByClient": True,
+    }
+
+
 def iter_payload_files() -> list[tuple[str, Path]]:
     rows: list[tuple[str, Path]] = []
     for relative_root in INCLUDED_ROOTS:
@@ -125,7 +151,9 @@ def require_prepared_inputs(rows: list[tuple[str, Path]]) -> None:
 
 
 def build_pack(
-    rows: list[tuple[str, Path]], save_appdata_seed: dict[str, object]
+    rows: list[tuple[str, Path]],
+    save_appdata_seed: dict[str, object],
+    master_card_seed: dict[str, object],
 ) -> tuple[list[dict[str, object]], int]:
     OUT_DIR.mkdir(parents=True, exist_ok=True)
     temporary_tar = OUT_TAR.with_suffix(f".{OUT_TAR.suffix.lstrip('.')}.tmp")
@@ -160,7 +188,7 @@ def build_pack(
 
         sentinel_records = [record for record in records if record["path"] in SENTINELS]
         manifest = {
-            "schema": 1,
+            "schema": 2,
             "purpose": "Static external-storage payload for the MuMu Android 12 KSSMA-Re runtime.",
             "package": "com.square_enix.million_cn",
             "deviceSaveDir": "/storage/emulated/0/Android/data/com.square_enix.million_cn/files/save",
@@ -183,6 +211,7 @@ def build_pack(
             "includedRoots": [path.as_posix() for path in INCLUDED_ROOTS],
             "excludedMutable": list(EXCLUDED_MUTABLE),
             "saveAppDataSeed": save_appdata_seed,
+            "masterCardSeed": master_card_seed,
             "sentinels": sentinel_records,
         }
         temporary_manifest.write_text(json.dumps(manifest, ensure_ascii=True, indent=2) + "\n", encoding="utf-8")
@@ -200,7 +229,8 @@ def main() -> None:
     rows = iter_payload_files()
     require_prepared_inputs(rows)
     save_appdata_seed = build_save_appdata_seed()
-    records, payload_bytes = build_pack(rows, save_appdata_seed)
+    master_card_seed = describe_master_card_seed()
+    records, payload_bytes = build_pack(rows, save_appdata_seed, master_card_seed)
     manifest = json.loads(OUT_MANIFEST.read_text(encoding="utf-8"))
     print(f"resourcePack={OUT_TAR}")
     print(f"checksums={OUT_CHECKSUMS}")
